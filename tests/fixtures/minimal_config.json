@@ -1,0 +1,8 @@
+{
+  "projectName": "minimal-project",
+  "companyName": "Acme Corp",
+  "productName": "Minimal Game",
+  "bundleVersion": "1.0.0",
+  "outputDirectory": "Builds",
+  "scenes": ["Assets/Scenes/Main.unity"]
+}

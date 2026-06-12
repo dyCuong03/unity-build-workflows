@@ -1,0 +1,149 @@
+name: Unity Nightly Multi-Platform
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # 2:00 AM UTC daily
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Comma-separated platforms to build (Android,iOS,Windows64,WebGL)"
+        required: false
+        default: "Android,iOS,Windows64,WebGL"
+      test-level:
+        description: "Test level"
+        required: false
+        default: "full"
+        type: choice
+        options:
+          - none
+          - editmode
+          - playmode
+          - full
+
+jobs:
+  # ─── MATRIX SETUP ─────────────────────────────────────────────────────────────
+  setup-matrix:
+    name: Setup Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      unity-version: ${{ steps.read-version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Unity version from project
+        id: read-version
+        run: |
+          VERSION=$(python3 scripts/common/resolve_project_version.py \
+            --project-path "." \
+            --config-path "BuildConfig" \
+            --environment "development" \
+            --ref "${{ github.ref }}")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build platform matrix
+        id: build-matrix
+        run: |
+          PLATFORMS="${{ github.event.inputs.platforms || 'Android,iOS,Windows64,WebGL' }}"
+          IFS=',' read -ra PLATFORM_ARRAY <<< "$PLATFORMS"
+          MATRIX_JSON="["
+          FIRST=true
+          for platform in "${PLATFORM_ARRAY[@]}"; do
+            platform=$(echo "$platform" | xargs)  # trim whitespace
+            if [[ "$FIRST" == "false" ]]; then
+              MATRIX_JSON="$MATRIX_JSON,"
+            fi
+            FIRST=false
+
+            case "$platform" in
+              iOS)
+                RUNNER="macos-latest"
+                ;;
+              Windows64)
+                RUNNER="windows-latest"
+                ;;
+              *)
+                RUNNER="ubuntu-latest"
+                ;;
+            esac
+
+            MATRIX_JSON="$MATRIX_JSON{\"platform\":\"$platform\",\"runner\":\"$RUNNER\"}"
+          done
+          MATRIX_JSON="$MATRIX_JSON]"
+          echo "matrix={\"include\":$MATRIX_JSON}" >> "$GITHUB_OUTPUT"
+          echo "Matrix: $MATRIX_JSON"
+
+  # ─── NIGHTLY TESTS ─────────────────────────────────────────────────────────────
+  nightly-test:
+    name: Nightly Tests
+    needs: setup-matrix
+    uses: ./.github/workflows/unity-test.yml
+    with:
+      unity-version: ${{ needs.setup-matrix.outputs.unity-version }}
+      test-level: ${{ github.event.inputs.test-level || 'full' }}
+      cache-mode: "safe"
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ─── NIGHTLY BUILDS (MATRIX) ──────────────────────────────────────────────────
+  nightly-build:
+    name: Nightly Build - ${{ matrix.platform }}
+    needs: [setup-matrix, nightly-test]
+    if: always() && (needs.nightly-test.outputs.tests-passed == 'true' || needs.nightly-test.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+
+    uses: ./.github/workflows/unity-build.yml
+    with:
+      project-path: "."
+      unity-version: ${{ needs.setup-matrix.outputs.unity-version }}
+      target-platform: ${{ matrix.platform }}
+      environment: "development"
+      build-config-path: "BuildConfig"
+      test-level: "none"
+      cache-mode: "safe"
+      build-addressables: false
+      upload-artifact: true
+      deploy-target: "none"
+      clean-build: false
+      artifact-retention-days: 3
+      fail-on-warnings: false
+      release-mode: false
+    secrets: inherit
+
+  # ─── NIGHTLY SUMMARY ──────────────────────────────────────────────────────────
+  nightly-summary:
+    name: Nightly Summary
+    needs: [setup-matrix, nightly-test, nightly-build]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate nightly summary
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          # Nightly Build Summary - $(date -u +"%Y-%m-%d")
+
+          | Job | Status |
+          |-----|--------|
+          | Tests | ${{ needs.nightly-test.result }} |
+          | Builds | ${{ needs.nightly-build.result }} |
+
+          **Unity Version:** ${{ needs.setup-matrix.outputs.unity-version }}
+          **Triggered by:** ${{ github.event_name }}
+          **Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          EOF
+
+      - name: Notify on failure
+        if: failure() || needs.nightly-build.result == 'failure'
+        run: |
+          echo "::warning::Nightly build had failures. Check the summary above."
+          # Add Slack/email notification here if desired

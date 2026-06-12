@@ -1,0 +1,182 @@
+name: Unity Build WebGL (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        type: string
+        default: "."
+      unity-version:
+        type: string
+        required: true
+      environment:
+        type: string
+        default: "development"
+      build-config-path:
+        type: string
+        default: "BuildConfig"
+      cache-mode:
+        type: string
+        default: "safe"
+      build-addressables:
+        type: boolean
+        default: false
+      upload-artifact:
+        type: boolean
+        default: true
+      deploy-target:
+        type: string
+        default: "none"
+      clean-build:
+        type: boolean
+        default: false
+      artifact-retention-days:
+        type: number
+        default: 14
+      release-mode:
+        type: boolean
+        default: false
+      build-version:
+        type: string
+        required: true
+    secrets:
+      UNITY_LICENSE:
+        required: true
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+    outputs:
+      artifact-name:
+        description: "Name of the uploaded WebGL build artifact"
+        value: ${{ jobs.build.outputs.artifact-name }}
+      deploy-url:
+        description: "Deployed URL (if deployed)"
+        value: ${{ jobs.build.outputs.deploy-url }}
+
+jobs:
+  build:
+    name: Build WebGL (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+      deploy-url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Restore Library Cache
+        uses: ./.github/actions/restore-library-cache
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: "WebGL"
+          cache-mode: ${{ inputs.cache-mode }}
+
+      - name: Clean build (if requested)
+        if: inputs.clean-build == true
+        run: rm -rf "${{ inputs.project-path }}/Library"
+
+      - name: Setup Unity
+        uses: ./.github/actions/setup-unity
+        with:
+          unity-version: ${{ inputs.unity-version }}
+          project-path: ${{ inputs.project-path }}
+          target-platform: WebGL
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      - name: Generate build metadata
+        run: |
+          python3 scripts/common/generate_build_metadata.py \
+            --project-path "${{ inputs.project-path }}" \
+            --platform WebGL \
+            --version "${{ inputs.build-version }}" \
+            --environment "${{ inputs.environment }}" \
+            --build-number "${{ github.run_number }}" \
+            --commit "${{ github.sha }}"
+
+      - name: Build Addressables
+        if: inputs.build-addressables == true
+        run: |
+          unity-editor \
+            -batchmode \
+            -nographics \
+            -projectPath "${{ inputs.project-path }}" \
+            -executeMethod AddressableAssets.Settings.AddressableAssetSettings.BuildPlayerContent \
+            -logFile "${{ runner.temp }}/addressables-build.log" \
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Build Unity WebGL
+        run: |
+          unity-editor \
+            -batchmode \
+            -nographics \
+            -projectPath "${{ inputs.project-path }}" \
+            -executeMethod BuildCommand.Execute \
+            -buildTarget WebGL \
+            -buildPath "${{ runner.temp }}/build/webgl" \
+            -buildVersion "${{ inputs.build-version }}" \
+            -buildEnvironment "${{ inputs.environment }}" \
+            -logFile "${{ runner.temp }}/unity-build-webgl.log" \
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Compress WebGL output
+        run: |
+          bash scripts/webgl/compress_webgl.sh \
+            "${{ runner.temp }}/build/webgl" \
+            "${{ inputs.environment }}"
+
+      - name: Compare build size
+        if: always()
+        run: |
+          python3 scripts/common/compare_build_size.py \
+            --build-path "${{ runner.temp }}/build/webgl" \
+            --platform WebGL \
+            --version "${{ inputs.build-version }}" || true
+
+      - name: Upload build artifact
+        id: upload
+        if: inputs.upload-artifact == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: webgl-build-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
+          path: ${{ runner.temp }}/build/webgl/
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        if: inputs.deploy-target == 'cloudflare'
+        run: |
+          bash scripts/webgl/deploy_cloudflare_pages.sh \
+            "${{ runner.temp }}/build/webgl" \
+            "${{ inputs.environment }}" \
+            "${{ inputs.build-version }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Collect build logs
+        if: always()
+        uses: ./.github/actions/collect-build-output
+        with:
+          target-platform: WebGL
+          build-version: ${{ inputs.build-version }}
+          environment: ${{ inputs.environment }}
+          log-path: ${{ runner.temp }}

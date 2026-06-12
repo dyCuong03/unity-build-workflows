@@ -1,0 +1,29 @@
+{
+  "$schema": "../../schemas/unity-build-config.schema.json",
+  "projectName": "backpack-adventures",
+  "companyName": "BuzzelStudio",
+  "productName": "Backpack Adventures",
+  "bundleVersion": "1.4.0",
+  "buildNumberStrategy": "github_run_number",
+  "outputDirectory": "Builds/Development",
+  "scenes": [
+    "Assets/Scenes/Bootstrap.unity",
+    "Assets/Scenes/MainMenu.unity",
+    "Assets/Scenes/Gameplay.unity"
+  ],
+  "scriptingBackend": "Mono",
+  "developmentBuild": true,
+  "allowDebugging": true,
+  "runTests": true,
+  "android": {
+    "applicationId": "com.buzzellstudio.backpackadventures",
+    "keystoreMode": "debug",
+    "minSdkVersion": 22,
+    "targetSdkVersion": 34,
+    "architecture": "ARM64"
+  },
+  "metadata": {
+    "environment": "development",
+    "branch": "develop"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "projectName": "backpack-adventures",
+  "companyName": "BuzzelStudio",
+  "productName": "Backpack Adventures",
+  "bundleVersion": "1.4.0",
+  "outputDirectory": "Builds",
+  "scenes": ["Assets/Scenes/Bootstrap.unity"],
+  "developmentBuild": true,
+  "allowDebugging": false,
+  "metadata": {
+    "environment": "production"
+  }
+}

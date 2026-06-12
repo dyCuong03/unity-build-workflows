@@ -1,0 +1,150 @@
+name: Unity Test (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        description: "Path to Unity project root"
+        type: string
+        default: "."
+      unity-version:
+        description: "Unity version to use"
+        type: string
+        required: true
+      test-level:
+        description: "Test level: editmode, playmode, or full"
+        type: string
+        default: "editmode"
+      cache-mode:
+        description: "Library cache mode: off/safe/aggressive"
+        type: string
+        default: "safe"
+    secrets:
+      UNITY_LICENSE:
+        required: true
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+    outputs:
+      tests-passed:
+        description: "Whether all tests passed"
+        value: ${{ jobs.test.outputs.tests-passed }}
+      test-report-artifact:
+        description: "Name of the uploaded test report artifact"
+        value: ${{ jobs.test.outputs.test-report-artifact }}
+
+jobs:
+  test:
+    name: Run Unity Tests (${{ inputs.test-level }})
+    runs-on: ubuntu-latest
+    outputs:
+      tests-passed: ${{ steps.check-results.outputs.passed }}
+      test-report-artifact: ${{ steps.upload-results.outputs.artifact-name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Restore Library Cache
+        uses: ./.github/actions/restore-library-cache
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: "StandaloneLinux64"
+          cache-mode: ${{ inputs.cache-mode }}
+
+      - name: Setup Unity
+        uses: ./.github/actions/setup-unity
+        with:
+          unity-version: ${{ inputs.unity-version }}
+          project-path: ${{ inputs.project-path }}
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      - name: Run EditMode Tests
+        if: inputs.test-level == 'editmode' || inputs.test-level == 'full'
+        continue-on-error: true
+        run: |
+          unity-editor \
+            -batchmode \
+            -nographics \
+            -projectPath "${{ inputs.project-path }}" \
+            -runTests \
+            -testPlatform EditMode \
+            -testResults "${{ runner.temp }}/editmode-results.xml" \
+            -logFile "${{ runner.temp }}/editmode-test.log" \
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Run PlayMode Tests
+        if: inputs.test-level == 'playmode' || inputs.test-level == 'full'
+        continue-on-error: true
+        run: |
+          unity-editor \
+            -batchmode \
+            -nographics \
+            -projectPath "${{ inputs.project-path }}" \
+            -runTests \
+            -testPlatform PlayMode \
+            -testResults "${{ runner.temp }}/playmode-results.xml" \
+            -logFile "${{ runner.temp }}/playmode-test.log" \
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Check test results
+        id: check-results
+        if: always()
+        run: |
+          PASSED=true
+          for result_file in "${{ runner.temp }}"/*-results.xml; do
+            if [[ -f "$result_file" ]]; then
+              FAILURES=$(python3 -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('$result_file')
+          root = tree.getroot()
+          failures = int(root.get('failures', 0))
+          errors = int(root.get('errors', 0))
+          print(failures + errors)
+          " 2>/dev/null || echo "0")
+              if [[ "$FAILURES" -gt "0" ]]; then
+                PASSED=false
+                echo "Test failures found in $result_file: $FAILURES"
+              fi
+            fi
+          done
+          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+
+      - name: Upload test results
+        id: upload-results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ inputs.test-level }}-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/*-results.xml
+            ${{ runner.temp }}/*-test.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Publish Test Report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Unity Tests (${{ inputs.test-level }})
+          path: ${{ runner.temp }}/*-results.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Fail if tests failed
+        if: steps.check-results.outputs.passed == 'false'
+        run: |
+          echo "::error::One or more Unity tests failed."
+          exit 1

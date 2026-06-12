@@ -1,0 +1,167 @@
+name: Unity Build Windows64 (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        type: string
+        default: "."
+      unity-version:
+        type: string
+        required: true
+      environment:
+        type: string
+        default: "development"
+      build-config-path:
+        type: string
+        default: "BuildConfig"
+      cache-mode:
+        type: string
+        default: "safe"
+      build-addressables:
+        type: boolean
+        default: false
+      upload-artifact:
+        type: boolean
+        default: true
+      clean-build:
+        type: boolean
+        default: false
+      artifact-retention-days:
+        type: number
+        default: 14
+      release-mode:
+        type: boolean
+        default: false
+      build-version:
+        type: string
+        required: true
+    secrets:
+      UNITY_LICENSE:
+        required: true
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+    outputs:
+      artifact-name:
+        description: "Name of the uploaded Windows build artifact"
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+jobs:
+  build:
+    name: Build Windows64 (${{ inputs.environment }})
+    runs-on: windows-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Restore Library Cache
+        uses: ./.github/actions/restore-library-cache
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: "Windows64"
+          cache-mode: ${{ inputs.cache-mode }}
+
+      - name: Clean build (if requested)
+        if: inputs.clean-build == true
+        shell: pwsh
+        run: Remove-Item -Recurse -Force "${{ inputs.project-path }}/Library" -ErrorAction SilentlyContinue
+
+      - name: Setup Unity
+        uses: ./.github/actions/setup-unity
+        with:
+          unity-version: ${{ inputs.unity-version }}
+          project-path: ${{ inputs.project-path }}
+          target-platform: Windows64
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      - name: Generate build metadata
+        shell: pwsh
+        run: |
+          python3 scripts/common/generate_build_metadata.py `
+            --project-path "${{ inputs.project-path }}" `
+            --platform Windows64 `
+            --version "${{ inputs.build-version }}" `
+            --environment "${{ inputs.environment }}" `
+            --build-number "${{ github.run_number }}" `
+            --commit "${{ github.sha }}"
+
+      - name: Build Addressables
+        if: inputs.build-addressables == true
+        shell: pwsh
+        run: |
+          & "C:\Program Files\Unity\Hub\Editor\${{ inputs.unity-version }}\Editor\Unity.exe" `
+            -batchmode `
+            -nographics `
+            -projectPath "${{ inputs.project-path }}" `
+            -executeMethod AddressableAssets.Settings.AddressableAssetSettings.BuildPlayerContent `
+            -logFile "${{ runner.temp }}\addressables-build.log" `
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Build Unity Windows64
+        shell: pwsh
+        run: |
+          & "C:\Program Files\Unity\Hub\Editor\${{ inputs.unity-version }}\Editor\Unity.exe" `
+            -batchmode `
+            -nographics `
+            -projectPath "${{ inputs.project-path }}" `
+            -executeMethod BuildCommand.Execute `
+            -buildTarget Win64 `
+            -buildPath "${{ runner.temp }}\build\windows64" `
+            -buildVersion "${{ inputs.build-version }}" `
+            -buildEnvironment "${{ inputs.environment }}" `
+            -logFile "${{ runner.temp }}\unity-build-windows.log" `
+            -quit
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          pwsh scripts/windows/package_windows_build.ps1 `
+            -BuildPath "${{ runner.temp }}\build\windows64" `
+            -OutputPath "${{ runner.temp }}\build\windows64-package" `
+            -Version "${{ inputs.build-version }}" `
+            -Environment "${{ inputs.environment }}"
+
+      - name: Compare build size
+        if: always()
+        shell: pwsh
+        run: |
+          python3 scripts/common/compare_build_size.py `
+            --build-path "${{ runner.temp }}\build\windows64-package" `
+            --platform Windows64 `
+            --version "${{ inputs.build-version }}"
+
+      - name: Upload build artifact
+        id: upload
+        if: inputs.upload-artifact == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows64-build-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
+          path: ${{ runner.temp }}\build\windows64-package\
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error
+
+      - name: Collect build logs
+        if: always()
+        uses: ./.github/actions/collect-build-output
+        with:
+          target-platform: Windows64
+          build-version: ${{ inputs.build-version }}
+          environment: ${{ inputs.environment }}
+          log-path: ${{ runner.temp }}

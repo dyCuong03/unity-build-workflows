@@ -1,0 +1,119 @@
+name: Collect Build Output
+description: Collect build artifacts and logs, write job summary
+
+inputs:
+  target-platform:
+    description: "Target build platform"
+    required: true
+  build-version:
+    description: "Build version string"
+    required: true
+  environment:
+    description: "Build environment"
+    required: false
+    default: "development"
+  test-result:
+    description: "Test job result (success/failure/skipped/cancelled)"
+    required: false
+    default: "skipped"
+  build-result:
+    description: "Build job result (success/failure/skipped/cancelled)"
+    required: false
+    default: "unknown"
+  log-path:
+    description: "Path to Unity log files"
+    required: false
+    default: ""
+
+outputs:
+  artifact-name:
+    description: "Name of the collected artifact"
+    value: ${{ steps.set-artifact-name.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set artifact name
+      id: set-artifact-name
+      shell: bash
+      run: |
+        NAME="build-output-${{ inputs.target-platform }}-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}"
+        echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Collect Unity logs
+      if: always()
+      shell: bash
+      run: |
+        LOG_DIR="collected-logs"
+        mkdir -p "$LOG_DIR"
+
+        # Collect from runner temp
+        TEMP="${{ inputs.log-path || runner.temp }}"
+        for log_file in "$TEMP"/*.log "$TEMP"/unity-*.log; do
+          [[ -f "$log_file" ]] && cp "$log_file" "$LOG_DIR/" || true
+        done
+
+        # Check for build errors in logs
+        ERROR_COUNT=0
+        for log in "$LOG_DIR"/*.log; do
+          if [[ -f "$log" ]]; then
+            ERRORS=$(grep -c "error\|Error\|ERROR" "$log" 2>/dev/null || echo "0")
+            ERROR_COUNT=$((ERROR_COUNT + ERRORS))
+          fi
+        done
+        echo "Total log errors found: $ERROR_COUNT"
+
+    - name: Write job summary
+      if: always()
+      shell: bash
+      run: |
+        PLATFORM="${{ inputs.target-platform }}"
+        VERSION="${{ inputs.build-version }}"
+        ENV="${{ inputs.environment }}"
+        TEST_RESULT="${{ inputs.test-result }}"
+        BUILD_RESULT="${{ inputs.build-result }}"
+
+        # Status icons
+        test_icon="⏭️"
+        build_icon="❓"
+        case "$TEST_RESULT" in
+          success)  test_icon="✅" ;;
+          failure)  test_icon="❌" ;;
+          skipped)  test_icon="⏭️" ;;
+          cancelled) test_icon="🚫" ;;
+        esac
+        case "$BUILD_RESULT" in
+          success)  build_icon="✅" ;;
+          failure)  build_icon="❌" ;;
+          skipped)  build_icon="⏭️" ;;
+          cancelled) build_icon="🚫" ;;
+        esac
+
+        cat >> "$GITHUB_STEP_SUMMARY" << EOF
+        ## Build Output — $PLATFORM
+
+        | Field       | Value                        |
+        |-------------|------------------------------|
+        | Platform    | \`$PLATFORM\`               |
+        | Version     | \`$VERSION\`                |
+        | Environment | \`$ENV\`                    |
+        | Run         | #${{ github.run_number }}   |
+        | Commit      | \`${{ github.sha }}\`       |
+
+        ### Job Results
+
+        | Job    | Status          |
+        |--------|-----------------|
+        | Tests  | $test_icon $TEST_RESULT  |
+        | Build  | $build_icon $BUILD_RESULT |
+
+        EOF
+
+    - name: Upload collected logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.set-artifact-name.outputs.name }}
+        path: collected-logs/
+        retention-days: 7
+        if-no-files-found: ignore

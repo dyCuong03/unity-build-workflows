@@ -1,0 +1,80 @@
+# project-workflow.yml
+# Minimal caller workflow template showing how a consuming repository
+# calls unity-build-workflows reusable workflows.
+#
+# Copy this file to your project's .github/workflows/ directory and
+# adjust the inputs to match your project's configuration.
+
+name: Unity CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (development|staging|production)"
+        required: false
+        default: "development"
+        type: choice
+        options: [development, staging, production]
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Validate BuildConfig JSON against schema and project rules
+  # ------------------------------------------------------------------
+  validate:
+    name: Validate
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-validate.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      build-config-path: "BuildConfig"
+      target-platform: "Android"
+      fail-on-warnings: false
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ------------------------------------------------------------------
+  # 2. Run EditMode + PlayMode tests
+  # ------------------------------------------------------------------
+  test:
+    name: Test
+    needs: validate
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-test.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      test-level: "full"
+      cache-mode: "safe"
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ------------------------------------------------------------------
+  # 3. Build for Android
+  # ------------------------------------------------------------------
+  build-android:
+    name: Build Android
+    needs: test
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      build-target: "Android"
+      build-config-path: "BuildConfig"
+      environment: ${{ inputs.environment || 'development' }}
+      cache-mode: "safe"
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}

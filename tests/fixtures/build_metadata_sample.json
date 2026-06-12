@@ -1,0 +1,18 @@
+{
+  "buildId": "run-1234",
+  "version": "1.4.0",
+  "buildNumber": 1234,
+  "buildTarget": "Android",
+  "environment": "production",
+  "startTime": "2026-06-12T10:00:00Z",
+  "endTime": "2026-06-12T10:30:00Z",
+  "durationSeconds": 1800,
+  "artifactSizeBytes": 104857600,
+  "artifactSizeMB": 100.0,
+  "cacheStatus": "hit",
+  "success": true,
+  "unityVersion": "2022.3.45f1",
+  "projectName": "backpack-adventures",
+  "gitSha": "abc1234def5678",
+  "gitBranch": "main"
+}

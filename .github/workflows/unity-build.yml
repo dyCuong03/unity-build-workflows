@@ -1,0 +1,329 @@
+name: Unity Build (Main Orchestrator)
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        description: "Path to Unity project root"
+        type: string
+        default: "."
+      unity-version:
+        description: "Unity version (required)"
+        type: string
+        required: true
+      target-platform:
+        description: "Target platform: Android/iOS/Windows64/WebGL"
+        type: string
+        required: true
+      environment:
+        description: "Environment: development/staging/production"
+        type: string
+        default: "development"
+      build-config-path:
+        description: "Path to BuildConfig folder"
+        type: string
+        default: "BuildConfig"
+      test-level:
+        description: "Test level: none/editmode/playmode/full"
+        type: string
+        default: "editmode"
+      cache-mode:
+        description: "Library cache mode: off/safe/aggressive"
+        type: string
+        default: "safe"
+      build-addressables:
+        description: "Whether to build Addressables before player"
+        type: boolean
+        default: false
+      upload-artifact:
+        description: "Whether to upload build artifact"
+        type: boolean
+        default: true
+      deploy-target:
+        description: "Deploy target (none/google-play/testflight/cloudflare)"
+        type: string
+        default: "none"
+      clean-build:
+        description: "Delete Library before building"
+        type: boolean
+        default: false
+      artifact-retention-days:
+        description: "Days to retain artifacts"
+        type: number
+        default: 14
+      fail-on-warnings:
+        description: "Fail build if warnings present"
+        type: boolean
+        default: false
+      release-mode:
+        description: "Enable release mode (stricter gates)"
+        type: boolean
+        default: false
+    secrets:
+      UNITY_LICENSE:
+        required: true
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASS:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASS:
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        required: false
+      APPLE_CERT_BASE64:
+        required: false
+      APPLE_CERT_PASSWORD:
+        required: false
+      APPLE_PROV_PROFILE_BASE64:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      APPLE_APP_ID:
+        required: false
+      TESTFLIGHT_APP_SPECIFIC_PASSWORD:
+        required: false
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+    outputs:
+      build-artifact-name:
+        description: "Name of the uploaded build artifact"
+        value: ${{ jobs.report.outputs.build-artifact-name }}
+      build-version:
+        description: "Resolved build version"
+        value: ${{ jobs.detect-changes.outputs.build-version }}
+      tests-passed:
+        description: "Whether tests passed"
+        value: ${{ jobs.test.outputs.tests-passed }}
+
+jobs:
+  # ─── 1. CHANGE DETECTION ─────────────────────────────────────────────────────
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      should-run-tests: ${{ steps.filter.outputs.should-run-tests }}
+      should-build-player: ${{ steps.filter.outputs.should-build-player }}
+      should-build-addressables: ${{ steps.filter.outputs.should-build-addressables }}
+      build-version: ${{ steps.resolve-version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: filter
+        run: |
+          # Get changed files
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || echo "")
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # Check if only docs/markdown changed
+          NON_DOC_CHANGES=$(echo "$CHANGED" | grep -v -E "^(docs/|\.md$|README)" || true)
+
+          if [[ -z "$NON_DOC_CHANGES" ]] && [[ -n "$CHANGED" ]]; then
+            echo "Only documentation changed — skipping tests and build"
+            echo "should-run-tests=false" >> "$GITHUB_OUTPUT"
+            echo "should-build-player=false" >> "$GITHUB_OUTPUT"
+            echo "should-build-addressables=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-run-tests=true" >> "$GITHUB_OUTPUT"
+            echo "should-build-player=true" >> "$GITHUB_OUTPUT"
+            # Addressables: only rebuild if addressables content changed
+            ADDR_CHANGES=$(echo "$CHANGED" | grep -E "Assets/.*Addressable" || true)
+            if [[ -n "$ADDR_CHANGES" ]]; then
+              echo "should-build-addressables=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should-build-addressables=${{ inputs.build-addressables }}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Resolve build version
+        id: resolve-version
+        run: |
+          VERSION=$(python3 scripts/common/resolve_project_version.py \
+            --project-path "${{ inputs.project-path }}" \
+            --config-path "${{ inputs.project-path }}/${{ inputs.build-config-path }}" \
+            --environment "${{ inputs.environment }}" \
+            --ref "${{ github.ref }}")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+  # ─── 2. VALIDATE ─────────────────────────────────────────────────────────────
+  validate:
+    name: Validate
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should-build-player == 'true'
+    uses: ./.github/workflows/unity-validate.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      build-config-path: ${{ inputs.build-config-path }}
+      target-platform: ${{ inputs.target-platform }}
+      fail-on-warnings: ${{ inputs.fail-on-warnings }}
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ─── 3. TEST ─────────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    needs: [detect-changes, validate]
+    if: |
+      needs.detect-changes.outputs.should-run-tests == 'true' &&
+      inputs.test-level != 'none' &&
+      needs.validate.outputs.validation-passed == 'true'
+    uses: ./.github/workflows/unity-test.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      test-level: ${{ inputs.test-level }}
+      cache-mode: ${{ inputs.cache-mode }}
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ─── 4. BUILD (platform dispatch) ────────────────────────────────────────────
+  build-android:
+    name: Build Android
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      inputs.target-platform == 'Android' &&
+      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.validate.outputs.validation-passed == 'true' &&
+      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
+    uses: ./.github/workflows/unity-build-android.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      deploy-target: ${{ inputs.deploy-target }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      release-mode: ${{ inputs.release-mode }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+    secrets: inherit
+
+  build-ios:
+    name: Build iOS
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      inputs.target-platform == 'iOS' &&
+      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.validate.outputs.validation-passed == 'true' &&
+      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
+    uses: ./.github/workflows/unity-build-ios.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      deploy-target: ${{ inputs.deploy-target }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      release-mode: ${{ inputs.release-mode }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+    secrets: inherit
+
+  build-windows:
+    name: Build Windows
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      inputs.target-platform == 'Windows64' &&
+      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.validate.outputs.validation-passed == 'true' &&
+      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
+    uses: ./.github/workflows/unity-build-windows.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      release-mode: ${{ inputs.release-mode }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+    secrets: inherit
+
+  build-webgl:
+    name: Build WebGL
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      inputs.target-platform == 'WebGL' &&
+      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.validate.outputs.validation-passed == 'true' &&
+      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
+    uses: ./.github/workflows/unity-build-webgl.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      deploy-target: ${{ inputs.deploy-target }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      release-mode: ${{ inputs.release-mode }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+    secrets: inherit
+
+  # ─── 5. REPORT (always runs) ─────────────────────────────────────────────────
+  report:
+    name: Build Report
+    needs: [detect-changes, validate, test, build-android, build-ios, build-windows, build-webgl]
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      build-artifact-name: ${{ steps.collect.outputs.artifact-name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect build output
+        id: collect
+        uses: ./.github/actions/collect-build-output
+        with:
+          target-platform: ${{ inputs.target-platform }}
+          build-version: ${{ needs.detect-changes.outputs.build-version }}
+          environment: ${{ inputs.environment }}
+          test-result: ${{ needs.test.result }}
+          build-result: ${{ needs.build-android.result || needs.build-ios.result || needs.build-windows.result || needs.build-webgl.result }}
+
+      - name: Upload build report
+        uses: ./.github/actions/upload-build-report
+        with:
+          build-version: ${{ needs.detect-changes.outputs.build-version }}
+          target-platform: ${{ inputs.target-platform }}
+          environment: ${{ inputs.environment }}
+          validation-passed: ${{ needs.validate.outputs.validation-passed }}
+          tests-passed: ${{ needs.test.outputs.tests-passed }}
+          build-result: ${{ needs.build-android.result || needs.build-ios.result || needs.build-windows.result || needs.build-webgl.result }}

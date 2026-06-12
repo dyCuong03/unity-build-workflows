@@ -1,0 +1,11 @@
+{
+  "projectName": "backpack-adventures",
+  "companyName": "BuzzelStudio",
+  "productName": "Backpack Adventures",
+  "bundleVersion": "1.4.0",
+  "outputDirectory": "Builds",
+  "scenes": ["Assets/Scenes/Bootstrap.unity"],
+  "android": {
+    "applicationId": "invalid bundle id with spaces!"
+  }
+}

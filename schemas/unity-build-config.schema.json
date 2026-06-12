@@ -1,0 +1,428 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/schemas/unity-build-config.schema.json",
+  "title": "UnityBuildConfig",
+  "description": "Schema for Unity CI/CD build configuration files used with unity-build-workflows.",
+  "type": "object",
+  "required": ["projectName", "companyName", "productName", "bundleVersion", "outputDirectory", "scenes"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference."
+    },
+
+    "projectName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Internal identifier for this project. Used in artifact names and workflow job names."
+    },
+
+    "companyName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Company name as it appears in Unity Player Settings."
+    },
+
+    "productName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Product name as it appears in Unity Player Settings and on-device."
+    },
+
+    "bundleVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version string (MAJOR.MINOR.PATCH). Used as the player-facing version."
+    },
+
+    "buildNumberStrategy": {
+      "type": "string",
+      "enum": ["github_run_number", "timestamp", "manual"],
+      "default": "github_run_number",
+      "description": "How the build number is derived. 'github_run_number' uses $GITHUB_RUN_NUMBER, 'timestamp' uses YYYYMMDDHHmm, 'manual' requires BUILD_NUMBER env var."
+    },
+
+    "outputDirectory": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative path inside the workspace where build artifacts are written."
+    },
+
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^Assets/.*\\.unity$"
+      },
+      "description": "Ordered list of scene paths (relative to project root) included in the build."
+    },
+
+    "scriptingBackend": {
+      "type": "string",
+      "enum": ["IL2CPP", "Mono"],
+      "default": "IL2CPP",
+      "description": "Unity scripting backend. IL2CPP is required for iOS and recommended for release builds."
+    },
+
+    "apiCompatibilityLevel": {
+      "type": "string",
+      "enum": ["NET_Standard_2_0", "NET_4_6", "NET_Standard_2_1"],
+      "default": "NET_Standard_2_1",
+      "description": ".NET API compatibility level."
+    },
+
+    "developmentBuild": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable Unity development build flag. Must be false for production environments."
+    },
+
+    "allowDebugging": {
+      "type": "boolean",
+      "default": false,
+      "description": "Attach script debugger. Only valid when developmentBuild is true. Must be false for production."
+    },
+
+    "connectProfiler": {
+      "type": "boolean",
+      "default": false,
+      "description": "Allow Unity Profiler to connect to this build."
+    },
+
+    "deepProfiling": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable deep profiling support (higher memory overhead)."
+    },
+
+    "cleanBuildCache": {
+      "type": "boolean",
+      "default": false,
+      "description": "Delete the Unity Library/ cache before building. Slower but avoids stale cache issues."
+    },
+
+    "runTests": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether to run Unity Test Runner (EditMode and PlayMode) before the build step."
+    },
+
+    "addressables": {
+      "type": "object",
+      "description": "Addressable Assets configuration.",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether Addressables are used in this project."
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Addressables build profile name (must match a profile defined in AddressableAssetSettings)."
+        },
+        "buildRemoteCatalog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Build and upload the remote content catalog."
+        }
+      }
+    },
+
+    "android": {
+      "type": "object",
+      "description": "Android platform configuration.",
+      "required": ["applicationId"],
+      "additionalProperties": false,
+      "properties": {
+        "applicationId": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*){1,}$",
+          "description": "Android application ID (package name), e.g. com.company.game."
+        },
+        "buildAppBundle": {
+          "type": "boolean",
+          "default": true,
+          "description": "Build an Android App Bundle (.aab) instead of an APK. Required for Play Store distribution."
+        },
+        "minSdkVersion": {
+          "type": "integer",
+          "minimum": 21,
+          "maximum": 35,
+          "default": 22,
+          "description": "Minimum Android API level supported."
+        },
+        "targetSdkVersion": {
+          "type": "integer",
+          "minimum": 29,
+          "maximum": 35,
+          "default": 34,
+          "description": "Target Android API level."
+        },
+        "architecture": {
+          "type": "string",
+          "enum": ["ARM64", "ARMv7", "x86_64", "All"],
+          "default": "ARM64",
+          "description": "CPU architecture(s) to include in the build."
+        },
+        "keystoreMode": {
+          "type": "string",
+          "enum": ["debug", "custom"],
+          "default": "custom",
+          "description": "Signing mode. 'debug' uses Android debug keystore, 'custom' requires KEYSTORE_* secrets."
+        },
+        "symbolExport": {
+          "type": "string",
+          "enum": ["none", "public", "debugging"],
+          "default": "none",
+          "description": "Symbol export level for crash reporting tools."
+        }
+      }
+    },
+
+    "ios": {
+      "type": "object",
+      "description": "iOS platform configuration.",
+      "required": ["bundleIdentifier"],
+      "additionalProperties": false,
+      "properties": {
+        "bundleIdentifier": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9\\-]*(\\.[a-zA-Z][a-zA-Z0-9\\-]*){1,}$",
+          "description": "iOS bundle identifier, e.g. com.company.game."
+        },
+        "buildNumber": {
+          "type": "string",
+          "pattern": "^\\d+$",
+          "description": "CFBundleVersion build number string. If omitted, derived from buildNumberStrategy."
+        },
+        "targetOSVersion": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$",
+          "default": "14.0",
+          "description": "Minimum iOS deployment target version."
+        },
+        "automaticSigning": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Xcode automatic signing. When false, manual provisioning profile is required via secrets."
+        },
+        "developmentTeam": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{10}$",
+          "description": "Apple Developer Team ID (10-character alphanumeric string)."
+        },
+        "exportMethod": {
+          "type": "string",
+          "enum": ["app-store", "ad-hoc", "enterprise", "development"],
+          "default": "app-store",
+          "description": "IPA export method."
+        },
+        "generateXcodeProjectOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Stop after generating the Xcode project, without building the IPA. Useful for local Xcode testing."
+        }
+      }
+    },
+
+    "windows": {
+      "type": "object",
+      "description": "Windows Standalone platform configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "type": "string",
+          "enum": ["x86_64", "x86"],
+          "default": "x86_64",
+          "description": "Target CPU architecture."
+        },
+        "outputName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the output executable (without .exe extension)."
+        },
+        "compressOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "Zip the output directory before uploading as an artifact."
+        }
+      }
+    },
+
+    "webgl": {
+      "type": "object",
+      "description": "WebGL platform configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "compressionFormat": {
+          "type": "string",
+          "enum": ["Brotli", "Gzip", "Disabled"],
+          "default": "Brotli",
+          "description": "WebGL build compression format."
+        },
+        "decompressionFallback": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include decompression fallback for servers that cannot serve Brotli/Gzip content-encoding."
+        },
+        "dataCaching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable IndexedDB caching of WebGL data files."
+        },
+        "memorySize": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 2048,
+          "default": 256,
+          "description": "Initial WASM heap size in MB."
+        },
+        "template": {
+          "type": "string",
+          "enum": ["Default", "Minimal", "PWA"],
+          "default": "Default",
+          "description": "WebGL HTML template to use."
+        },
+        "outputName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the WebGL output folder."
+        }
+      }
+    },
+
+    "gates": {
+      "type": "object",
+      "description": "Build quality gates that can block promotion or fail the pipeline.",
+      "additionalProperties": false,
+      "properties": {
+        "maxBuildSizeMB": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Hard limit on build artifact size in MB. Build fails if exceeded."
+        },
+        "warnBuildSizeIncreasePct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage increase in build size vs. baseline that triggers a warning annotation."
+        },
+        "failBuildSizeIncreasePct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage increase in build size vs. baseline that fails the build."
+        },
+        "failOnWarnings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Treat Unity compiler warnings as errors and fail the build."
+        },
+        "requiredValidationRules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "no_missing_references",
+              "no_missing_scripts",
+              "no_missing_prefabs",
+              "addressables_content_hash_stable",
+              "bundle_identifier_matches_config"
+            ]
+          },
+          "description": "List of validation rules that must pass before the build proceeds."
+        }
+      }
+    },
+
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary key-value pairs attached to the build. Included in build manifests and notifications.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+
+    "hooks": {
+      "type": "object",
+      "description": "Shell hook scripts invoked at lifecycle events.",
+      "additionalProperties": false,
+      "properties": {
+        "preBuild": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered list of hook identifiers (script names under scripts/hooks/) to run before the build."
+        },
+        "postBuild": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered list of hook identifiers to run after a successful build."
+        }
+      }
+    }
+  },
+
+  "if": {
+    "properties": {
+      "projectName": { "pattern": ".*production.*|.*prod.*" }
+    }
+  },
+  "then": {},
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "developmentBuild": { "const": true } },
+        "required": ["developmentBuild"]
+      },
+      "then": {
+        "not": {
+          "properties": {
+            "metadata": {
+              "properties": {
+                "environment": { "const": "production" }
+              },
+              "required": ["environment"]
+            }
+          },
+          "required": ["metadata"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "allowDebugging": { "const": true }
+        },
+        "required": ["allowDebugging"]
+      },
+      "then": {
+        "properties": {
+          "developmentBuild": { "const": true }
+        },
+        "required": ["developmentBuild"]
+      }
+    }
+  ],
+
+  "definitions": {
+    "bundleIdPattern": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-]*(\\.[a-zA-Z][a-zA-Z0-9_\\-]*){1,}$"
+    }
+  }
+}

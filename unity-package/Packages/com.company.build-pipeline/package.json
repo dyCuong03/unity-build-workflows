@@ -1,0 +1,25 @@
+{
+  "name": "com.company.build-pipeline",
+  "version": "1.0.0",
+  "displayName": "Company Build Pipeline",
+  "description": "Reusable Unity CI/CD build pipeline with layered config, validation rules, platform builders, and hooks.",
+  "unity": "2021.3",
+  "unityRelease": "0f1",
+  "documentationUrl": "",
+  "changelogUrl": "",
+  "licensesUrl": "",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "keywords": [
+    "build",
+    "pipeline",
+    "ci",
+    "cd",
+    "automation"
+  ],
+  "author": {
+    "name": "Company",
+    "email": "build@company.com"
+  }
+}

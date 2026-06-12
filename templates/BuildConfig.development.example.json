@@ -1,0 +1,89 @@
+{
+  "$schema": "../schemas/unity-build-config.schema.json",
+  "projectName": "MyUnityGame",
+  "companyName": "Acme Studios",
+  "productName": "My Unity Game [DEV]",
+  "bundleVersion": "1.0.0",
+  "buildNumberStrategy": "github_run_number",
+
+  "outputDirectory": "Builds/Development",
+
+  "scenes": [
+    "Assets/Scenes/Boot.unity",
+    "Assets/Scenes/MainMenu.unity",
+    "Assets/Scenes/Gameplay.unity",
+    "Assets/Scenes/GameOver.unity"
+  ],
+
+  "scriptingBackend": "Mono",
+  "apiCompatibilityLevel": "NET_Standard_2_1",
+
+  "developmentBuild": true,
+  "allowDebugging": true,
+  "connectProfiler": true,
+  "deepProfiling": false,
+  "cleanBuildCache": false,
+
+  "runTests": true,
+
+  "addressables": {
+    "enabled": true,
+    "profile": "Development",
+    "buildRemoteCatalog": false
+  },
+
+  "android": {
+    "applicationId": "com.acmestudios.myunitygame.dev",
+    "buildAppBundle": false,
+    "minSdkVersion": 22,
+    "targetSdkVersion": 34,
+    "architecture": "ARM64",
+    "keystoreMode": "debug",
+    "symbolExport": "debugging"
+  },
+
+  "ios": {
+    "bundleIdentifier": "com.acmestudios.myunitygame.dev",
+    "targetOSVersion": "14.0",
+    "automaticSigning": true,
+    "developmentTeam": "ABCDE12345",
+    "exportMethod": "development",
+    "generateXcodeProjectOnly": false
+  },
+
+  "windows": {
+    "architecture": "x86_64",
+    "outputName": "MyUnityGame_Dev",
+    "compressOutput": false
+  },
+
+  "webgl": {
+    "compressionFormat": "Disabled",
+    "decompressionFallback": false,
+    "dataCaching": false,
+    "memorySize": 512,
+    "template": "Default",
+    "outputName": "WebGL_Dev"
+  },
+
+  "gates": {
+    "maxBuildSizeMB": 1000,
+    "warnBuildSizeIncreasePct": 20,
+    "failBuildSizeIncreasePct": 50,
+    "failOnWarnings": false,
+    "requiredValidationRules": [
+      "no_missing_scripts"
+    ]
+  },
+
+  "metadata": {
+    "repository": "https://github.com/acmestudios/myunitygame",
+    "team": "mobile",
+    "environment": "development"
+  },
+
+  "hooks": {
+    "preBuild": ["inject-dev-watermark"],
+    "postBuild": ["notify-slack-dev-channel"]
+  }
+}

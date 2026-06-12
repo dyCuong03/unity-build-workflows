@@ -1,0 +1,93 @@
+{
+  "$schema": "../schemas/unity-build-config.schema.json",
+  "projectName": "MyUnityGame",
+  "companyName": "Acme Studios",
+  "productName": "My Unity Game",
+  "bundleVersion": "1.0.0",
+  "buildNumberStrategy": "github_run_number",
+
+  "outputDirectory": "Builds/Staging",
+
+  "scenes": [
+    "Assets/Scenes/Boot.unity",
+    "Assets/Scenes/MainMenu.unity",
+    "Assets/Scenes/Gameplay.unity",
+    "Assets/Scenes/GameOver.unity"
+  ],
+
+  "scriptingBackend": "IL2CPP",
+  "apiCompatibilityLevel": "NET_Standard_2_1",
+
+  "developmentBuild": false,
+  "allowDebugging": false,
+  "connectProfiler": false,
+  "deepProfiling": false,
+  "cleanBuildCache": false,
+
+  "runTests": true,
+
+  "addressables": {
+    "enabled": true,
+    "profile": "Staging",
+    "buildRemoteCatalog": true
+  },
+
+  "android": {
+    "applicationId": "com.acmestudios.myunitygame",
+    "buildAppBundle": true,
+    "minSdkVersion": 22,
+    "targetSdkVersion": 34,
+    "architecture": "ARM64",
+    "keystoreMode": "custom",
+    "symbolExport": "public"
+  },
+
+  "ios": {
+    "bundleIdentifier": "com.acmestudios.myunitygame",
+    "targetOSVersion": "14.0",
+    "automaticSigning": false,
+    "developmentTeam": "ABCDE12345",
+    "exportMethod": "ad-hoc",
+    "generateXcodeProjectOnly": false
+  },
+
+  "windows": {
+    "architecture": "x86_64",
+    "outputName": "MyUnityGame",
+    "compressOutput": true
+  },
+
+  "webgl": {
+    "compressionFormat": "Gzip",
+    "decompressionFallback": true,
+    "dataCaching": true,
+    "memorySize": 256,
+    "template": "Default",
+    "outputName": "WebGL"
+  },
+
+  "gates": {
+    "maxBuildSizeMB": 600,
+    "warnBuildSizeIncreasePct": 10,
+    "failBuildSizeIncreasePct": 30,
+    "failOnWarnings": true,
+    "requiredValidationRules": [
+      "no_missing_references",
+      "no_missing_scripts",
+      "addressables_content_hash_stable",
+      "bundle_identifier_matches_config"
+    ]
+  },
+
+  "metadata": {
+    "repository": "https://github.com/acmestudios/myunitygame",
+    "team": "mobile",
+    "environment": "staging",
+    "distribution": "firebase-app-distribution"
+  },
+
+  "hooks": {
+    "preBuild": ["validate-asset-integrity"],
+    "postBuild": ["upload-to-firebase", "notify-qa-team"]
+  }
+}

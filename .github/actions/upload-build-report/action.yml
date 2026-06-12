@@ -1,0 +1,107 @@
+name: Upload Build Report
+description: Upload build report artifact and write GitHub Step Summary
+
+inputs:
+  build-version:
+    description: "Build version string"
+    required: true
+  target-platform:
+    description: "Target build platform"
+    required: true
+  environment:
+    description: "Build environment"
+    required: false
+    default: "development"
+  validation-passed:
+    description: "Whether validation passed"
+    required: false
+    default: "true"
+  tests-passed:
+    description: "Whether tests passed"
+    required: false
+    default: ""
+  build-result:
+    description: "Overall build result"
+    required: false
+    default: "unknown"
+  retention-days:
+    description: "Days to retain the report artifact"
+    required: false
+    default: "14"
+
+runs:
+  using: composite
+  steps:
+    - name: Generate build report JSON
+      shell: bash
+      run: |
+        TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        cat > build-report.json << EOF
+        {
+          "build_version": "${{ inputs.build-version }}",
+          "target_platform": "${{ inputs.target-platform }}",
+          "environment": "${{ inputs.environment }}",
+          "validation_passed": ${{ inputs.validation-passed == 'true' }},
+          "tests_passed": ${{ inputs.tests-passed == 'true' }},
+          "build_result": "${{ inputs.build-result }}",
+          "run_number": ${{ github.run_number }},
+          "run_id": "${{ github.run_id }}",
+          "commit_sha": "${{ github.sha }}",
+          "ref": "${{ github.ref }}",
+          "repository": "${{ github.repository }}",
+          "timestamp": "$TIMESTAMP",
+          "actor": "${{ github.actor }}"
+        }
+        EOF
+        echo "Build report written:"
+        cat build-report.json
+
+    - name: Write final step summary
+      shell: bash
+      run: |
+        PLATFORM="${{ inputs.target-platform }}"
+        VERSION="${{ inputs.build-version }}"
+        ENV="${{ inputs.environment }}"
+        VALIDATION="${{ inputs.validation-passed }}"
+        TESTS="${{ inputs.tests-passed }}"
+        BUILD="${{ inputs.build-result }}"
+
+        # Status helpers
+        bool_icon() { [[ "$1" == "true" ]] && echo "✅" || echo "❌"; }
+        result_icon() {
+          case "$1" in
+            success) echo "✅" ;;
+            failure) echo "❌" ;;
+            skipped) echo "⏭️" ;;
+            *)       echo "❓" ;;
+          esac
+        }
+
+        cat >> "$GITHUB_STEP_SUMMARY" << EOF
+        ---
+        ## Final Build Report
+
+        **Version:** \`$VERSION\` | **Platform:** \`$PLATFORM\` | **Environment:** \`$ENV\`
+
+        | Check            | Result                              |
+        |------------------|-------------------------------------|
+        | Validation       | $(bool_icon "$VALIDATION") $VALIDATION   |
+        | Tests            | $(bool_icon "$TESTS") ${TESTS:-skipped}  |
+        | Build            | $(result_icon "$BUILD") $BUILD            |
+
+        **Repository:** ${{ github.repository }}
+        **Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        **Commit:** [\`${{ github.sha }}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+        EOF
+
+    - name: Upload build report artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-report-${{ inputs.target-platform }}-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
+        path: |
+          build-report.json
+          validation-report.json
+          validation-warnings.txt
+          collected-logs/
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

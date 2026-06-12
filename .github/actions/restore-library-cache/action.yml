@@ -1,0 +1,97 @@
+name: Restore Unity Library Cache
+description: Restore (and optionally save) the Unity Library folder cache
+
+inputs:
+  project-path:
+    description: "Path to Unity project root"
+    required: false
+    default: "."
+  unity-version:
+    description: "Unity editor version"
+    required: true
+  target-platform:
+    description: "Build target platform"
+    required: true
+  cache-mode:
+    description: "Cache mode: off / safe / aggressive"
+    required: false
+    default: "safe"
+
+outputs:
+  cache-hit:
+    description: "Whether the cache was restored"
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-key:
+    description: "The cache key used"
+    value: ${{ steps.compute-key.outputs.key }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute cache key
+      id: compute-key
+      shell: bash
+      run: |
+        MODE="${{ inputs.cache-mode }}"
+        UNITY_VERSION="${{ inputs.unity-version }}"
+        PLATFORM="${{ inputs.target-platform }}"
+        PROJECT="${{ inputs.project-path }}"
+        SCHEMA_VERSION="cache-schema-v1"
+
+        # Hash the package manifests
+        MANIFEST_HASH="none"
+        MANIFEST_FILE="$PROJECT/Packages/manifest.json"
+        LOCK_FILE="$PROJECT/Packages/packages-lock.json"
+        if [[ -f "$MANIFEST_FILE" && -f "$LOCK_FILE" ]]; then
+          MANIFEST_HASH=$(sha256sum "$MANIFEST_FILE" "$LOCK_FILE" | sha256sum | cut -c1-16)
+        elif [[ -f "$MANIFEST_FILE" ]]; then
+          MANIFEST_HASH=$(sha256sum "$MANIFEST_FILE" | cut -c1-16)
+        fi
+
+        BASE_KEY="${{ runner.os }}-unity-${UNITY_VERSION}-${PLATFORM}-${MANIFEST_HASH}-${SCHEMA_VERSION}"
+
+        case "$MODE" in
+          off)
+            echo "key=" >> "$GITHUB_OUTPUT"
+            echo "restore-keys=" >> "$GITHUB_OUTPUT"
+            ;;
+          safe)
+            echo "key=${BASE_KEY}" >> "$GITHUB_OUTPUT"
+            echo "restore-keys=${{ runner.os }}-unity-${UNITY_VERSION}-${PLATFORM}-" >> "$GITHUB_OUTPUT"
+            ;;
+          aggressive)
+            echo "key=${BASE_KEY}" >> "$GITHUB_OUTPUT"
+            printf "restore-keys=%s\n%s\n%s\n" \
+              "${{ runner.os }}-unity-${UNITY_VERSION}-${PLATFORM}-" \
+              "${{ runner.os }}-unity-${UNITY_VERSION}-" \
+              "${{ runner.os }}-unity-" \
+              >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::Unknown cache-mode: $MODE (expected off/safe/aggressive)"
+            exit 1
+            ;;
+        esac
+        echo "Computed cache key: ${BASE_KEY} (mode=$MODE)"
+
+    - name: Restore Unity Library cache
+      id: restore
+      if: inputs.cache-mode != 'off'
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.project-path }}/Library
+        key: ${{ steps.compute-key.outputs.key }}
+        restore-keys: ${{ steps.compute-key.outputs.restore-keys }}
+
+    - name: Report cache status
+      shell: bash
+      run: |
+        MODE="${{ inputs.cache-mode }}"
+        HIT="${{ steps.restore.outputs.cache-hit }}"
+        if [[ "$MODE" == "off" ]]; then
+          echo "Library cache: DISABLED"
+        elif [[ "$HIT" == "true" ]]; then
+          echo "Library cache: HIT (restored)"
+        else
+          echo "Library cache: MISS (will be saved after build)"
+        fi

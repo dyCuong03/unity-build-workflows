@@ -1,0 +1,56 @@
+name: Unity CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: false
+        default: "development"
+        type: choice
+        options: [development, staging, production]
+
+jobs:
+  validate:
+    name: Validate BuildConfig
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-validate.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      build-config-path: "BuildConfig"
+      target-platform: "Android"
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+  test:
+    name: Run Tests
+    needs: validate
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-test.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      test-level: "editmode"
+      cache-mode: "safe"
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+
+  build:
+    name: Build Android
+    needs: test
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v1
+    with:
+      project-path: "."
+      unity-version: "2022.3.45f1"
+      build-target: "Android"
+      build-config-path: "BuildConfig"
+      environment: ${{ inputs.environment || 'development' }}
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
