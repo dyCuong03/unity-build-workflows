@@ -1,0 +1,186 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/docker/metadata/image-manifest.schema.json",
+  "title": "UnityImageManifest",
+  "description": "Schema for BuzzelStudio Unity Docker image manifests. One manifest per image build.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "imageReference",
+    "unityVersion",
+    "variant",
+    "buildTimestamp",
+    "contractVersion"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference for tooling validation."
+    },
+
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this manifest schema (MAJOR.MINOR.PATCH).",
+      "examples": ["1.0.0"]
+    },
+
+    "contractVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Integer contract version. Incremented on breaking changes to image API or entrypoint behaviour.",
+      "examples": [1]
+    },
+
+    "imageReference": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Fully-qualified image reference including registry, name, and tag.",
+      "examples": [
+        "ghcr.io/buzzelstudio/unity-android:6000.0.26f1",
+        "buzzelstudio/unity-base:6000.0.26f1"
+      ]
+    },
+
+    "imageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "OCI image digest (sha256 hash of the manifest). Set after push.",
+      "examples": ["sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab"]
+    },
+
+    "unityVersion": {
+      "type": "string",
+      "pattern": "^\\d{4}\\.\\d+\\.\\d+[a-z]\\d+$",
+      "description": "Full Unity Editor version string.",
+      "examples": ["6000.0.26f1", "2022.3.47f1"]
+    },
+
+    "unityChangeset": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{12,40}$",
+      "description": "Unity build changeset hash (from Unity download archive).",
+      "examples": ["a5cf46f7893b"]
+    },
+
+    "baseImageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Digest of the upstream GameCI base image this image was built FROM.",
+      "examples": ["sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"]
+    },
+
+    "variant": {
+      "type": "string",
+      "enum": ["base", "android", "webgl", "linux-il2cpp", "ios"],
+      "description": "Image variant identifier corresponding to the Unity module set."
+    },
+
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "List of Unity module names installed in this image.",
+      "examples": [
+        ["android", "android-sdk-ndk-tools"],
+        ["webgl"],
+        ["linux-il2cpp", "linux-server"]
+      ]
+    },
+
+    "osVersion": {
+      "type": "string",
+      "description": "Operating system version string from the container base.",
+      "examples": ["Ubuntu 22.04.4 LTS"]
+    },
+
+    "toolingVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of the BuzzelStudio tooling layer (entrypoint.sh and supporting scripts).",
+      "examples": ["1.0.0"]
+    },
+
+    "buildTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp when this image was built.",
+      "examples": ["2026-06-12T10:30:00Z"]
+    },
+
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$",
+      "description": "Git commit SHA of the unity-build-workflows repo used to build this image.",
+      "examples": ["5bd161f", "5bd161fabc1234567890abcdef1234567890abcd"]
+    },
+
+    "supportedTargets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "Android",
+          "iOS",
+          "WebGL",
+          "StandaloneLinux64",
+          "LinuxServer",
+          "StandaloneWindows64",
+          "StandaloneOSX"
+        ]
+      },
+      "description": "List of Unity BuildTarget values this image can produce.",
+      "examples": [
+        ["Android"],
+        ["WebGL"],
+        ["StandaloneLinux64", "LinuxServer"]
+      ]
+    },
+
+    "supportedScriptingBackends": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["IL2CPP", "Mono"]
+      },
+      "description": "Scripting backends available in this image.",
+      "examples": [
+        ["IL2CPP", "Mono"],
+        ["Mono"]
+      ]
+    },
+
+    "androidSdkVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Android API level of the SDK installed. Only set for the android variant.",
+      "examples": [34]
+    },
+
+    "androidNdkVersion": {
+      "type": "string",
+      "pattern": "^r?\\d+[a-z]?$",
+      "description": "Android NDK version string. Only set for the android variant.",
+      "examples": ["r23b", "27"]
+    },
+
+    "jdkVersion": {
+      "type": "string",
+      "description": "JDK version string. Only set when a JDK is present (android variant).",
+      "examples": ["17.0.9", "11.0.20"]
+    }
+  },
+
+  "if": {
+    "properties": {
+      "variant": { "const": "android" }
+    },
+    "required": ["variant"]
+  },
+  "then": {
+    "required": ["androidSdkVersion", "androidNdkVersion", "jdkVersion"]
+  }
+}

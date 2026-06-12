@@ -1,27 +1,27 @@
 name: Unity Nightly Multi-Platform
 
+# Docker-mandatory nightly builds.
+# Supported matrix platforms: Android, WebGL, Linux64
+# iOS and Windows are not supported in Docker-only mode.
+
 on:
   schedule:
-    - cron: "0 2 * * *"  # 2:00 AM UTC daily
+    - cron: '0 2 * * *'   # 02:00 UTC daily
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Comma-separated platforms to build (Android,iOS,Windows64,WebGL)"
+        description: Comma-separated platforms (Android, WebGL, Linux64)
         required: false
-        default: "Android,iOS,Windows64,WebGL"
+        default: Android,WebGL,Linux64
       test-level:
-        description: "Test level"
+        description: Test level to run before builds
         required: false
-        default: "full"
+        default: full
         type: choice
-        options:
-          - none
-          - editmode
-          - playmode
-          - full
+        options: [none, editmode, playmode, full]
 
 jobs:
-  # ─── MATRIX SETUP ─────────────────────────────────────────────────────────────
+  # ─── MATRIX SETUP ──────────────────────────────────────────────────────────────
   setup-matrix:
     name: Setup Build Matrix
     runs-on: ubuntu-latest
@@ -35,45 +35,39 @@ jobs:
 
       - name: Read Unity version from project
         id: read-version
+        shell: bash
         run: |
           VERSION=$(python3 scripts/common/resolve_project_version.py \
             --project-path "." \
-            --config-path "BuildConfig" \
-            --environment "development" \
-            --ref "${{ github.ref }}")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            --config-path  "BuildConfig" \
+            --environment  "development" \
+            --ref          "${{ github.ref }}")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Unity version: ${VERSION}"
 
-      - name: Build platform matrix
+      - name: Build Docker-only platform matrix
         id: build-matrix
+        shell: bash
         run: |
-          PLATFORMS="${{ github.event.inputs.platforms || 'Android,iOS,Windows64,WebGL' }}"
+          PLATFORMS="${{ inputs.platforms || 'Android,WebGL,Linux64' }}"
+
+          # Supported Docker platforms only
+          ALLOWED="Android WebGL Linux64 LinuxServer"
+
+          MATRIX_ENTRIES="[]"
           IFS=',' read -ra PLATFORM_ARRAY <<< "$PLATFORMS"
-          MATRIX_JSON="["
-          FIRST=true
           for platform in "${PLATFORM_ARRAY[@]}"; do
             platform=$(echo "$platform" | xargs)  # trim whitespace
-            if [[ "$FIRST" == "false" ]]; then
-              MATRIX_JSON="$MATRIX_JSON,"
+            if ! echo "$ALLOWED" | grep -qw "$platform"; then
+              echo "::warning::Platform '${platform}' is not supported in Docker-only mode — skipping."
+              continue
             fi
-            FIRST=false
-
-            case "$platform" in
-              iOS)
-                RUNNER="macos-latest"
-                ;;
-              Windows64)
-                RUNNER="windows-latest"
-                ;;
-              *)
-                RUNNER="ubuntu-latest"
-                ;;
-            esac
-
-            MATRIX_JSON="$MATRIX_JSON{\"platform\":\"$platform\",\"runner\":\"$RUNNER\"}"
+            MATRIX_ENTRIES=$(echo "$MATRIX_ENTRIES" | \
+              python3 -c "import sys,json; m=json.load(sys.stdin); m.append({'platform': '${platform}'}); print(json.dumps(m))")
           done
-          MATRIX_JSON="$MATRIX_JSON]"
-          echo "matrix={\"include\":$MATRIX_JSON}" >> "$GITHUB_OUTPUT"
-          echo "Matrix: $MATRIX_JSON"
+
+          echo "matrix={\"include\":${MATRIX_ENTRIES}}" >> "$GITHUB_OUTPUT"
+          echo "Final matrix: ${MATRIX_ENTRIES}"
 
   # ─── NIGHTLY TESTS ─────────────────────────────────────────────────────────────
   nightly-test:
@@ -82,16 +76,17 @@ jobs:
     uses: ./.github/workflows/unity-test.yml
     with:
       unity-version: ${{ needs.setup-matrix.outputs.unity-version }}
-      test-level: ${{ github.event.inputs.test-level || 'full' }}
-      cache-mode: "safe"
+      target-platform: Linux64
+      test-level: ${{ inputs.test-level || 'full' }}
+      cache-mode: safe
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-  # ─── NIGHTLY BUILDS (MATRIX) ──────────────────────────────────────────────────
+  # ─── NIGHTLY BUILDS (MATRIX) ───────────────────────────────────────────────────
   nightly-build:
-    name: Nightly Build - ${{ matrix.platform }}
+    name: Nightly Build — ${{ matrix.platform }}
     needs: [setup-matrix, nightly-test]
     if: always() && (needs.nightly-test.outputs.tests-passed == 'true' || needs.nightly-test.result == 'skipped')
     strategy:
@@ -100,23 +95,22 @@ jobs:
 
     uses: ./.github/workflows/unity-build.yml
     with:
-      project-path: "."
+      project-path: '.'
       unity-version: ${{ needs.setup-matrix.outputs.unity-version }}
       target-platform: ${{ matrix.platform }}
-      environment: "development"
-      build-config-path: "BuildConfig"
-      test-level: "none"
-      cache-mode: "safe"
+      environment: development
+      build-config-path: BuildConfig
+      test-level: none
+      cache-mode: safe
       build-addressables: false
       upload-artifact: true
-      deploy-target: "none"
+      deploy-target: none
       clean-build: false
       artifact-retention-days: 3
-      fail-on-warnings: false
       release-mode: false
     secrets: inherit
 
-  # ─── NIGHTLY SUMMARY ──────────────────────────────────────────────────────────
+  # ─── NIGHTLY SUMMARY ───────────────────────────────────────────────────────────
   nightly-summary:
     name: Nightly Summary
     needs: [setup-matrix, nightly-test, nightly-build]
@@ -124,26 +118,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Generate nightly summary
+        shell: bash
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          # Nightly Build Summary - $(date -u +"%Y-%m-%d")
+          # Nightly Build Summary — $(date -u +"%Y-%m-%d")
 
-          | Job | Status |
-          |-----|--------|
-          | Tests | ${{ needs.nightly-test.result }} |
-          | Builds | ${{ needs.nightly-build.result }} |
+          | Job     | Status |
+          |---|---|
+          | Tests   | ${{ needs.nightly-test.result }} |
+          | Builds  | ${{ needs.nightly-build.result }} |
 
           **Unity Version:** ${{ needs.setup-matrix.outputs.unity-version }}
+          **Platforms:** ${{ inputs.platforms || 'Android, WebGL, Linux64' }}
           **Triggered by:** ${{ github.event_name }}
           **Run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          > Note: iOS and Windows are not included — Docker-only mode supports Android, WebGL, and Linux targets.
           EOF
 
-      - name: Notify on failure
-        if: failure() || needs.nightly-build.result == 'failure'
+      - name: Flag failures
+        if: needs.nightly-test.result == 'failure' || needs.nightly-build.result == 'failure'
+        shell: bash
         run: |
-          echo "::warning::Nightly build had failures. Check the summary above."
-          # Add Slack/email notification here if desired
+          echo "::warning::Nightly build had failures. Review the Step Summary and artifact logs."
+          exit 1

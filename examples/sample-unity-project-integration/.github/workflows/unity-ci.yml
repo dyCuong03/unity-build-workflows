@@ -1,4 +1,4 @@
-name: Unity CI
+name: Unity Docker CI
 
 on:
   push:
@@ -13,44 +13,27 @@ on:
         default: "development"
         type: choice
         options: [development, staging, production]
+      platform:
+        description: "Target platform"
+        required: false
+        default: "Android"
+        type: choice
+        options: [Android, WebGL, Linux64]
+
+# All Unity operations run inside Docker containers.
+# No native Unity installation required on the CI runner.
 
 jobs:
-  validate:
-    name: Validate BuildConfig
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-validate.yml@v1
+  build:
+    name: Build ${{ inputs.platform || 'Android' }}
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
     with:
       project-path: "."
-      unity-version: "2022.3.45f1"
+      unity-version: "6000.0.26f1"
+      target-platform: ${{ inputs.platform || 'Android' }}
+      environment: ${{ inputs.environment || 'development' }}
       build-config-path: "BuildConfig"
-      target-platform: "Android"
-    secrets:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-
-  test:
-    name: Run Tests
-    needs: validate
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-test.yml@v1
-    with:
-      project-path: "."
-      unity-version: "2022.3.45f1"
       test-level: "editmode"
       cache-mode: "safe"
-    secrets:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-
-  build:
-    name: Build Android
-    needs: test
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v1
-    with:
-      project-path: "."
-      unity-version: "2022.3.45f1"
-      build-target: "Android"
-      build-config-path: "BuildConfig"
-      environment: ${{ inputs.environment || 'development' }}
-    secrets:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+      upload-artifact: true
+    secrets: inherit

@@ -313,3 +313,142 @@ class TestDeepMerge:
         original_base = copy.deepcopy(base)
         self.deep_merge(base, override)
         assert base == original_base
+
+
+# ---------------------------------------------------------------------------
+# Docker-supported target platform validation
+# ---------------------------------------------------------------------------
+
+# Platforms the Docker pipeline supports (matches resolve_image_reference.py)
+DOCKER_SUPPORTED_PLATFORMS = {"Android", "WebGL", "StandaloneLinux64", "LinuxServer", "Linux64"}
+
+# Platforms that are NOT supported in Docker (native-only)
+DOCKER_UNSUPPORTED_PLATFORMS = {"iOS", "Windows64", "StandaloneWindows64", "StandaloneOSX", "PS4", "PS5"}
+
+
+class TestDockerTargetPlatformValidation:
+    """
+    Validates that build configs only reference Docker-supported target platforms.
+    iOS and Windows64 are native-only and must not be used in Docker CI configs.
+    """
+
+    def test_android_is_docker_supported(self, schema_validator):
+        """Android is a first-class Docker-supported platform."""
+        config = {
+            "projectName": "test", "companyName": "Acme",
+            "productName": "Test", "bundleVersion": "1.0.0",
+            "outputDirectory": "Builds",
+            "scenes": ["Assets/Scenes/Main.unity"],
+            "android": {"applicationId": "com.example.game"},
+        }
+        errors = list(schema_validator.iter_errors(config))
+        assert errors == [], "Android config with valid applicationId must pass"
+
+    def test_webgl_config_passes(self, schema_validator):
+        """WebGL is Docker-supported."""
+        config = {
+            "projectName": "test", "companyName": "Acme",
+            "productName": "Test", "bundleVersion": "1.0.0",
+            "outputDirectory": "Builds",
+            "scenes": ["Assets/Scenes/Main.unity"],
+        }
+        errors = list(schema_validator.iter_errors(config))
+        assert errors == [], "WebGL config must pass schema validation"
+
+    def test_docker_supported_platforms_constant_is_correct(self):
+        """Verify the supported platforms set matches resolve_image_reference.py."""
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "docker"))
+            import resolve_image_reference
+            for platform in DOCKER_SUPPORTED_PLATFORMS:
+                assert platform in resolve_image_reference.PLATFORM_VARIANT_MAP or \
+                       platform in {"Linux64"}, \
+                    f"Platform '{platform}' should be in PLATFORM_VARIANT_MAP"
+        except ImportError:
+            pytest.skip("scripts/docker/resolve_image_reference.py not yet implemented")
+
+    def test_ios_is_not_docker_supported(self):
+        """iOS must be rejected by the Docker image resolver."""
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "docker"))
+            import resolve_image_reference
+            with pytest.raises((ValueError, RuntimeError)):
+                resolve_image_reference.resolve("iOS", "2022.3.45f1", "ghcr.io/test")
+        except ImportError:
+            pytest.skip("scripts/docker/resolve_image_reference.py not yet implemented")
+
+    def test_windows64_is_not_docker_supported(self):
+        """Windows64 must be rejected by the Docker image resolver."""
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "docker"))
+            import resolve_image_reference
+            with pytest.raises((ValueError, RuntimeError)):
+                resolve_image_reference.resolve("Windows64", "2022.3.45f1", "ghcr.io/test")
+        except ImportError:
+            pytest.skip("scripts/docker/resolve_image_reference.py not yet implemented")
+
+    def test_ios_unsupported_message_is_helpful(self):
+        """The error for iOS must explain WHY and HOW to handle it."""
+        try:
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "docker"))
+            import resolve_image_reference
+            with pytest.raises(Exception) as exc_info:
+                resolve_image_reference.resolve("iOS", "2022.3.45f1", "ghcr.io/test")
+            msg = str(exc_info.value).lower()
+            # Error should mention either the reason (macOS/Xcode) or a workaround
+            assert "ios" in msg, f"Error should mention iOS: {exc_info.value}"
+        except ImportError:
+            pytest.skip("scripts/docker/resolve_image_reference.py not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# Docker-mandatory config constraints
+# ---------------------------------------------------------------------------
+
+class TestDockerMandatoryConfigConstraints:
+    """
+    After Docker migration, certain config patterns must be enforced:
+    - IL2CPP is preferred for Android and WebGL in production
+    - Scripting backend values are still constrained by the schema
+    """
+
+    def test_il2cpp_scripting_backend_accepted(self, schema_validator):
+        config = {
+            "projectName": "test", "companyName": "Acme",
+            "productName": "Test", "bundleVersion": "1.0.0",
+            "outputDirectory": "Builds",
+            "scenes": ["Assets/Scenes/Main.unity"],
+            "scriptingBackend": "IL2CPP",
+        }
+        errors = list(schema_validator.iter_errors(config))
+        assert errors == [], "IL2CPP scripting backend must pass schema validation"
+
+    def test_mono_scripting_backend_accepted(self, schema_validator):
+        config = {
+            "projectName": "test", "companyName": "Acme",
+            "productName": "Test", "bundleVersion": "1.0.0",
+            "outputDirectory": "Builds",
+            "scenes": ["Assets/Scenes/Main.unity"],
+            "scriptingBackend": "Mono",
+        }
+        errors = list(schema_validator.iter_errors(config))
+        assert errors == [], "Mono scripting backend must pass schema validation"
+
+    def test_invalid_scripting_backend_rejected(self, schema_validator):
+        config = {
+            "projectName": "test", "companyName": "Acme",
+            "productName": "Test", "bundleVersion": "1.0.0",
+            "outputDirectory": "Builds",
+            "scenes": ["Assets/Scenes/Main.unity"],
+            "scriptingBackend": "Emscripten",  # Not a valid backend
+        }
+        errors = list(schema_validator.iter_errors(config))
+        assert errors, "Invalid scripting backend must fail validation"

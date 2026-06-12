@@ -1,0 +1,176 @@
+name: Scan Unity Docker Images
+
+on:
+  schedule:
+    # Every Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      unity-version:
+        description: Unity version to scan (leave blank to scan all published versions)
+        required: false
+        type: string
+      severity-threshold:
+        description: Minimum severity to report
+        required: false
+        type: choice
+        options: [CRITICAL, HIGH, MEDIUM, LOW]
+        default: HIGH
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REPO: ${{ github.repository_owner }}/unity-editor
+
+jobs:
+  discover-images:
+    name: Discover published image tags
+    runs-on: ubuntu-latest
+    outputs:
+      image-matrix: ${{ steps.discover.outputs.image-matrix }}
+
+    steps:
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Discover image tags to scan
+        id: discover
+        shell: bash
+        env:
+          UNITY_VERSION: ${{ inputs.unity-version }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_REPO: ${{ env.IMAGE_REPO }}
+        run: |
+          VARIANTS="android webgl linux"
+          MATRIX_ENTRIES="[]"
+
+          if [ -n "$UNITY_VERSION" ]; then
+            # Scan only the specified version
+            for variant in $VARIANTS; do
+              TAG="${UNITY_VERSION}-${variant}"
+              REF="${REGISTRY}/${IMAGE_REPO}:${TAG}"
+              if docker manifest inspect "$REF" > /dev/null 2>&1; then
+                MATRIX_ENTRIES=$(echo "$MATRIX_ENTRIES" | \
+                  python3 -c "import sys,json; m=json.load(sys.stdin); m.append({'image': '${REF}', 'variant': '${variant}', 'version': '${UNITY_VERSION}'}); print(json.dumps(m))")
+              fi
+            done
+          else
+            # Scan the most recent image for each variant
+            for variant in $VARIANTS; do
+              # List tags for this variant and pick the most recent non-run-numbered tag
+              TAGS=$(docker run --rm ghcr.io/regclient/regctl:latest tag ls \
+                "${REGISTRY}/${IMAGE_REPO}" 2>/dev/null | grep "\-${variant}$" | head -5 || true)
+              for tag in $TAGS; do
+                REF="${REGISTRY}/${IMAGE_REPO}:${tag}"
+                VERSION=$(echo "$tag" | sed "s/-${variant}$//")
+                MATRIX_ENTRIES=$(echo "$MATRIX_ENTRIES" | \
+                  python3 -c "import sys,json; m=json.load(sys.stdin); m.append({'image': '${REF}', 'variant': '${variant}', 'version': '${VERSION}'}); print(json.dumps(m))")
+                break  # Only newest tag per variant
+              done
+            done
+          fi
+
+          echo "image-matrix=${MATRIX_ENTRIES}" >> "$GITHUB_OUTPUT"
+          echo "Images to scan:"
+          echo "$MATRIX_ENTRIES" | python3 -m json.tool
+
+  scan-image:
+    name: Scan ${{ matrix.variant }} (${{ matrix.version }})
+    needs: discover-images
+    if: needs.discover-images.outputs.image-matrix != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover-images.outputs.image-matrix) }}
+
+    steps:
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan image — ${{ matrix.image }}
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image }}
+          format: sarif
+          output: trivy-results-${{ matrix.variant }}.sarif
+          severity: ${{ inputs.severity-threshold || 'HIGH' }},CRITICAL
+          ignore-unfixed: false
+          vuln-type: os,library
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results-${{ matrix.variant }}.sarif
+          category: weekly-scan-${{ matrix.variant }}
+
+      - name: Generate CVE summary
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+          VERSION: ${{ matrix.version }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          # Re-run trivy in table format for the step summary
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity "${{ inputs.severity-threshold || 'HIGH' }},CRITICAL" \
+            --format table \
+            "$IMAGE" > trivy-table.txt 2>&1 || true
+
+          CVE_COUNT=$(grep -c "^CVE-" trivy-table.txt 2>/dev/null || echo 0)
+
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Scan Results — ${VARIANT} (Unity ${VERSION})
+
+          **Image:** \`${IMAGE}\`
+          **Severity filter:** ${{ inputs.severity-threshold || 'HIGH' }}+
+          **CVEs found:** ${CVE_COUNT}
+
+          \`\`\`
+          $(head -50 trivy-table.txt)
+          \`\`\`
+          EOF
+
+      - name: Upload scan results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results-${{ matrix.variant }}-${{ matrix.version }}
+          path: |
+            trivy-results-${{ matrix.variant }}.sarif
+            trivy-table.txt
+          retention-days: 30
+
+  notify-findings:
+    name: Summarize scan findings
+    needs: scan-image
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Write overall summary
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Weekly Unity Image Scan — Summary
+
+          | Scan | Result |
+          |---|---|
+          | Status | ${{ needs.scan-image.result }} |
+          | Triggered | ${{ github.event_name }} |
+          | Timestamp | $(date -u +"%Y-%m-%d %H:%M UTC") |
+
+          Review the Security tab for detailed CVE findings.
+          EOF

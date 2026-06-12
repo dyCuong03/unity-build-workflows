@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/schemas/unity-image-manifest.schema.json",
+  "title": "UnityImageManifest",
+  "description": "Schema for Docker image manifests used by the Docker-only Unity build platform.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "imageReference",
+    "imageDigest",
+    "unityVersion",
+    "variant",
+    "modules",
+    "supportedTargets",
+    "supportedScriptingBackends",
+    "osVersion",
+    "buildTimestamp",
+    "sourceCommit"
+  ],
+  "additionalProperties": false,
+
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Version of this manifest schema."
+    },
+
+    "contractVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Image contract version. Major bump = breaking entrypoint change. Workflows validate compatibility."
+    },
+
+    "imageReference": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Full image reference including registry, repository, and tag. Example: ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v1.0.0"
+    },
+
+    "imageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Immutable image digest. Workflows should resolve and pin to this."
+    },
+
+    "unityVersion": {
+      "type": "string",
+      "pattern": "^\\d{4}\\.\\d+\\.\\d+[a-z]\\d+$",
+      "description": "Unity Editor version. Example: 6000.0.26f1"
+    },
+
+    "unityChangeset": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{12}$",
+      "description": "Unity changeset hash for the editor version."
+    },
+
+    "baseImageReference": {
+      "type": "string",
+      "description": "Base image used to build this image. Example: unityci/editor:6000.0.26f1-android-3"
+    },
+
+    "baseImageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$",
+      "description": "Digest of the base image at build time."
+    },
+
+    "osVersion": {
+      "type": "string",
+      "description": "Operating system version inside the container. Example: Ubuntu 22.04"
+    },
+
+    "variant": {
+      "type": "string",
+      "enum": ["base", "android", "webgl", "linux"],
+      "description": "Image variant identifier."
+    },
+
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Unity modules installed in this image. Example: [\"android\", \"android-sdk-ndk-tools\", \"android-open-jdk\"]"
+    },
+
+    "supportedTargets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["Android", "WebGL", "Linux64", "LinuxServer"]
+      },
+      "minItems": 1,
+      "description": "Build targets this image supports."
+    },
+
+    "supportedScriptingBackends": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["IL2CPP", "Mono"]
+      },
+      "minItems": 1,
+      "description": "Scripting backends available in this image."
+    },
+
+    "androidSdkVersion": {
+      "type": "string",
+      "description": "Android SDK platform version. Only present for android variant."
+    },
+
+    "androidNdkVersion": {
+      "type": "string",
+      "description": "Android NDK version. Only present for android variant."
+    },
+
+    "jdkVersion": {
+      "type": "string",
+      "description": "JDK version. Only present for android variant."
+    },
+
+    "toolingVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of organization tooling layer added on top of base image."
+    },
+
+    "buildTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the image was built."
+    },
+
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "description": "Git commit SHA of the unity-build-workflows repo used to build this image."
+    },
+
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "All tags published for this image."
+    },
+
+    "sbomReference": {
+      "type": "string",
+      "description": "URI or artifact name of the SBOM generated for this image."
+    },
+
+    "scanStatus": {
+      "type": "string",
+      "enum": ["passed", "failed", "skipped"],
+      "description": "Result of the vulnerability scan."
+    },
+
+    "scanReport": {
+      "type": "string",
+      "description": "URI or artifact name of the vulnerability scan report."
+    }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "variant": { "const": "android" } }
+      },
+      "then": {
+        "required": ["androidSdkVersion", "androidNdkVersion", "jdkVersion"]
+      }
+    }
+  ]
+}

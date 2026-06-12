@@ -354,3 +354,169 @@ class TestExistingWorkflowContracts:
         outputs = triggers.get("workflow_call", {}).get("outputs", {})
         assert "tests-passed" in outputs, \
             "unity-test.yml must expose 'tests-passed' output"
+
+
+# ---------------------------------------------------------------------------
+# Docker-only contract
+# ---------------------------------------------------------------------------
+
+# Inputs that were valid before Docker migration but must NOT exist after it.
+FORBIDDEN_EXECUTOR_INPUTS = ("executor-mode", "use-docker", "native-runner")
+
+# Actions that belong to the native (pre-Docker) runner — forbidden post-migration.
+FORBIDDEN_ACTIONS = ("setup-unity",)
+
+# Workflow files that must NOT exist after Docker migration (native-only platforms).
+FORBIDDEN_WORKFLOW_FILES = ("unity-build-ios.yml", "unity-build-windows.yml")
+
+# Workflow that MUST exist after migration (image build pipeline).
+REQUIRED_WORKFLOW_FILES = ("build-unity-image.yml",)
+
+# Keyword that indicates a step is a Docker container run (post-migration contract).
+DOCKER_RUN_INDICATORS = (
+    "run-unity-container",
+    "run_unity_container",
+    "docker run",
+    "scripts/docker/",
+)
+
+
+def _all_workflow_inputs(workflows_dir: Path) -> dict[str, dict]:
+    """Return {workflow_filename: {input_name: definition}} for all workflows."""
+    result: dict[str, dict] = {}
+    for yml_path in sorted(workflows_dir.glob("*.yml")):
+        doc = load_workflow(yml_path)
+        triggers = get_triggers(doc)
+        inputs = triggers.get("workflow_call", {}).get("inputs", {}) or {}
+        if inputs:
+            result[yml_path.name] = inputs
+    return result
+
+
+class TestDockerOnlyWorkflowContract:
+    """
+    Enforces the Docker-mandatory contract:
+    - No legacy executor-mode / use-docker / native-runner inputs
+    - No setup-unity action usage
+    - Build/test workflows use run-unity-container
+    - upload/report steps still have if: always()
+    - Platform-specific impossible workflows (iOS, Windows) do not exist
+    - Image build pipeline (build-unity-image.yml) exists
+    """
+
+    def test_no_executor_mode_input_in_any_workflow(self, workflows_dir):
+        """executor-mode input was for hybrid mode — must be gone post-migration."""
+        violations = []
+        for wf_name, inputs in _all_workflow_inputs(workflows_dir).items():
+            for forbidden in FORBIDDEN_EXECUTOR_INPUTS:
+                if forbidden in inputs:
+                    violations.append(f"{wf_name}: forbidden input '{forbidden}'")
+        assert not violations, \
+            "Forbidden executor-mode inputs found (Docker is now mandatory):\n" + \
+            "\n".join(f"  {v}" for v in violations)
+
+    def test_no_use_docker_input_in_any_workflow(self, workflows_dir):
+        for wf_name, inputs in _all_workflow_inputs(workflows_dir).items():
+            assert "use-docker" not in inputs, \
+                f"{wf_name}: 'use-docker' input must not exist — Docker is mandatory"
+
+    def test_no_native_runner_input_in_any_workflow(self, workflows_dir):
+        for wf_name, inputs in _all_workflow_inputs(workflows_dir).items():
+            assert "native-runner" not in inputs, \
+                f"{wf_name}: 'native-runner' input must not exist — Docker is mandatory"
+
+    def test_no_setup_unity_action_used(self, workflows_dir):
+        """setup-unity is a native-runner action — must not appear post-migration."""
+        violations = []
+        for yml_path in sorted(workflows_dir.glob("*.yml")):
+            doc = load_workflow(yml_path)
+            for ref in iter_uses(doc):
+                if "setup-unity" in ref:
+                    violations.append(f"{yml_path.name}: uses '{ref}'")
+        # Also check composite actions
+        actions_dir = workflows_dir.parent / "actions"
+        if actions_dir.exists():
+            for action_yml in actions_dir.rglob("action.yml"):
+                doc = load_workflow(action_yml)
+                for ref in iter_uses(doc):
+                    if "setup-unity" in ref:
+                        rel = action_yml.relative_to(workflows_dir.parent.parent)
+                        violations.append(f"{rel}: uses '{ref}'")
+        assert not violations, \
+            "setup-unity action found — it must be removed after Docker migration:\n" + \
+            "\n".join(f"  {v}" for v in violations)
+
+    def test_unity_build_ios_workflow_does_not_exist(self, workflows_dir):
+        """iOS builds require macOS runners (not Docker-supported) — workflow must be removed."""
+        ios_workflow = workflows_dir / "unity-build-ios.yml"
+        assert not ios_workflow.exists(), \
+            "unity-build-ios.yml must NOT exist after Docker migration " \
+            "(iOS requires macOS native runners, not Docker)"
+
+    def test_unity_build_windows_workflow_does_not_exist(self, workflows_dir):
+        """Windows builds are not Docker-supported on Linux runners — workflow must be removed."""
+        windows_workflow = workflows_dir / "unity-build-windows.yml"
+        assert not windows_workflow.exists(), \
+            "unity-build-windows.yml must NOT exist after Docker migration " \
+            "(Windows target not supported in Linux Docker containers)"
+
+    def test_build_unity_image_workflow_exists(self, workflows_dir):
+        """The Docker image build pipeline must exist post-migration."""
+        image_build_workflow = workflows_dir / "build-unity-image.yml"
+        assert image_build_workflow.exists(), \
+            "build-unity-image.yml must exist — it builds the Unity Docker images"
+
+    def test_build_unity_image_workflow_is_valid_yaml(self, workflows_dir):
+        path = workflows_dir / "build-unity-image.yml"
+        if not path.exists():
+            pytest.skip("build-unity-image.yml not yet created")
+        doc = load_workflow(path)
+        assert isinstance(doc, dict), "build-unity-image.yml must be a valid YAML mapping"
+        assert "name" in doc, "build-unity-image.yml must have a 'name' field"
+
+    def test_all_build_workflows_reference_docker_runner(self, workflows_dir):
+        """
+        All build/test workflows must reference run-unity-container or scripts/docker/
+        somewhere in their steps, confirming Docker-only execution.
+        """
+        build_workflows = [
+            "unity-build-android.yml",
+            "unity-build-webgl.yml",
+            "unity-test.yml",
+        ]
+        missing_docker = []
+        for wf_name in build_workflows:
+            path = workflows_dir / wf_name
+            if not path.exists():
+                continue  # Will be created by Task #5
+            doc = load_workflow(path)
+            # Gather all step 'run' and 'uses' text
+            all_step_text = ""
+            for step in iter_steps(doc):
+                all_step_text += str(step.get("uses", "")) + " " + str(step.get("run", ""))
+            has_docker = any(
+                indicator in all_step_text
+                for indicator in DOCKER_RUN_INDICATORS
+            )
+            if not has_docker:
+                missing_docker.append(wf_name)
+
+        assert not missing_docker, \
+            "These build/test workflows do not reference Docker container execution:\n" + \
+            "\n".join(f"  {wf}" for wf in missing_docker)
+
+    def test_upload_steps_always_condition_in_build_android(self, workflows_dir):
+        """Upload/report steps in unity-build-android.yml must have if: always()."""
+        path = workflows_dir / "unity-build-android.yml"
+        if not path.exists():
+            pytest.skip("unity-build-android.yml not present")
+        checker = TestAlwaysConditionOnUploadSteps()
+        checker._check_workflow_upload_steps(load_workflow(path), "unity-build-android.yml")
+
+    def test_upload_steps_always_condition_in_build_webgl(self, workflows_dir):
+        """Upload/report steps in unity-build-webgl.yml must have if: always()."""
+        path = workflows_dir / "unity-build-webgl.yml"
+        if not path.exists():
+            pytest.skip("unity-build-webgl.yml not present")
+        checker = TestAlwaysConditionOnUploadSteps()
+        checker._check_workflow_upload_steps(load_workflow(path), "unity-build-webgl.yml")

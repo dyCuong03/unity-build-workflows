@@ -1,47 +1,68 @@
-name: Unity Build WebGL (Reusable)
+name: Unity Build WebGL
 
 on:
   workflow_call:
     inputs:
       project-path:
         type: string
-        default: "."
+        required: false
+        default: '.'
       unity-version:
         type: string
         required: true
       environment:
         type: string
-        default: "development"
+        required: false
+        default: development
       build-config-path:
         type: string
-        default: "BuildConfig"
+        required: false
+        default: BuildConfig
       cache-mode:
         type: string
-        default: "safe"
+        required: false
+        default: safe
       build-addressables:
         type: boolean
+        required: false
         default: false
       upload-artifact:
         type: boolean
+        required: false
         default: true
       deploy-target:
+        description: Deployment target (none, cloudflare)
         type: string
-        default: "none"
+        required: false
+        default: none
       clean-build:
         type: boolean
+        required: false
         default: false
       artifact-retention-days:
         type: number
+        required: false
         default: 14
       release-mode:
         type: boolean
+        required: false
         default: false
       build-version:
         type: string
         required: true
+      image-registry:
+        type: string
+        required: false
+        default: ghcr.io
+      image-digest:
+        description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+
     secrets:
       UNITY_LICENSE:
-        required: true
+        required: false
       UNITY_EMAIL:
         required: false
       UNITY_PASSWORD:
@@ -50,12 +71,13 @@ on:
         required: false
       CLOUDFLARE_ACCOUNT_ID:
         required: false
+
     outputs:
       artifact-name:
-        description: "Name of the uploaded WebGL build artifact"
+        description: Name of the uploaded WebGL build artifact
         value: ${{ jobs.build.outputs.artifact-name }}
       deploy-url:
-        description: "Deployed URL (if deployed)"
+        description: Deployed URL (if deploy-target=cloudflare)
         value: ${{ jobs.build.outputs.deploy-url }}
 
 jobs:
@@ -65,118 +87,138 @@ jobs:
     environment: ${{ inputs.environment }}
     outputs:
       artifact-name: ${{ steps.upload.outputs.artifact-name }}
-      deploy-url: ${{ steps.deploy.outputs.url }}
+      deploy-url: ${{ steps.deploy.outputs.deploy-url }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           lfs: true
 
-      - name: Restore Library Cache
-        uses: ./.github/actions/restore-library-cache
+      - name: Restore Docker cache
+        uses: ./.github/actions/restore-docker-cache
         with:
           project-path: ${{ inputs.project-path }}
           unity-version: ${{ inputs.unity-version }}
-          target-platform: "WebGL"
+          target-platform: WebGL
           cache-mode: ${{ inputs.cache-mode }}
 
-      - name: Clean build (if requested)
-        if: inputs.clean-build == true
-        run: rm -rf "${{ inputs.project-path }}/Library"
-
-      - name: Setup Unity
-        uses: ./.github/actions/setup-unity
+      - name: Resolve Unity image
+        id: resolve-image
+        uses: ./.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
-          project-path: ${{ inputs.project-path }}
           target-platform: WebGL
+          image-registry: ${{ inputs.image-registry }}
+          image-variant: webgl
+          image-digest: ${{ inputs.image-digest }}
+          release-mode: ${{ inputs.release-mode }}
+
+      - name: Generate build metadata
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_VERSION: ${{ inputs.build-version }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          python3 scripts/common/generate_build_metadata.py \
+            --project-path "$PROJECT_PATH" \
+            --platform     WebGL \
+            --version      "$BUILD_VERSION" \
+            --environment  "$ENVIRONMENT" \
+            --build-number "${{ github.run_number }}" \
+            --commit       "${{ github.sha }}"
+
+      - name: Build Addressables
+        id: build-addressables
+        if: inputs.build-addressables == true
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-
-      - name: Generate build metadata
-        run: |
-          python3 scripts/common/generate_build_metadata.py \
-            --project-path "${{ inputs.project-path }}" \
-            --platform WebGL \
-            --version "${{ inputs.build-version }}" \
-            --environment "${{ inputs.environment }}" \
-            --build-number "${{ github.run_number }}" \
-            --commit "${{ github.sha }}"
-
-      - name: Build Addressables
-        if: inputs.build-addressables == true
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -executeMethod AddressableAssets.Settings.AddressableAssetSettings.BuildPlayerContent \
-            -logFile "${{ runner.temp }}/addressables-build.log" \
-            -quit
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: WebGL
+          environment: ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: build-addressables
+          cache-mode: ${{ inputs.cache-mode }}
 
       - name: Build Unity WebGL
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -executeMethod BuildCommand.Execute \
-            -buildTarget WebGL \
-            -buildPath "${{ runner.temp }}/build/webgl" \
-            -buildVersion "${{ inputs.build-version }}" \
-            -buildEnvironment "${{ inputs.environment }}" \
-            -logFile "${{ runner.temp }}/unity-build-webgl.log" \
-            -quit
+        id: build
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: WebGL
+          environment: ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: build
+          cache-mode: ${{ inputs.cache-mode }}
+          clean-build: ${{ inputs.clean-build }}
+          output-path: Builds/WebGL
+          release-mode: ${{ inputs.release-mode }}
 
-      - name: Compress WebGL output
+      - name: Compress WebGL output (post-container)
+        shell: bash
+        env:
+          BUILD_PATH: Builds/WebGL
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          bash scripts/webgl/compress_webgl.sh \
-            "${{ runner.temp }}/build/webgl" \
-            "${{ inputs.environment }}"
+          bash scripts/webgl/compress_webgl.sh "$BUILD_PATH" "$ENVIRONMENT"
 
       - name: Compare build size
         if: always()
+        shell: bash
         run: |
           python3 scripts/common/compare_build_size.py \
-            --build-path "${{ runner.temp }}/build/webgl" \
-            --platform WebGL \
-            --version "${{ inputs.build-version }}" || true
+            --build-path Builds/WebGL \
+            --platform   WebGL \
+            --version    "${{ inputs.build-version }}" || true
 
       - name: Upload build artifact
         id: upload
-        if: inputs.upload-artifact == true
+        if: always() && inputs.upload-artifact == true
         uses: actions/upload-artifact@v4
         with:
           name: webgl-build-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
-          path: ${{ runner.temp }}/build/webgl/
+          path: Builds/WebGL/
           retention-days: ${{ inputs.artifact-retention-days }}
           if-no-files-found: error
 
       - name: Deploy to Cloudflare Pages
         id: deploy
         if: inputs.deploy-target == 'cloudflare'
-        run: |
-          bash scripts/webgl/deploy_cloudflare_pages.sh \
-            "${{ runner.temp }}/build/webgl" \
-            "${{ inputs.environment }}" \
-            "${{ inputs.build-version }}"
+        shell: bash
         env:
+          BUILD_PATH: Builds/WebGL
+          ENVIRONMENT: ${{ inputs.environment }}
+          BUILD_VERSION: ${{ inputs.build-version }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          DEPLOY_URL=$(bash scripts/webgl/deploy_cloudflare_pages.sh \
+            "$BUILD_PATH" "$ENVIRONMENT" "$BUILD_VERSION")
+          echo "deploy-url=${DEPLOY_URL}" >> "$GITHUB_OUTPUT"
 
-      - name: Collect build logs
+      - name: Collect container output
         if: always()
-        uses: ./.github/actions/collect-build-output
+        uses: ./.github/actions/collect-container-output
         with:
           target-platform: WebGL
           build-version: ${{ inputs.build-version }}
           environment: ${{ inputs.environment }}
-          log-path: ${{ runner.temp }}
+          command: build
+          container-exit-code: ${{ steps.build.outputs.exit-code }}
+          log-path: ${{ steps.build.outputs.log-path }}
+          report-path: ${{ steps.build.outputs.report-path }}

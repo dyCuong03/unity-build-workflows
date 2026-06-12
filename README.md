@@ -1,16 +1,20 @@
 # unity-build-workflows
 
-Reusable GitHub Actions workflows for building, testing, signing, and releasing Unity games across Android, iOS, Windows, and WebGL platforms.
+Docker-mandatory reusable GitHub Actions workflows for building, testing, and releasing Unity games. All Unity operations run inside pinned, versioned Docker containers — the CI runner never executes Unity directly.
 
 ---
 
 ## What This Repository Is
 
-`unity-build-workflows` is a CI/CD platform library, not an application. Unity game repositories call its reusable workflows instead of maintaining their own build pipeline code. This means:
+`unity-build-workflows` is a CI/CD platform library. Unity game repositories call its reusable workflows. This repository manages:
 
-- **One place to update** — bug fixes and improvements to the build pipeline benefit all projects immediately (or on their next version pin update).
-- **Consistent artifact naming, quality gates, and release flows** across all projects in your organization.
-- **Secrets stay in the consumer repository** — this repository never has access to your signing keys or Unity license.
+- Docker image definitions for Unity build environments
+- Container entrypoints that invoke Unity in batch mode
+- Reusable GitHub Actions workflows for build orchestration
+- Build configuration schemas and validation
+- Image security scanning and SBOM generation
+
+**Docker is mandatory.** There is no native Unity execution fallback.
 
 ---
 
@@ -19,171 +23,172 @@ Reusable GitHub Actions workflows for building, testing, signing, and releasing 
 ```
 Your Game Repo
   .github/workflows/build.yml
-       │ uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1
-       │       (+ ios.yml, windows.yml, webgl.yml)
-       │ secrets: inherit
+       │ uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+       │       secrets: inherit
        ▼
 unity-build-workflows
-  .github/workflows/    ← Reusable workflow definitions (one per platform)
-  actions/              ← Composite actions (setup, build, sign, gate, upload)
-  scripts/              ← Shell scripts invoked by actions
-  schemas/              ← JSON Schema for BuildConfig validation
-  templates/            ← Example BuildConfig files
-  docs/                 ← This documentation
+  CI Runner (ubuntu-latest)
+       │
+       ▼
+  Docker Engine
+       │
+       ▼
+  Pinned Unity Build Image (ghcr.io/buzzelstudio/unity-builder@sha256:...)
+       │
+       ▼
+  entrypoint.sh → Unity -batchmode -executeMethod BuildCommand.Execute
+       │
+       ▼
+  Artifacts, logs, reports → bind-mounted host directories
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete layer diagram and extension points.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete layer diagram.
 
 ---
 
 ## Supported Platforms
 
-| Platform | Runner OS | Scripting Backend | Notes |
+| Platform | Image Variant | Runner OS | Status |
 |---|---|---|---|
-| Android | Ubuntu | Mono or IL2CPP | AAB and APK; debug or custom keystore signing |
-| iOS | macOS | IL2CPP (required) | Xcode project generation + archive + IPA export |
-| Windows Standalone | Windows | Mono or IL2CPP | x86_64 or x86; optional installer hook |
-| WebGL | Ubuntu | IL2CPP | Brotli/Gzip/Disabled compression; optional PWA template |
+| Android | `android` | ubuntu-latest | **Supported** |
+| WebGL | `webgl` | ubuntu-latest | **Supported** |
+| Linux Standalone | `linux` | ubuntu-latest | **Supported** |
+| Linux Dedicated Server | `linux` | ubuntu-latest | **Supported** |
+
+### Unsupported Platforms
+
+| Platform | Reason |
+|---|---|
+| iOS | Requires macOS + Xcode. Use a dedicated macOS pipeline. See [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md). |
+| Windows | Requires Windows containers. Use a dedicated Windows pipeline. See [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md). |
+
+Unsupported targets fail with an actionable error message. The repository never silently falls back to native Unity execution.
 
 ---
 
 ## Minimal Integration
 
-### 1. Copy a BuildConfig template
+### 1. Add a BuildConfig
 
 ```bash
-mkdir ci
-cp templates/BuildConfig.base.example.json ci/BuildConfig.base.json
-# Edit projectName, applicationId, bundleIdentifier, scenes, etc.
+mkdir BuildConfig
+cp templates/BuildConfig.base.example.json BuildConfig/base.json
+cp templates/BuildConfig.staging.example.json BuildConfig/staging.json
+# Edit projectName, applicationId, scenes, etc.
 ```
 
-### 2. Add secrets to your repository
+### 2. Add secrets
 
 At minimum: `UNITY_LICENSE`. See [templates/build-secrets.example.md](templates/build-secrets.example.md).
 
 ### 3. Create `.github/workflows/build.yml`
 
 ```yaml
-name: Build
+name: Unity Docker CI
 
 on:
+  pull_request:
   push:
-    branches: [main, develop]
-  push:
-    tags: ['v*']
+    branches: [develop, staging]
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options:
+          - Android
+          - WebGL
+          - Linux64
 
 jobs:
-  config:
-    runs-on: ubuntu-latest
-    outputs:
-      build-config: ${{ steps.merge.outputs.config }}
-      environment: ${{ steps.env.outputs.environment }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Determine environment
-        id: env
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "environment=production" >> $GITHUB_OUTPUT
-          elif [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
-            echo "environment=staging" >> $GITHUB_OUTPUT
-          else
-            echo "environment=development" >> $GITHUB_OUTPUT
-          fi
-      - name: Merge configs
-        id: merge
-        run: |
-          ENV="${{ steps.env.outputs.environment }}"
-          CONFIG=$(jq -s '.[0] * .[1]' ci/BuildConfig.base.json ci/BuildConfig.${ENV}.json)
-          echo "config=$CONFIG" >> $GITHUB_OUTPUT
-
-  build-android:
-    needs: config
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1
+  build:
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
     with:
-      build-config: ${{ needs.config.outputs.build-config }}
-      unity-version: '2022.3.45f1'
-      environment: ${{ needs.config.outputs.environment }}
+      project-path: .
+      unity-version: '6000.0.26f1'
+      target-platform: Android
+      environment: development
+      build-config-path: BuildConfig
+      test-level: editmode
+      cache-mode: safe
+      upload-artifact: true
     secrets: inherit
 ```
 
-That's it. See [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) for the full onboarding walkthrough.
+No Docker executor option — Docker is mandatory and implicit.
+
+See [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) for the full onboarding walkthrough.
 
 ---
 
-## Common Workflows
+## Local Build Commands
 
-### Build all platforms on push to main
-
-```yaml
-build-android:
-  needs: config
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1
-  with: { build-config: ${{ needs.config.outputs.build-config }}, unity-version: '2022.3.45f1', environment: staging }
-  secrets: inherit
-
-build-ios:
-  needs: config
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/ios.yml@v1
-  with: { build-config: ${{ needs.config.outputs.build-config }}, unity-version: '2022.3.45f1', environment: staging }
-  secrets: inherit
-```
-
-### Run tests only (no build)
-
-```yaml
-test:
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/test.yml@v1
-  with:
-    build-config: ${{ needs.config.outputs.build-config }}
-    unity-version: '2022.3.45f1'
-  secrets: inherit
-```
-
-### Release to production via tag
+Local builds also use Docker:
 
 ```bash
-git tag v1.2.3 -m "Release 1.2.3"
-git push origin v1.2.3
+# Android build
+python3 scripts/docker/run_unity_container.py \
+  --project-path . \
+  --unity-version 6000.0.26f1 \
+  --target-platform Android \
+  --environment development \
+  --build-config-path BuildConfig
+
+# EditMode tests
+python3 scripts/docker/run_unity_container.py \
+  --project-path . \
+  --unity-version 6000.0.26f1 \
+  --target-platform Android \
+  --test-level editmode
+
+# Convenience targets (if Makefile present)
+make unity-build-android
+make unity-test-editmode
+make unity-build-webgl
 ```
 
-See [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) for the complete release process.
+**Prerequisites:** Docker Engine installed and running. No local Unity installation required for builds.
 
 ---
 
-## Local Build Command
+## Docker Image Strategy
 
-To test builds locally without CI:
+Images extend pinned [GameCI](https://game.ci/) base images with an organizational tooling layer:
 
-```bash
-# Linux/macOS
-./scripts/build.sh \
-  --platform Android \
-  --config ci/BuildConfig.development.json \
-  --unity-path "/Applications/Unity/Hub/Editor/2022.3.45f1/Unity.app/Contents/MacOS/Unity"
-
-# Windows (PowerShell)
-.\scripts\build.ps1 `
-  -Platform Windows `
-  -Config .\ci\BuildConfig.development.json `
-  -UnityPath "C:\Program Files\Unity\Hub\Editor\2022.3.45f1\Editor\Unity.exe"
 ```
+unityci/editor:6000.0.26f1-android-3  (pinned GameCI base)
+  └─ ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0  (org layer)
+       └─ entrypoint.sh, license scripts, healthcheck, python3, jq
+```
+
+Production workflows resolve and pin images by digest:
+```
+ghcr.io/buzzelstudio/unity-builder@sha256:<digest>
+```
+
+See [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) for the full image strategy.
+
+---
+
+## Required Docker Version
+
+- Docker Engine 20.10+ (BuildKit support)
+- Docker Compose is not required
 
 ---
 
 ## Versioning Policy
 
-This repository uses semantic versioning. Consumer repositories reference a major version tag:
+Semantic versioning. Consumer repositories reference a major version tag:
 
 ```yaml
-uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1
+uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
 ```
 
-- `@v1` always points to the latest `1.x.x` release — minor and patch updates are applied automatically.
-- Major version increments (v2, v3...) indicate breaking changes to the workflow input interface.
-- To pin to an exact version for reproducibility: `@v1.2.3`.
+- `@v2` points to the latest `2.x.x` release.
+- Major version increments indicate breaking changes to the workflow input interface.
+- Pin to exact version for reproducibility: `@v2.0.0`.
 
-Current version: **1.0.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **2.0.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -191,17 +196,20 @@ Current version: **1.0.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 | Document | Contents |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer diagram, extension points, error handling |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer diagram, Docker execution flow, extension points |
+| [docs/DOCKER_BUILD.md](docs/DOCKER_BUILD.md) | Container flow, mounts, caches, licensing, debugging |
+| [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) | Base image, variants, scanning, SBOM, tagging, deprecation |
 | [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) | Step-by-step onboarding guide |
 | [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md) | Every BuildConfig field documented |
-| [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export |
-| [docs/IOS.md](docs/IOS.md) | iOS code signing, Xcode, App Store Connect |
-| [docs/WINDOWS.md](docs/WINDOWS.md) | Windows standalone, IL2CPP, code signing |
-| [docs/WEBGL.md](docs/WEBGL.md) | WebGL compression, hosting, memory configuration |
-| [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) | Tag-based release, environments, gates |
-| [docs/SELF_HOSTED_RUNNER.md](docs/SELF_HOSTED_RUNNER.md) | Setting up and securing self-hosted runners |
-| [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, fork safety, threat model |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common errors and fixes |
+| [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export via Docker |
+| [docs/WEBGL.md](docs/WEBGL.md) | WebGL compression, hosting via Docker |
+| [docs/LINUX.md](docs/LINUX.md) | Linux standalone and dedicated server builds |
+| [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS/Windows exclusion, GPU, native plugins |
+| [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) | Tag-based release, environments, digest enforcement |
+| [docs/SELF_HOSTED_RUNNER.md](docs/SELF_HOSTED_RUNNER.md) | Runner setup with Docker requirements |
+| [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, image trust, fork safety |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common Docker and Unity errors |
+| [docs/adr/001-docker-mandatory-architecture.md](docs/adr/001-docker-mandatory-architecture.md) | Architecture decision record |
 
 ---
 

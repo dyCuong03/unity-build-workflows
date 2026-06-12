@@ -1,0 +1,104 @@
+name: Resolve Unity Docker Image
+description: Resolves the Unity Docker image reference using scripts/docker/resolve_image_reference.py
+
+inputs:
+  unity-version:
+    description: Unity editor version (e.g., 6000.0.23f1)
+    required: true
+  target-platform:
+    description: Build target platform (Android, WebGL, Linux64, LinuxServer)
+    required: true
+  image-registry:
+    description: Docker image registry hostname
+    required: false
+    default: ghcr.io
+  image-variant:
+    description: Image variant override (android, webgl, linux). Auto-detected from target-platform if empty.
+    required: false
+    default: ''
+  image-digest:
+    description: Exact image digest (sha256:...) to pin. Required in release-mode if mutable ref.
+    required: false
+    default: ''
+  release-mode:
+    description: Enforce digest-pinned image reference — fails if mutable tag used
+    required: false
+    default: 'false'
+
+outputs:
+  image-reference:
+    description: Fully-qualified Docker image reference (registry/repo:tag or @digest)
+    value: ${{ steps.resolve.outputs.image-reference }}
+  image-digest:
+    description: Resolved image digest (sha256:...)
+    value: ${{ steps.resolve.outputs.image-digest }}
+  image-variant:
+    description: Resolved image variant (android, webgl, linux)
+    value: ${{ steps.resolve.outputs.image-variant }}
+  supported-targets:
+    description: Comma-separated list of build targets this image supports
+    value: ${{ steps.resolve.outputs.supported-targets }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve image reference
+      id: resolve
+      shell: bash
+      env:
+        UNITY_VERSION: ${{ inputs.unity-version }}
+        TARGET_PLATFORM: ${{ inputs.target-platform }}
+        IMAGE_REGISTRY: ${{ inputs.image-registry }}
+        IMAGE_VARIANT: ${{ inputs.image-variant }}
+        IMAGE_DIGEST: ${{ inputs.image-digest }}
+        RELEASE_MODE: ${{ inputs.release-mode }}
+      run: |
+        python3 scripts/docker/resolve_image_reference.py \
+          --unity-version "$UNITY_VERSION" \
+          --target-platform "$TARGET_PLATFORM" \
+          --registry "$IMAGE_REGISTRY" \
+          --variant "$IMAGE_VARIANT" \
+          --digest "$IMAGE_DIGEST" \
+          --release-mode "$RELEASE_MODE" \
+          --output-format github-actions
+
+    - name: Validate image manifest
+      id: validate-manifest
+      shell: bash
+      env:
+        IMAGE_REFERENCE: ${{ steps.resolve.outputs.image-reference }}
+        TARGET_PLATFORM: ${{ inputs.target-platform }}
+        SUPPORTED_TARGETS: ${{ steps.resolve.outputs.supported-targets }}
+        RELEASE_MODE: ${{ inputs.release-mode }}
+      run: |
+        echo "Image reference: $IMAGE_REFERENCE"
+        echo "Supported targets: $SUPPORTED_TARGETS"
+
+        # Validate target platform is supported by this image
+        if [ -n "$SUPPORTED_TARGETS" ]; then
+          if ! echo "$SUPPORTED_TARGETS" | grep -qiE "(^|,)\s*${TARGET_PLATFORM}\s*(,|$)"; then
+            echo "::error::Target platform '${TARGET_PLATFORM}' is not supported by image '${IMAGE_REFERENCE}'."
+            echo "::error::Supported targets: ${SUPPORTED_TARGETS}"
+            exit 1
+          fi
+        fi
+
+        # In release mode, enforce digest pinning
+        if [ "$RELEASE_MODE" = "true" ]; then
+          if [[ "$IMAGE_REFERENCE" != *"@sha256:"* ]]; then
+            echo "::error::Release mode requires a digest-pinned image reference."
+            echo "::error::Got: ${IMAGE_REFERENCE}"
+            echo "::error::Expected format: registry/repo/image:tag@sha256:<hash>"
+            exit 1
+          fi
+        fi
+
+        # Validate we can pull the manifest (ensures image exists and is accessible)
+        echo "Validating image manifest is accessible..."
+        if ! docker manifest inspect "$IMAGE_REFERENCE" > /dev/null 2>&1; then
+          echo "::error::Cannot access image manifest for '${IMAGE_REFERENCE}'."
+          echo "::error::Ensure the image exists in the registry and credentials are configured."
+          exit 1
+        fi
+
+        echo "Image manifest validated successfully."

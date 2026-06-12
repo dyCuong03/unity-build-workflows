@@ -1,64 +1,86 @@
-name: Unity Build (Main Orchestrator)
+name: Unity Build
+
+# Docker-mandatory orchestrator. All Unity operations run inside containers.
+# Supported platforms: Android, WebGL, Linux64, LinuxServer
+# Native Unity invocations are NOT supported.
 
 on:
   workflow_call:
     inputs:
       project-path:
-        description: "Path to Unity project root"
+        description: Path to the Unity project root
         type: string
-        default: "."
+        required: false
+        default: '.'
       unity-version:
-        description: "Unity version (required)"
+        description: Unity editor version (e.g., 6000.0.23f1)
         type: string
         required: true
       target-platform:
-        description: "Target platform: Android/iOS/Windows64/WebGL"
+        description: Target platform (Android, WebGL, Linux64, LinuxServer)
         type: string
         required: true
       environment:
-        description: "Environment: development/staging/production"
+        description: Build environment (development, staging, production)
         type: string
-        default: "development"
+        required: false
+        default: development
       build-config-path:
-        description: "Path to BuildConfig folder"
+        description: Path to BuildConfig directory (relative to project-path)
         type: string
-        default: "BuildConfig"
+        required: false
+        default: BuildConfig
       test-level:
-        description: "Test level: none/editmode/playmode/full"
+        description: Tests to run (none, editmode, playmode, full)
         type: string
-        default: "editmode"
+        required: false
+        default: editmode
       cache-mode:
-        description: "Library cache mode: off/safe/aggressive"
+        description: Library cache strategy (off, safe, aggressive)
         type: string
-        default: "safe"
+        required: false
+        default: safe
       build-addressables:
-        description: "Whether to build Addressables before player"
+        description: Build Addressables content before player build
         type: boolean
+        required: false
+        default: false
+      clean-build:
+        description: Delete Library/ before building (force full reimport)
+        type: boolean
+        required: false
         default: false
       upload-artifact:
-        description: "Whether to upload build artifact"
+        description: Upload build artifact after successful build
         type: boolean
+        required: false
         default: true
-      deploy-target:
-        description: "Deploy target (none/google-play/testflight/cloudflare)"
-        type: string
-        default: "none"
-      clean-build:
-        description: "Delete Library before building"
-        type: boolean
-        default: false
       artifact-retention-days:
-        description: "Days to retain artifacts"
+        description: Days to retain build artifacts
         type: number
+        required: false
         default: 14
-      fail-on-warnings:
-        description: "Fail build if warnings present"
-        type: boolean
-        default: false
       release-mode:
-        description: "Enable release mode (stricter gates)"
+        description: Enable release gates (digest-pinned image, no dev flags, fail-on-warnings)
         type: boolean
+        required: false
         default: false
+      deploy-target:
+        description: Deployment target (none, google-play, cloudflare)
+        type: string
+        required: false
+        default: none
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-digest:
+        description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+
     secrets:
       UNITY_LICENSE:
         required: true
@@ -76,42 +98,30 @@ on:
         required: false
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
         required: false
-      APPLE_CERT_BASE64:
-        required: false
-      APPLE_CERT_PASSWORD:
-        required: false
-      APPLE_PROV_PROFILE_BASE64:
-        required: false
-      APPLE_TEAM_ID:
-        required: false
-      APPLE_APP_ID:
-        required: false
-      TESTFLIGHT_APP_SPECIFIC_PASSWORD:
-        required: false
       CLOUDFLARE_API_TOKEN:
         required: false
       CLOUDFLARE_ACCOUNT_ID:
         required: false
+
     outputs:
       build-artifact-name:
-        description: "Name of the uploaded build artifact"
+        description: Name of the uploaded build artifact
         value: ${{ jobs.report.outputs.build-artifact-name }}
       build-version:
-        description: "Resolved build version"
+        description: Resolved build version string
         value: ${{ jobs.detect-changes.outputs.build-version }}
       tests-passed:
-        description: "Whether tests passed"
+        description: Whether tests passed
         value: ${{ jobs.test.outputs.tests-passed }}
 
 jobs:
-  # ─── 1. CHANGE DETECTION ─────────────────────────────────────────────────────
+  # ─── 1. CHANGE DETECTION ───────────────────────────────────────────────────────
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
+      should-build: ${{ steps.filter.outputs.should-build }}
       should-run-tests: ${{ steps.filter.outputs.should-run-tests }}
-      should-build-player: ${{ steps.filter.outputs.should-build-player }}
-      should-build-addressables: ${{ steps.filter.outputs.should-build-addressables }}
       build-version: ${{ steps.resolve-version.outputs.version }}
 
     steps:
@@ -122,61 +132,58 @@ jobs:
 
       - name: Detect changed paths
         id: filter
+        shell: bash
         run: |
-          # Get changed files
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || echo "")
-          echo "Changed files:"
-          echo "$CHANGED"
+          NON_DOC=$(echo "$CHANGED" | grep -vE "^(docs/|.*\.md$|README)" || true)
 
-          # Check if only docs/markdown changed
-          NON_DOC_CHANGES=$(echo "$CHANGED" | grep -v -E "^(docs/|\.md$|README)" || true)
-
-          if [[ -z "$NON_DOC_CHANGES" ]] && [[ -n "$CHANGED" ]]; then
-            echo "Only documentation changed — skipping tests and build"
-            echo "should-run-tests=false" >> "$GITHUB_OUTPUT"
-            echo "should-build-player=false" >> "$GITHUB_OUTPUT"
-            echo "should-build-addressables=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$NON_DOC" ] && [ -n "$CHANGED" ]; then
+            echo "Only documentation changed — skipping build."
+            echo "should-build=false"      >> "$GITHUB_OUTPUT"
+            echo "should-run-tests=false"  >> "$GITHUB_OUTPUT"
           else
-            echo "should-run-tests=true" >> "$GITHUB_OUTPUT"
-            echo "should-build-player=true" >> "$GITHUB_OUTPUT"
-            # Addressables: only rebuild if addressables content changed
-            ADDR_CHANGES=$(echo "$CHANGED" | grep -E "Assets/.*Addressable" || true)
-            if [[ -n "$ADDR_CHANGES" ]]; then
-              echo "should-build-addressables=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "should-build-addressables=${{ inputs.build-addressables }}" >> "$GITHUB_OUTPUT"
-            fi
+            echo "should-build=true"       >> "$GITHUB_OUTPUT"
+            echo "should-run-tests=true"   >> "$GITHUB_OUTPUT"
           fi
 
       - name: Resolve build version
         id: resolve-version
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          GIT_REF: ${{ github.ref }}
         run: |
           VERSION=$(python3 scripts/common/resolve_project_version.py \
-            --project-path "${{ inputs.project-path }}" \
-            --config-path "${{ inputs.project-path }}/${{ inputs.build-config-path }}" \
-            --environment "${{ inputs.environment }}" \
-            --ref "${{ github.ref }}")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: $VERSION"
+            --project-path  "$PROJECT_PATH" \
+            --config-path   "$PROJECT_PATH/$BUILD_CONFIG_PATH" \
+            --environment   "$ENVIRONMENT" \
+            --ref           "$GIT_REF")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved build version: ${VERSION}"
 
-  # ─── 2. VALIDATE ─────────────────────────────────────────────────────────────
+  # ─── 2. VALIDATE ───────────────────────────────────────────────────────────────
   validate:
     name: Validate
     needs: detect-changes
-    if: needs.detect-changes.outputs.should-build-player == 'true'
+    if: needs.detect-changes.outputs.should-build == 'true'
     uses: ./.github/workflows/unity-validate.yml
     with:
       project-path: ${{ inputs.project-path }}
       unity-version: ${{ inputs.unity-version }}
-      build-config-path: ${{ inputs.build-config-path }}
       target-platform: ${{ inputs.target-platform }}
-      fail-on-warnings: ${{ inputs.fail-on-warnings }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      image-registry: ${{ inputs.image-registry }}
+      image-digest: ${{ inputs.image-digest }}
+      release-mode: ${{ inputs.release-mode }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-  # ─── 3. TEST ─────────────────────────────────────────────────────────────────
+  # ─── 3. TEST ───────────────────────────────────────────────────────────────────
   test:
     name: Test
     needs: [detect-changes, validate]
@@ -188,21 +195,24 @@ jobs:
     with:
       project-path: ${{ inputs.project-path }}
       unity-version: ${{ inputs.unity-version }}
+      target-platform: ${{ inputs.target-platform }}
       test-level: ${{ inputs.test-level }}
       cache-mode: ${{ inputs.cache-mode }}
+      image-registry: ${{ inputs.image-registry }}
+      image-digest: ${{ inputs.image-digest }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
-  # ─── 4. BUILD (platform dispatch) ────────────────────────────────────────────
+  # ─── 4. BUILD ──────────────────────────────────────────────────────────────────
   build-android:
     name: Build Android
     needs: [detect-changes, validate, test]
     if: |
       always() &&
       inputs.target-platform == 'Android' &&
-      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.detect-changes.outputs.should-build == 'true' &&
       needs.validate.outputs.validation-passed == 'true' &&
       (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
     uses: ./.github/workflows/unity-build-android.yml
@@ -219,55 +229,8 @@ jobs:
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
       release-mode: ${{ inputs.release-mode }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
-    secrets: inherit
-
-  build-ios:
-    name: Build iOS
-    needs: [detect-changes, validate, test]
-    if: |
-      always() &&
-      inputs.target-platform == 'iOS' &&
-      needs.detect-changes.outputs.should-build-player == 'true' &&
-      needs.validate.outputs.validation-passed == 'true' &&
-      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
-    uses: ./.github/workflows/unity-build-ios.yml
-    with:
-      project-path: ${{ inputs.project-path }}
-      unity-version: ${{ inputs.unity-version }}
-      environment: ${{ inputs.environment }}
-      build-config-path: ${{ inputs.build-config-path }}
-      cache-mode: ${{ inputs.cache-mode }}
-      build-addressables: ${{ inputs.build-addressables }}
-      upload-artifact: ${{ inputs.upload-artifact }}
-      deploy-target: ${{ inputs.deploy-target }}
-      clean-build: ${{ inputs.clean-build }}
-      artifact-retention-days: ${{ inputs.artifact-retention-days }}
-      release-mode: ${{ inputs.release-mode }}
-      build-version: ${{ needs.detect-changes.outputs.build-version }}
-    secrets: inherit
-
-  build-windows:
-    name: Build Windows
-    needs: [detect-changes, validate, test]
-    if: |
-      always() &&
-      inputs.target-platform == 'Windows64' &&
-      needs.detect-changes.outputs.should-build-player == 'true' &&
-      needs.validate.outputs.validation-passed == 'true' &&
-      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
-    uses: ./.github/workflows/unity-build-windows.yml
-    with:
-      project-path: ${{ inputs.project-path }}
-      unity-version: ${{ inputs.unity-version }}
-      environment: ${{ inputs.environment }}
-      build-config-path: ${{ inputs.build-config-path }}
-      cache-mode: ${{ inputs.cache-mode }}
-      build-addressables: ${{ inputs.build-addressables }}
-      upload-artifact: ${{ inputs.upload-artifact }}
-      clean-build: ${{ inputs.clean-build }}
-      artifact-retention-days: ${{ inputs.artifact-retention-days }}
-      release-mode: ${{ inputs.release-mode }}
-      build-version: ${{ needs.detect-changes.outputs.build-version }}
+      image-registry: ${{ inputs.image-registry }}
+      image-digest: ${{ inputs.image-digest }}
     secrets: inherit
 
   build-webgl:
@@ -276,7 +239,7 @@ jobs:
     if: |
       always() &&
       inputs.target-platform == 'WebGL' &&
-      needs.detect-changes.outputs.should-build-player == 'true' &&
+      needs.detect-changes.outputs.should-build == 'true' &&
       needs.validate.outputs.validation-passed == 'true' &&
       (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
     uses: ./.github/workflows/unity-build-webgl.yml
@@ -293,37 +256,75 @@ jobs:
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
       release-mode: ${{ inputs.release-mode }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
+      image-registry: ${{ inputs.image-registry }}
+      image-digest: ${{ inputs.image-digest }}
     secrets: inherit
 
-  # ─── 5. REPORT (always runs) ─────────────────────────────────────────────────
+  build-linux:
+    name: Build Linux
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      (inputs.target-platform == 'Linux64' || inputs.target-platform == 'LinuxServer') &&
+      needs.detect-changes.outputs.should-build == 'true' &&
+      needs.validate.outputs.validation-passed == 'true' &&
+      (inputs.test-level == 'none' || needs.test.outputs.tests-passed == 'true' || needs.test.result == 'skipped')
+    uses: ./.github/workflows/unity-build-linux.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      target-platform: ${{ inputs.target-platform }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      release-mode: ${{ inputs.release-mode }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+      image-registry: ${{ inputs.image-registry }}
+      image-digest: ${{ inputs.image-digest }}
+    secrets: inherit
+
+  # ─── 5. REPORT ─────────────────────────────────────────────────────────────────
   report:
     name: Build Report
-    needs: [detect-changes, validate, test, build-android, build-ios, build-windows, build-webgl]
+    needs: [detect-changes, validate, test, build-android, build-webgl, build-linux]
     if: always()
     runs-on: ubuntu-latest
     outputs:
-      build-artifact-name: ${{ steps.collect.outputs.artifact-name }}
+      build-artifact-name: ${{ steps.upload-report.outputs.artifact-name }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Collect build output
-        id: collect
-        uses: ./.github/actions/collect-build-output
-        with:
-          target-platform: ${{ inputs.target-platform }}
-          build-version: ${{ needs.detect-changes.outputs.build-version }}
-          environment: ${{ inputs.environment }}
-          test-result: ${{ needs.test.result }}
-          build-result: ${{ needs.build-android.result || needs.build-ios.result || needs.build-windows.result || needs.build-webgl.result }}
+      - name: Determine build result
+        id: build-result
+        shell: bash
+        env:
+          ANDROID_RESULT: ${{ needs.build-android.result }}
+          WEBGL_RESULT: ${{ needs.build-webgl.result }}
+          LINUX_RESULT: ${{ needs.build-linux.result }}
+          PLATFORM: ${{ inputs.target-platform }}
+        run: |
+          case "$PLATFORM" in
+            Android)      RESULT="$ANDROID_RESULT" ;;
+            WebGL)        RESULT="$WEBGL_RESULT" ;;
+            Linux64|LinuxServer) RESULT="$LINUX_RESULT" ;;
+            *)            RESULT="skipped" ;;
+          esac
+          echo "result=${RESULT}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build report
+        id: upload-report
         uses: ./.github/actions/upload-build-report
         with:
           build-version: ${{ needs.detect-changes.outputs.build-version }}
           target-platform: ${{ inputs.target-platform }}
           environment: ${{ inputs.environment }}
-          validation-passed: ${{ needs.validate.outputs.validation-passed }}
-          tests-passed: ${{ needs.test.outputs.tests-passed }}
-          build-result: ${{ needs.build-android.result || needs.build-ios.result || needs.build-windows.result || needs.build-webgl.result }}
+          validation-passed: ${{ needs.validate.outputs.validation-passed || 'false' }}
+          tests-passed: ${{ needs.test.outputs.tests-passed || 'skipped' }}
+          build-result: ${{ steps.build-result.outputs.result }}
+          retention-days: ${{ inputs.artifact-retention-days }}

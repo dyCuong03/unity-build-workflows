@@ -1,99 +1,157 @@
-name: Unity Validate (Reusable)
+name: Unity Validate
 
 on:
   workflow_call:
     inputs:
       project-path:
-        description: "Path to Unity project root"
+        description: Path to the Unity project root
         type: string
-        default: "."
+        required: false
+        default: '.'
       unity-version:
-        description: "Unity version to use"
+        description: Unity editor version
         type: string
         required: true
-      build-config-path:
-        description: "Path to BuildConfig folder"
-        type: string
-        default: "BuildConfig"
       target-platform:
-        description: "Target build platform"
+        description: Target build platform (Android, WebGL, Linux64, LinuxServer)
         type: string
         required: true
-      fail-on-warnings:
-        description: "Fail if validation warnings found"
+      environment:
+        description: Build environment (development, staging, production)
+        type: string
+        required: false
+        default: development
+      build-config-path:
+        description: Path to BuildConfig directory (relative to project-path)
+        type: string
+        required: false
+        default: BuildConfig
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-digest:
+        description: Pinned image digest for the validation container
+        type: string
+        required: false
+        default: ''
+      release-mode:
+        description: Enable strict validation gates
         type: boolean
+        required: false
         default: false
+
     secrets:
       UNITY_LICENSE:
-        required: true
+        required: false
       UNITY_EMAIL:
         required: false
       UNITY_PASSWORD:
         required: false
+
     outputs:
       validation-passed:
-        description: "Whether validation passed"
+        description: Whether validation passed
         value: ${{ jobs.validate.outputs.validation-passed }}
       build-config-valid:
-        description: "Whether BuildConfig is valid"
+        description: Whether the BuildConfig is valid
         value: ${{ jobs.validate.outputs.build-config-valid }}
 
 jobs:
   validate:
-    name: Validate Unity Project
+    name: Validate (${{ inputs.target-platform }})
     runs-on: ubuntu-latest
     outputs:
-      validation-passed: ${{ steps.validate-result.outputs.passed }}
-      build-config-valid: ${{ steps.validate-config.outputs.valid }}
+      validation-passed: ${{ steps.set-result.outputs.validation-passed }}
+      build-config-valid: ${{ steps.set-result.outputs.build-config-valid }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          lfs: true
 
-      - name: Setup Unity
-        uses: ./.github/actions/setup-unity
+      - name: Resolve Unity image
+        id: resolve-image
+        uses: ./.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
-          project-path: ${{ inputs.project-path }}
+          target-platform: ${{ inputs.target-platform }}
+          image-registry: ${{ inputs.image-registry }}
+          image-digest: ${{ inputs.image-digest }}
+          release-mode: ${{ inputs.release-mode }}
+
+      - name: Run BuildConfig validation in container
+        id: validate-container
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-
-      - name: Validate BuildConfig
-        id: validate-config
-        uses: ./.github/actions/validate-project
         with:
           project-path: ${{ inputs.project-path }}
-          build-config-path: ${{ inputs.build-config-path }}
+          unity-version: ${{ inputs.unity-version }}
           target-platform: ${{ inputs.target-platform }}
-          fail-on-warnings: ${{ inputs.fail-on-warnings }}
+          environment: ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: validate
+          release-mode: ${{ inputs.release-mode }}
 
-      - name: Validate workflow contract
+      - name: Run workflow contract checks (host)
+        id: contract-check
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          TARGET_PLATFORM: ${{ inputs.target-platform }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           python3 scripts/common/validate_workflow_contract.py \
-            --config-path "${{ inputs.project-path }}/${{ inputs.build-config-path }}" \
-            --platform "${{ inputs.target-platform }}"
+            --project-path "$PROJECT_PATH" \
+            --build-config-path "$BUILD_CONFIG_PATH" \
+            --target-platform "$TARGET_PLATFORM" \
+            --environment "$ENVIRONMENT"
 
       - name: Set validation result
-        id: validate-result
+        id: set-result
         if: always()
+        shell: bash
+        env:
+          CONTAINER_EXIT: ${{ steps.validate-container.outputs.exit-code }}
+          CONTRACT_RESULT: ${{ steps.contract-check.outcome }}
         run: |
-          if [[ "${{ steps.validate-config.outputs.valid }}" == "true" ]]; then
-            echo "passed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "passed=false" >> "$GITHUB_OUTPUT"
+          PASSED="true"
+          BUILD_CONFIG_VALID="true"
+
+          if [ "$CONTAINER_EXIT" != "0" ]; then
+            PASSED="false"
+            BUILD_CONFIG_VALID="false"
+          fi
+          if [ "$CONTRACT_RESULT" != "success" ]; then
+            PASSED="false"
           fi
 
-      - name: Upload validation report
+          echo "validation-passed=${PASSED}"            >> "$GITHUB_OUTPUT"
+          echo "build-config-valid=${BUILD_CONFIG_VALID}" >> "$GITHUB_OUTPUT"
+          echo "Validation passed: ${PASSED} | BuildConfig valid: ${BUILD_CONFIG_VALID}"
+
+      - name: Collect container output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: ./.github/actions/collect-container-output
         with:
-          name: validation-report
-          path: |
-            validation-report.json
-            validation-warnings.txt
-          retention-days: 7
-          if-no-files-found: ignore
+          target-platform: ${{ inputs.target-platform }}
+          environment: ${{ inputs.environment }}
+          command: validate
+          container-exit-code: ${{ steps.validate-container.outputs.exit-code }}
+          log-path: ${{ steps.validate-container.outputs.log-path }}
+          report-path: ${{ steps.validate-container.outputs.report-path }}
+
+      - name: Fail on validation errors
+        if: steps.set-result.outputs.validation-passed != 'true'
+        shell: bash
+        run: |
+          echo "::error::Validation failed. Check container output and workflow contract logs above."
+          exit 1

@@ -1,9 +1,20 @@
 # project-workflow.yml
-# Minimal caller workflow template showing how a consuming repository
-# calls unity-build-workflows reusable workflows.
-#
+# Docker-only caller workflow template.
 # Copy this file to your project's .github/workflows/ directory and
 # adjust the inputs to match your project's configuration.
+#
+# Supported platforms: Android, WebGL, Linux64, LinuxServer
+# All Unity operations run inside Docker containers — no native Unity install required.
+#
+# Required secrets (set in your repository settings):
+#   UNITY_LICENSE     — Unity license file content (base64)
+#   UNITY_EMAIL       — Unity account email (alternative activation)
+#   UNITY_PASSWORD    — Unity account password (alternative activation)
+#
+# Platform-specific secrets:
+#   Android: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS, ANDROID_KEY_PASS
+#   Android deploy: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+#   WebGL deploy: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
 
 name: Unity CI
 
@@ -15,61 +26,36 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (development|staging|production)"
+        description: Target environment
         required: false
-        default: "development"
+        default: development
         type: choice
         options: [development, staging, production]
+      target-platform:
+        description: Platform to build
+        required: false
+        default: Android
+        type: choice
+        options: [Android, WebGL, Linux64, LinuxServer]
 
 jobs:
-  # ------------------------------------------------------------------
-  # 1. Validate BuildConfig JSON against schema and project rules
-  # ------------------------------------------------------------------
-  validate:
-    name: Validate
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-validate.yml@v1
-    with:
-      project-path: "."
-      unity-version: "2022.3.45f1"
-      build-config-path: "BuildConfig"
-      target-platform: "Android"
-      fail-on-warnings: false
-    secrets:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-
-  # ------------------------------------------------------------------
-  # 2. Run EditMode + PlayMode tests
-  # ------------------------------------------------------------------
-  test:
-    name: Test
-    needs: validate
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-test.yml@v1
-    with:
-      project-path: "."
-      unity-version: "2022.3.45f1"
-      test-level: "full"
-      cache-mode: "safe"
-    secrets:
-      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-
-  # ------------------------------------------------------------------
-  # 3. Build for Android
-  # ------------------------------------------------------------------
+  # ── Android (Docker, ubuntu-latest) ────────────────────────────────────────────
   build-android:
-    name: Build Android
-    needs: test
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v1
+    name: Android
+    if: ${{ inputs.target-platform == 'Android' || github.event_name != 'workflow_dispatch' }}
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
     with:
-      project-path: "."
-      unity-version: "2022.3.45f1"
-      build-target: "Android"
-      build-config-path: "BuildConfig"
+      project-path: '.'
+      unity-version: '6000.0.23f1'       # ← set your project's Unity version
+      target-platform: Android
       environment: ${{ inputs.environment || 'development' }}
-      cache-mode: "safe"
+      build-config-path: BuildConfig
+      test-level: editmode
+      cache-mode: safe
+      build-addressables: false
+      upload-artifact: true
+      deploy-target: none
+      release-mode: false
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -78,3 +64,46 @@ jobs:
       ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+
+  # ── WebGL (Docker, ubuntu-latest) ──────────────────────────────────────────────
+  build-webgl:
+    name: WebGL
+    if: ${{ inputs.target-platform == 'WebGL' }}
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    with:
+      project-path: '.'
+      unity-version: '6000.0.23f1'       # ← set your project's Unity version
+      target-platform: WebGL
+      environment: ${{ inputs.environment || 'development' }}
+      build-config-path: BuildConfig
+      test-level: editmode
+      cache-mode: safe
+      upload-artifact: true
+      deploy-target: none
+      release-mode: false
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  # ── Linux64 (Docker, ubuntu-latest) ────────────────────────────────────────────
+  build-linux:
+    name: Linux64
+    if: ${{ inputs.target-platform == 'Linux64' || inputs.target-platform == 'LinuxServer' }}
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    with:
+      project-path: '.'
+      unity-version: '6000.0.23f1'       # ← set your project's Unity version
+      target-platform: ${{ inputs.target-platform || 'Linux64' }}
+      environment: ${{ inputs.environment || 'development' }}
+      build-config-path: BuildConfig
+      test-level: editmode
+      cache-mode: safe
+      upload-artifact: true
+      release-mode: false
+    secrets:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}

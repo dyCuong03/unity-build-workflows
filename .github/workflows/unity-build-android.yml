@@ -1,47 +1,68 @@
-name: Unity Build Android (Reusable)
+name: Unity Build Android
 
 on:
   workflow_call:
     inputs:
       project-path:
         type: string
-        default: "."
+        required: false
+        default: '.'
       unity-version:
         type: string
         required: true
       environment:
         type: string
-        default: "development"
+        required: false
+        default: development
       build-config-path:
         type: string
-        default: "BuildConfig"
+        required: false
+        default: BuildConfig
       cache-mode:
         type: string
-        default: "safe"
+        required: false
+        default: safe
       build-addressables:
         type: boolean
+        required: false
         default: false
       upload-artifact:
         type: boolean
+        required: false
         default: true
       deploy-target:
+        description: Deployment target (none, google-play)
         type: string
-        default: "none"
+        required: false
+        default: none
       clean-build:
         type: boolean
+        required: false
         default: false
       artifact-retention-days:
         type: number
+        required: false
         default: 14
       release-mode:
         type: boolean
+        required: false
         default: false
       build-version:
         type: string
         required: true
+      image-registry:
+        type: string
+        required: false
+        default: ghcr.io
+      image-digest:
+        description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+
     secrets:
       UNITY_LICENSE:
-        required: true
+        required: false
       UNITY_EMAIL:
         required: false
       UNITY_PASSWORD:
@@ -56,9 +77,10 @@ on:
         required: false
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
         required: false
+
     outputs:
       artifact-name:
-        description: "Name of the uploaded APK/AAB artifact"
+        description: Name of the uploaded APK/AAB artifact
         value: ${{ jobs.build.outputs.artifact-name }}
 
 jobs:
@@ -73,135 +95,160 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           lfs: true
 
-      - name: Restore Library Cache
-        uses: ./.github/actions/restore-library-cache
+      - name: Restore Docker cache
+        uses: ./.github/actions/restore-docker-cache
         with:
           project-path: ${{ inputs.project-path }}
           unity-version: ${{ inputs.unity-version }}
-          target-platform: "Android"
+          target-platform: Android
           cache-mode: ${{ inputs.cache-mode }}
 
-      - name: Clean build (if requested)
-        if: inputs.clean-build == true
-        run: rm -rf "${{ inputs.project-path }}/Library"
-
-      - name: Setup Unity
-        uses: ./.github/actions/setup-unity
+      - name: Resolve Unity image
+        id: resolve-image
+        uses: ./.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
-          project-path: ${{ inputs.project-path }}
           target-platform: Android
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          image-registry: ${{ inputs.image-registry }}
+          image-variant: android
+          image-digest: ${{ inputs.image-digest }}
+          release-mode: ${{ inputs.release-mode }}
 
-      - name: Setup Android signing
+      - name: Setup Android signing (pre-container)
         id: android-signing
         if: inputs.release-mode == true || inputs.environment != 'development'
-        run: |
-          python3 scripts/android/prepare_android_build.py \
-            --environment "${{ inputs.environment }}" \
-            --version "${{ inputs.build-version }}" \
-            --config-path "${{ inputs.project-path }}/${{ inputs.build-config-path }}"
+        shell: bash
         env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          BUILD_VERSION: ${{ inputs.build-version }}
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          python3 scripts/android/prepare_android_build.py \
+            --environment "$ENVIRONMENT" \
+            --version     "$BUILD_VERSION" \
+            --config-path "$PROJECT_PATH/$BUILD_CONFIG_PATH"
 
       - name: Generate build metadata
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_VERSION: ${{ inputs.build-version }}
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
           python3 scripts/common/generate_build_metadata.py \
-            --project-path "${{ inputs.project-path }}" \
-            --platform Android \
-            --version "${{ inputs.build-version }}" \
-            --environment "${{ inputs.environment }}" \
+            --project-path "$PROJECT_PATH" \
+            --platform     Android \
+            --version      "$BUILD_VERSION" \
+            --environment  "$ENVIRONMENT" \
             --build-number "${{ github.run_number }}" \
-            --commit "${{ github.sha }}"
+            --commit       "${{ github.sha }}"
 
       - name: Build Addressables
+        id: build-addressables
         if: inputs.build-addressables == true
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -executeMethod AddressableAssets.Settings.AddressableAssetSettings.BuildPlayerContent \
-            -logFile "${{ runner.temp }}/addressables-build.log" \
-            -quit
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: Android
+          environment: ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: build-addressables
+          cache-mode: ${{ inputs.cache-mode }}
 
       - name: Build Unity Android
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -executeMethod BuildCommand.Execute \
-            -buildTarget Android \
-            -buildPath "${{ runner.temp }}/build/android" \
-            -buildVersion "${{ inputs.build-version }}" \
-            -buildEnvironment "${{ inputs.environment }}" \
-            -logFile "${{ runner.temp }}/unity-build-android.log" \
-            -quit
+        id: build
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: Android
+          environment: ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: build
+          cache-mode: ${{ inputs.cache-mode }}
+          clean-build: ${{ inputs.clean-build }}
+          output-path: Builds/Android
+          release-mode: ${{ inputs.release-mode }}
 
-      - name: Sign Android build
+      - name: Sign Android build (post-container)
         if: inputs.release-mode == true || inputs.environment != 'development'
-        run: |
-          bash scripts/android/sign_android_build.sh \
-            "${{ runner.temp }}/build/android" \
-            "${{ inputs.environment }}"
+        shell: bash
         env:
+          BUILD_PATH: Builds/Android
+          ENVIRONMENT: ${{ inputs.environment }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          bash scripts/android/sign_android_build.sh "$BUILD_PATH" "$ENVIRONMENT"
 
       - name: Compare build size
         if: always()
+        shell: bash
         run: |
           python3 scripts/common/compare_build_size.py \
-            --build-path "${{ runner.temp }}/build/android" \
-            --platform Android \
-            --version "${{ inputs.build-version }}" || true
+            --build-path Builds/Android \
+            --platform   Android \
+            --version    "${{ inputs.build-version }}" || true
 
       - name: Upload build artifact
         id: upload
-        if: inputs.upload-artifact == true
+        if: always() && inputs.upload-artifact == true
         uses: actions/upload-artifact@v4
         with:
           name: android-build-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
-          path: ${{ runner.temp }}/build/android/
+          path: Builds/Android/
           retention-days: ${{ inputs.artifact-retention-days }}
           if-no-files-found: error
 
       - name: Deploy to Google Play
         if: inputs.deploy-target == 'google-play'
+        shell: bash
+        env:
+          BUILD_PATH: Builds/Android
+          ENVIRONMENT: ${{ inputs.environment }}
+          BUILD_VERSION: ${{ inputs.build-version }}
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           python3 scripts/android/upload_google_play.py \
-            --build-path "${{ runner.temp }}/build/android" \
-            --environment "${{ inputs.environment }}" \
-            --version "${{ inputs.build-version }}"
-        env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+            --build-path  "$BUILD_PATH" \
+            --environment "$ENVIRONMENT" \
+            --version     "$BUILD_VERSION"
 
-      - name: Collect build logs
+      - name: Collect container output
         if: always()
-        uses: ./.github/actions/collect-build-output
+        uses: ./.github/actions/collect-container-output
         with:
           target-platform: Android
           build-version: ${{ inputs.build-version }}
           environment: ${{ inputs.environment }}
-          log-path: ${{ runner.temp }}
+          command: build
+          container-exit-code: ${{ steps.build.outputs.exit-code }}
+          log-path: ${{ steps.build.outputs.log-path }}
+          report-path: ${{ steps.build.outputs.report-path }}
 
       - name: Cleanup signing artifacts
         if: always()
+        shell: bash
         run: |
-          rm -f /tmp/android-keystore.jks
-          rm -f /tmp/signing-config.json
+          rm -f /tmp/android-keystore.jks /tmp/signing-config.json

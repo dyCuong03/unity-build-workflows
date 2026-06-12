@@ -1,31 +1,27 @@
 # Release Flow
 
-This document describes the tag-based release process, protected environments, and build promotion gates in `unity-build-workflows`.
+This document describes the tag-based release process for the Docker-mandatory Unity CI/CD platform.
 
 ---
 
 ## Overview
 
-Releases follow a trunk-based promotion model:
-
 ```
 feature branch  →  develop (dev builds)  →  main (staging builds)  →  v* tag (production builds)
 ```
 
-No environment skips are permitted — a commit must flow through staging before a production tag can be created from it.
+All builds run inside Docker containers. Production builds use digest-pinned images.
 
 ---
 
 ## Branch and Tag Conventions
 
-| Branch/Pattern | Triggers | Environment |
-|---|---|---|
-| Any branch | `push` to feature branch | development |
-| `develop` | `push` to develop | development |
-| `main` | `push` to main | staging |
-| `v*` tag on `main` | Tag push | production |
-
-Tags must follow `vMAJOR.MINOR.PATCH` (e.g., `v1.2.3`). The `bundleVersion` in `BuildConfig.production.json` must match the tag version.
+| Branch/Pattern | Triggers | Environment | Image Requirement |
+|---|---|---|---|
+| Feature branch | `push` | development | Tagged image OK |
+| `develop` | `push` | development | Tagged image OK |
+| `main` | `push` | staging | Tagged image OK |
+| `v*` tag on `main` | Tag push | production | **Digest-pinned image required** |
 
 ---
 
@@ -33,23 +29,19 @@ Tags must follow `vMAJOR.MINOR.PATCH` (e.g., `v1.2.3`). The `bundleVersion` in `
 
 ### 1. Merge to main
 
-All features for the release must be merged into `main` via pull request. Staging builds run automatically on merge.
+All features for the release merged via pull request. Staging builds run automatically.
 
 ### 2. Verify Staging Build
 
-Wait for the staging workflow to complete successfully. Download and test the staging artifact. Confirm all quality gates pass.
+Wait for staging workflow to complete. Download and test the artifact.
 
 ### 3. Update BuildConfig Version
-
-In `BuildConfig.base.json` (or `BuildConfig.production.json`), update:
 
 ```json
 "bundleVersion": "1.2.3"
 ```
 
-Commit and push to `main`. The staging build with the new version number should be the final candidate.
-
-### 4. Create and Push the Release Tag
+### 4. Create Release Tag
 
 ```bash
 git checkout main
@@ -58,105 +50,62 @@ git tag v1.2.3 -m "Release 1.2.3: [brief description]"
 git push origin v1.2.3
 ```
 
-This triggers the production workflow.
+### 5. Approve Production Deployment
 
-### 5. Approve the Production Deployment
-
-The production workflow pauses at the `production` environment gate, waiting for a required reviewer to approve. Navigate to **Actions → [workflow run] → Review deployments → Approve**.
+Navigate to **Actions → [workflow run] → Review deployments → Approve**.
 
 ### 6. Monitor Production Build
 
-Once approved, the build runs with production secrets and strict quality gates. If any gate fails, the tag remains but the workflow fails — no artifact is distributed. Fix the issue, delete the tag, and re-tag from the corrected commit.
+Production build uses:
+- Digest-pinned Docker image
+- Clean build mode (no cache)
+- Strict quality gates
+- Protected GitHub Environment
 
 ---
 
-## GitHub Environments
+## Production Build Requirements
 
-### `staging`
-
-| Setting | Value |
+| Requirement | Enforcement |
 |---|---|
-| Deployment branches | `main` only |
-| Required reviewers | None (automatic) |
-| Wait timer | None |
-| Secrets | Staging keystores, staging provisioning profiles, Firebase tokens |
-
-### `production`
-
-| Setting | Value |
-|---|---|
-| Deployment branches | Tags matching `v*` |
-| Required reviewers | At least 1 (team lead or release manager) |
-| Wait timer | Optional (e.g., 10 minutes for last-minute abort) |
-| Secrets | Production keystores, production provisioning profiles, App Store Connect keys |
-
-Secrets scoped to an environment are only available when the environment's conditions are met. Fork pull requests and feature branches never access production secrets.
+| Digest-pinned image | `resolve-unity-image` rejects mutable tags in release mode |
+| Clean build | `clean-build: true` forces fresh Library import |
+| Image scan passed | Image manifest records scan status |
+| Strict gates | `failOnWarnings: true`, all validation rules |
+| Environment approval | GitHub Environment requires reviewer |
 
 ---
 
-## Quality Gates at Release
+## Build → Sign → Deploy Separation
 
-Production builds enforce stricter gates than development/staging:
-
-```json
-"gates": {
-  "maxBuildSizeMB": 500,
-  "warnBuildSizeIncreasePct": 5,
-  "failBuildSizeIncreasePct": 15,
-  "failOnWarnings": true,
-  "requiredValidationRules": [
-    "no_missing_references",
-    "no_missing_scripts",
-    "no_missing_prefabs",
-    "addressables_content_hash_stable",
-    "bundle_identifier_matches_config"
-  ]
-}
+```
+Docker Container (Unity build)
+  └─ Unsigned artifact
+       └─ Host signing step (Android keystore / not in container)
+            └─ Host deployment step (Google Play / Cloudflare)
 ```
 
-Any gate violation aborts the build before signing. The build artifact is not uploaded in a failed state.
-
----
-
-## Build Number at Release
-
-For release builds with `buildNumberStrategy: github_run_number`, the build number is the GitHub Actions run number. This is monotonically increasing and audit-traceable. For App Store submissions, the `ios.buildNumber` or Android version code is derived from this value.
-
-If you need a specific build number for compliance or App Store Connect versioning, use `buildNumberStrategy: manual` and set `BUILD_NUMBER` as a workflow input.
+Signing and deployment credentials are never inside the Unity container.
 
 ---
 
 ## Rollback
 
-If a released build has a critical defect:
-
-1. Do not delete the version tag — it preserves the build history.
-2. Create a hotfix branch from the release tag: `git checkout -b hotfix/1.2.4 v1.2.3`
-3. Apply the fix, bump `bundleVersion` to `1.2.4`, and merge to `main`.
-4. Tag `v1.2.4` and follow the normal release flow.
+1. Do not delete the version tag
+2. Create hotfix branch: `git checkout -b hotfix/1.2.4 v1.2.3`
+3. Fix, bump version to `1.2.4`, merge to `main`
+4. Tag `v1.2.4` and follow normal release flow
 
 ---
 
-## Semantic Versioning
+## Versioning
 
-| Change Type | Version Bump | Example |
-|---|---|---|
-| Bug fix, balance change | PATCH | 1.2.3 → 1.2.4 |
-| New feature, new content | MINOR | 1.2.3 → 1.3.0 |
-| Breaking change (save format, API) | MAJOR | 1.2.3 → 2.0.0 |
+Consumer repositories reference the major version:
 
-The `@v1` floating tag on this repository (`unity-build-workflows`) points to the latest 1.x.x release and is what consumer repositories reference. A `@v2` would indicate breaking changes to the workflow interface.
+```yaml
+uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+```
 
----
-
-## `@v1` Floating Tag Policy
-
-The `unity-build-workflows` repository maintains floating major version tags:
-
-- `v1` always points to the latest `v1.x.x` release
-- Using `@v1` in consumer workflows means automatic minor/patch updates
-- Breaking changes increment the major version to `v2`
-
-To pin to an exact version (for reproducibility): `uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1.2.3`
-
-To get latest non-breaking updates: `uses: BuzzelStudio/unity-build-workflows/.github/workflows/android.yml@v1`
+- `@v2` points to latest `2.x.x` release
+- Breaking changes increment to `v3`
+- Pin to exact version for reproducibility: `@v2.0.0`

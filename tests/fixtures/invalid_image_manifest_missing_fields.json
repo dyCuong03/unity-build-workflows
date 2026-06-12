@@ -1,0 +1,5 @@
+{
+  "schemaVersion": "1.0.0",
+  "imageReference": "ghcr.io/buzzelstudio/unity-android:2022.3.45f1",
+  "unityVersion": "2022.3.45f1"
+}

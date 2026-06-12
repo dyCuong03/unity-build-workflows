@@ -1,34 +1,49 @@
 # Android Builds
 
-This document covers Android-specific configuration, signing, and distribution for `unity-build-workflows`.
+Android builds run inside Docker containers using the `android` image variant.
 
 ---
 
-## Runner Requirements
+## Image Variant
 
-Android builds run on **Ubuntu** runners (GitHub-hosted `ubuntu-latest` or self-hosted).
+```
+ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+```
 
-Required tools on the runner:
-- Unity Editor with Android Build Support module
-- Android SDK (API level matching `targetSdkVersion`)
-- Android NDK (for IL2CPP builds)
-- Java 11 or 17 (for `bundletool` if needed)
+Base: `unityci/editor:6000.0.26f1-android-3`
 
-GitHub-hosted runners include the Android SDK. If using self-hosted runners, install Unity with the Android module and set `ANDROID_SDK_ROOT`.
+Includes: Unity Editor, Android SDK, Android NDK, JDK, Gradle
+
+---
+
+## Workflow Usage
+
+```yaml
+build-android:
+  uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-android.yml@v2
+  with:
+    project-path: .
+    unity-version: '6000.0.26f1'
+    environment: development
+    build-config-path: BuildConfig
+    build-addressables: true
+    cache-mode: safe
+  secrets: inherit
+```
 
 ---
 
 ## BuildConfig Fields
 
-See [BUILD_CONFIG.md](BUILD_CONFIG.md#android-object) for the full `android` object reference. Key fields for Android:
+See [BUILD_CONFIG.md](BUILD_CONFIG.md#android-object) for full reference.
 
 | Field | Notes |
 |---|---|
 | `applicationId` | Must match your Play Console application ID exactly |
-| `buildAppBundle` | Set `true` for Play Store, `false` for sideloading/Firebase |
-| `architecture` | Use `ARM64` for modern devices; `All` only if needed for x86 emulators |
+| `buildAppBundle` | `true` for Play Store, `false` for sideloading/Firebase |
+| `architecture` | `ARM64` for modern devices; `All` only for x86 emulators |
 | `keystoreMode` | `custom` for production signing, `debug` for dev/test |
-| `symbolExport` | Enable `public` or `debugging` if using Crashlytics |
+| `symbolExport` | Enable `public` or `debugging` for Crashlytics |
 
 ---
 
@@ -36,20 +51,19 @@ See [BUILD_CONFIG.md](BUILD_CONFIG.md#android-object) for the full `android` obj
 
 ### Debug Signing (development)
 
-When `keystoreMode` is `debug`, Unity uses the Android debug keystore from the SDK. No secrets are required. The resulting APK/AAB is not suitable for Play Store submission.
+When `keystoreMode` is `debug`, Unity uses the Android debug keystore from the SDK inside the container. No secrets required. Not suitable for Play Store.
 
-### Custom Signing (staging and production)
+### Custom Signing (staging/production)
 
-When `keystoreMode` is `custom`, the workflow expects these secrets:
-
+Required secrets:
 ```
-ANDROID_KEYSTORE_BASE64      # base64-encoded .jks or .keystore file
-ANDROID_KEYSTORE_PASSWORD    # keystore password
+ANDROID_KEYSTORE_BASE64      # base64-encoded .jks or .keystore
+ANDROID_KEYSTORE_PASS        # keystore password
 ANDROID_KEY_ALIAS            # key alias
-ANDROID_KEY_PASSWORD         # key password (may equal keystore password)
+ANDROID_KEY_PASS             # key password
 ```
 
-The workflow decodes the keystore to a temporary file, injects it into Unity's PlayerSettings at build time, and deletes the file after signing. The keystore is never persisted in the workspace or artifact.
+The signing step runs as a post-container operation. The keystore is decoded to a temporary file, used for signing, and deleted.
 
 ### Generating a Keystore
 
@@ -62,87 +76,55 @@ keytool -genkey -v \
   -validity 10000
 ```
 
-Encode it for use as a GitHub secret:
-
+Encode for GitHub secret:
 ```bash
 base64 -w 0 my-release-key.keystore
 ```
-
-**Keep the keystore file and passwords secure.** A lost keystore cannot be recovered and prevents Play Store updates.
 
 ---
 
 ## Build Output
 
-| `buildAppBundle` | Output File | Use Case |
+| `buildAppBundle` | Output | Use Case |
 |---|---|---|
 | `true` | `*.aab` | Google Play Store |
-| `false` | `*.apk` | Sideloading, Firebase App Distribution, direct distribution |
+| `false` | `*.apk` | Sideloading, Firebase App Distribution |
 
-Output is uploaded as a GitHub Actions artifact named `{projectName}-android-{environment}-{buildNumber}`.
-
----
-
-## Symbol Files
-
-Enable `symbolExport` to upload symbol files to crash reporting services:
-
-- `none` — No symbol files exported (smallest artifact)
-- `public` — Exports stripped symbol files (sufficient for Firebase Crashlytics)
-- `debugging` — Exports full unstripped symbols (large; use for deep crash analysis)
-
-Symbol archives are uploaded as a separate artifact: `{projectName}-android-symbols-{buildNumber}`.
-
----
-
-## Minimum SDK Version Guidelines
-
-| `minSdkVersion` | Android Version | Approx. Market Share (2024) |
-|---|---|---|
-| 22 | Android 5.1 | >99% |
-| 24 | Android 7.0 | >98% |
-| 26 | Android 8.0 | >96% |
-
-Google Play requires `targetSdkVersion` ≥ 34 for new apps/updates (check Play Console for current requirement).
-
----
-
-## Addressables with Android
-
-When `addressables.buildRemoteCatalog` is `true`, the remote catalog and bundles are built during the Android build step and must be uploaded to your CDN before the build is distributed. The `postBuild` hook is the appropriate place to trigger the CDN upload:
-
-```json
-"hooks": {
-  "postBuild": ["upload-addressables-cdn"]
-}
-```
+Output location: `Builds/Android/`
 
 ---
 
 ## Local Android Build
 
-Run a local build without CI:
-
 ```bash
-# From the unity-build-workflows directory
-./scripts/build.sh \
-  --platform Android \
-  --config ci/BuildConfig.development.json \
-  --unity-path /Applications/Unity/Hub/Editor/2022.3.45f1/Unity.app/Contents/MacOS/Unity
+python3 scripts/docker/run_unity_container.py \
+  --project-path . \
+  --unity-version 6000.0.26f1 \
+  --target-platform Android \
+  --environment development \
+  --build-config-path BuildConfig
 ```
+
+---
+
+## Android SDK/NDK Versions
+
+SDK and NDK versions are pinned in the Docker image. Check the image manifest for installed versions.
+
+If your project requires different versions, update `docker/variants/android.Dockerfile` and rebuild the image. Do not install SDK components at build time.
 
 ---
 
 ## Troubleshooting
 
 **"Keystore was tampered with, or password was incorrect"**
-The `ANDROID_KEYSTORE_PASSWORD` secret does not match the keystore. Verify by decoding `ANDROID_KEYSTORE_BASE64` locally and running `keytool -list -v -keystore decoded.keystore`.
+Verify `ANDROID_KEYSTORE_PASS` matches the keystore. Test locally: `keytool -list -v -keystore decoded.keystore`
 
 **"Gradle build failed: SDK location not found"**
-The Android SDK is not installed on the runner or `ANDROID_SDK_ROOT` is not set. For self-hosted runners, set the environment variable in the runner service configuration.
+The Android SDK is pre-installed in the Docker image. If using a custom image, verify `ANDROID_SDK_ROOT` is set.
 
 **"IL2CPP build failed: NDK not found"**
-Install the NDK via Unity Hub (Add Modules → Android Build Support → Android NDK) or set `ANDROID_NDK_HOME`.
+The NDK is pre-installed in the android variant image. Verify the image variant is `android`.
 
 **"minSdkVersion X is lower than NDK's minimum"**
-Upgrade `minSdkVersion` to match the NDK minimum (usually 21).
+Upgrade `minSdkVersion` in BuildConfig to match the NDK minimum (usually 21).

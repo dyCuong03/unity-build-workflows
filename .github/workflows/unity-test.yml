@@ -1,136 +1,195 @@
-name: Unity Test (Reusable)
+name: Unity Test
 
 on:
   workflow_call:
     inputs:
       project-path:
-        description: "Path to Unity project root"
+        description: Path to the Unity project root
         type: string
-        default: "."
+        required: false
+        default: '.'
       unity-version:
-        description: "Unity version to use"
+        description: Unity editor version
         type: string
         required: true
+      target-platform:
+        description: Target platform (used for image resolution and cache key)
+        type: string
+        required: false
+        default: Linux64
       test-level:
-        description: "Test level: editmode, playmode, or full"
+        description: Tests to run (editmode, playmode, full)
         type: string
-        default: "editmode"
+        required: false
+        default: editmode
       cache-mode:
-        description: "Library cache mode: off/safe/aggressive"
+        description: Library cache strategy (off, safe, aggressive)
         type: string
-        default: "safe"
+        required: false
+        default: safe
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-digest:
+        description: Pinned image digest for the test container
+        type: string
+        required: false
+        default: ''
+
     secrets:
       UNITY_LICENSE:
-        required: true
+        required: false
       UNITY_EMAIL:
         required: false
       UNITY_PASSWORD:
         required: false
+
     outputs:
       tests-passed:
-        description: "Whether all tests passed"
+        description: Whether all tests passed
         value: ${{ jobs.test.outputs.tests-passed }}
       test-report-artifact:
-        description: "Name of the uploaded test report artifact"
+        description: Name of the uploaded test report artifact
         value: ${{ jobs.test.outputs.test-report-artifact }}
 
 jobs:
   test:
-    name: Run Unity Tests (${{ inputs.test-level }})
+    name: Run Tests (${{ inputs.test-level }})
     runs-on: ubuntu-latest
     outputs:
-      tests-passed: ${{ steps.check-results.outputs.passed }}
-      test-report-artifact: ${{ steps.upload-results.outputs.artifact-name }}
+      tests-passed: ${{ steps.check-results.outputs.tests-passed }}
+      test-report-artifact: ${{ steps.set-artifact-name.outputs.artifact-name }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           lfs: true
 
-      - name: Restore Library Cache
-        uses: ./.github/actions/restore-library-cache
+      - name: Restore Docker cache
+        uses: ./.github/actions/restore-docker-cache
         with:
           project-path: ${{ inputs.project-path }}
           unity-version: ${{ inputs.unity-version }}
-          target-platform: "StandaloneLinux64"
+          target-platform: ${{ inputs.target-platform }}
           cache-mode: ${{ inputs.cache-mode }}
 
-      - name: Setup Unity
-        uses: ./.github/actions/setup-unity
+      - name: Resolve Unity image
+        id: resolve-image
+        uses: ./.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
-          project-path: ${{ inputs.project-path }}
+          target-platform: ${{ inputs.target-platform }}
+          image-registry: ${{ inputs.image-registry }}
+          image-variant: linux
+          image-digest: ${{ inputs.image-digest }}
+
+      - name: Run EditMode tests
+        id: test-editmode
+        if: inputs.test-level == 'editmode' || inputs.test-level == 'full'
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: ${{ inputs.target-platform }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: test-editmode
+          cache-mode: ${{ inputs.cache-mode }}
+          output-path: TestResults/editmode
 
-      - name: Run EditMode Tests
-        if: inputs.test-level == 'editmode' || inputs.test-level == 'full'
-        continue-on-error: true
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -runTests \
-            -testPlatform EditMode \
-            -testResults "${{ runner.temp }}/editmode-results.xml" \
-            -logFile "${{ runner.temp }}/editmode-test.log" \
-            -quit
-        env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-
-      - name: Run PlayMode Tests
+      - name: Run PlayMode tests
+        id: test-playmode
         if: inputs.test-level == 'playmode' || inputs.test-level == 'full'
-        continue-on-error: true
-        run: |
-          unity-editor \
-            -batchmode \
-            -nographics \
-            -projectPath "${{ inputs.project-path }}" \
-            -runTests \
-            -testPlatform PlayMode \
-            -testResults "${{ runner.temp }}/playmode-results.xml" \
-            -logFile "${{ runner.temp }}/playmode-test.log" \
-            -quit
+        uses: ./.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          project-path: ${{ inputs.project-path }}
+          unity-version: ${{ inputs.unity-version }}
+          target-platform: ${{ inputs.target-platform }}
+          image-reference: ${{ steps.resolve-image.outputs.image-reference }}
+          image-digest: ${{ steps.resolve-image.outputs.image-digest }}
+          command: test-playmode
+          cache-mode: ${{ inputs.cache-mode }}
+          output-path: TestResults/playmode
 
       - name: Check test results
         id: check-results
         if: always()
+        shell: bash
+        env:
+          EDITMODE_EXIT: ${{ steps.test-editmode.outputs.exit-code || '0' }}
+          PLAYMODE_EXIT: ${{ steps.test-playmode.outputs.exit-code || '0' }}
+          TEST_LEVEL: ${{ inputs.test-level }}
         run: |
-          PASSED=true
-          for result_file in "${{ runner.temp }}"/*-results.xml; do
-            if [[ -f "$result_file" ]]; then
-              FAILURES=$(python3 -c "
-          import xml.etree.ElementTree as ET
-          tree = ET.parse('$result_file')
-          root = tree.getroot()
-          failures = int(root.get('failures', 0))
-          errors = int(root.get('errors', 0))
-          print(failures + errors)
-          " 2>/dev/null || echo "0")
-              if [[ "$FAILURES" -gt "0" ]]; then
-                PASSED=false
-                echo "Test failures found in $result_file: $FAILURES"
-              fi
-            fi
-          done
-          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+          PASSED="true"
+          FAILURES=0
 
-      - name: Upload test results
-        id: upload-results
+          # Parse XML result files if present
+          for xml_file in TestResults/**/*.xml TestResults/*.xml; do
+            [ -f "$xml_file" ] || continue
+            FILE_FAILS=$(python3 - "$xml_file" << 'PYEOF'
+          import sys, xml.etree.ElementTree as ET
+          try:
+              root = ET.parse(sys.argv[1]).getroot()
+              print(int(root.get('failures', 0)) + int(root.get('errors', 0)))
+          except Exception:
+              print(0)
+          PYEOF
+            )
+            FAILURES=$((FAILURES + FILE_FAILS))
+          done
+
+          # Also fail if container itself exited non-zero
+          [ "$EDITMODE_EXIT" != "0" ] && [ "$EDITMODE_EXIT" != "" ] && FAILURES=$((FAILURES + 1))
+          [ "$PLAYMODE_EXIT"  != "0" ] && [ "$PLAYMODE_EXIT"  != "" ] && FAILURES=$((FAILURES + 1))
+
+          [ "$FAILURES" -gt 0 ] && PASSED="false"
+
+          echo "tests-passed=${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "Test failures: ${FAILURES} | Passed: ${PASSED}"
+
+      - name: Set artifact name
+        id: set-artifact-name
+        shell: bash
+        run: |
+          echo "artifact-name=test-results-${{ inputs.test-level }}-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect EditMode output
+        if: always() && (inputs.test-level == 'editmode' || inputs.test-level == 'full')
+        uses: ./.github/actions/collect-container-output
+        with:
+          target-platform: ${{ inputs.target-platform }}
+          command: test-editmode
+          container-exit-code: ${{ steps.test-editmode.outputs.exit-code || '0' }}
+          log-path: ${{ steps.test-editmode.outputs.log-path }}
+          report-path: ${{ steps.test-editmode.outputs.report-path }}
+
+      - name: Collect PlayMode output
+        if: always() && (inputs.test-level == 'playmode' || inputs.test-level == 'full')
+        uses: ./.github/actions/collect-container-output
+        with:
+          target-platform: ${{ inputs.target-platform }}
+          command: test-playmode
+          container-exit-code: ${{ steps.test-playmode.outputs.exit-code || '0' }}
+          log-path: ${{ steps.test-playmode.outputs.log-path }}
+          report-path: ${{ steps.test-playmode.outputs.report-path }}
+
+      - name: Upload test results artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ inputs.test-level }}-${{ github.run_number }}
-          path: |
-            ${{ runner.temp }}/*-results.xml
-            ${{ runner.temp }}/*-test.log
+          name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+          path: TestResults/
           retention-days: 14
           if-no-files-found: ignore
 
@@ -139,12 +198,13 @@ jobs:
         uses: dorny/test-reporter@v1
         with:
           name: Unity Tests (${{ inputs.test-level }})
-          path: ${{ runner.temp }}/*-results.xml
+          path: TestResults/**/*.xml
           reporter: java-junit
           fail-on-error: false
 
       - name: Fail if tests failed
-        if: steps.check-results.outputs.passed == 'false'
+        if: steps.check-results.outputs.tests-passed == 'false'
+        shell: bash
         run: |
-          echo "::error::One or more Unity tests failed."
+          echo "::error::One or more Unity tests failed. See test report artifact for details."
           exit 1

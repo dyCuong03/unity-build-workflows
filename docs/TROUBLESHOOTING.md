@@ -1,203 +1,262 @@
 # Troubleshooting
 
-Common errors and their fixes for `unity-build-workflows`.
+Common errors and their fixes for the Docker-mandatory Unity CI/CD platform.
+
+---
+
+## Docker Issues
+
+### Docker daemon unavailable
+
+**Error:** `Cannot connect to the Docker daemon`
+
+**Cause:** Docker Engine is not running on the CI runner or developer machine.
+
+**Fix:**
+- CI: Ensure the runner has Docker pre-installed. GitHub-hosted `ubuntu-latest` runners include Docker.
+- Local: Start Docker Desktop or the Docker daemon (`sudo systemctl start docker`).
+- Self-hosted: Install Docker Engine and ensure the runner user is in the `docker` group.
+
+### Registry authentication failure
+
+**Error:** `denied: permission denied` or `unauthorized: authentication required`
+
+**Cause:** The runner cannot pull the Unity build image from the container registry.
+
+**Fix:**
+- Ensure `GITHUB_TOKEN` has `packages: read` permission
+- For private registries, add registry credentials to the workflow
+- Check that the image reference exists in the registry
+
+### Image not found
+
+**Error:** `manifest unknown` or `not found`
+
+**Cause:** The requested image tag or digest does not exist in the registry.
+
+**Fix:**
+- Verify the Unity version and variant are correct
+- Check image manifest for available images
+- Build the image first via `build-unity-image.yml` workflow
+
+### Image digest mismatch
+
+**Error:** `image digest does not match expected`
+
+**Cause:** The image in the registry has been updated but the manifest still references the old digest.
+
+**Fix:**
+- Rebuild and republish the image
+- Update the image manifest with the new digest
+- In development mode, use tags instead of digests
 
 ---
 
 ## Unity License Issues
 
-### "License activation failed: No serial number provided"
+### Unity license activation failed
 
-**Cause:** `UNITY_LICENSE` secret is empty or malformed.
+**Error:** `Unity license activation failed` or `No valid Unity license found`
+
+**Cause:** The `UNITY_LICENSE` secret is missing, invalid, or expired.
 
 **Fix:**
-1. On your local machine, activate Unity and locate the `.ulf` file:
-   - macOS: `~/Library/Application Support/Unity/Unity_lic.ulf`
-   - Windows: `C:\ProgramData\Unity\Unity_lic.ulf`
-   - Linux: `~/.local/share/unity3d/Unity/Unity_lic.ulf`
-2. Base64-encode without line breaks: `base64 -w 0 Unity_lic.ulf`
-3. Paste the output as the `UNITY_LICENSE` secret value.
+1. Verify `UNITY_LICENSE` repository secret contains the complete `.ulf` file content
+2. Check that the license covers the Unity version being used
+3. Check `Logs/unity-activate.log` for detailed activation errors
+4. For Professional/Plus licenses, ensure `UNITY_EMAIL` and `UNITY_PASSWORD` are also set
+5. License files expire — regenerate if older than 2 years
 
-### "License activation failed: Machine count exceeded"
+### Machine count exceeded
+
+**Error:** `License activation failed: Machine count exceeded`
 
 **Cause:** Unity's concurrent activation limit reached.
 
 **Fix:** Return licenses from unused machines via Unity Hub (Preferences → Licenses → Return), or upgrade to Unity Build Server for CI.
 
-### "License file is not valid for this version"
+### License version mismatch
+
+**Error:** `License file is not valid for this version`
 
 **Cause:** The `.ulf` was generated for a different Unity version.
 
-**Fix:** Activate Unity with the exact version used in the workflow (`unity-version` input) and export a new `.ulf`.
+**Fix:** Activate Unity with the exact version used in the workflow and export a new `.ulf`.
+
+---
+
+## Permission Issues
+
+### Permission denied on workspace files
+
+**Error:** `Permission denied` on workspace files or Unity cache
+
+**Cause:** File ownership mismatch between host and container.
+
+**Fix:**
+- The `run_unity_container.py` wrapper sets `--user "$(id -u):$(id -g)"` automatically
+- Check that the project directory is readable by the current user
+- If using a named volume, it may have been created by a different user — delete it: `docker volume rm <volume-name>`
+
+### Root-owned output
+
+**Error:** Build artifacts are owned by root and cannot be cleaned up.
+
+**Cause:** Container ran as root instead of the host user.
+
+**Fix:**
+- Always use `scripts/docker/run_unity_container.py` which sets `--user` automatically
+- Never run `docker run` manually without `--user`
+- Fix existing root-owned files: `sudo chown -R $(id -u):$(id -g) Builds/`
+
+---
+
+## Cache Issues
+
+### Library cache corruption
+
+**Error:** `Failed to import asset` or `Asset database is corrupted`
+
+**Cause:** Library cache is incompatible with the current Unity version or was corrupted by a failed build.
+
+**Fix:**
+- Delete the cache volume: `docker volume rm unity-lib-<hash>`
+- Use `--clean-build` flag to skip cache restoration
+- Set `cache-mode: off` in the workflow
+
+---
+
+## Container Resource Issues
+
+### Container out of memory
+
+**Error:** `Killed` or `OOMKilled` in container status (exit code 137)
+
+**Cause:** Unity build exceeded the container's memory limit.
+
+**Fix:**
+- Increase memory limit: `--container-memory 12g`
+- IL2CPP Android builds typically need 8+ GB
+- WebGL builds may need 8+ GB
+
+### Unity process killed
+
+**Error:** Exit code 137 (SIGKILL)
+
+**Cause:** OOM killer, timeout, or manual cancellation.
+
+**Fix:**
+- Check container memory limits
+- Increase workflow timeout: `timeout-minutes: 90`
+- Check for infinite loops in build hooks
+- Check `Logs/Editor.log` for last operation before kill
+
+---
+
+## Build Output Issues
+
+### Missing artifact
+
+**Error:** `Expected artifact not found` or build reports success but no output file
+
+**Cause:** Unity exited with code 0 but did not produce the expected build artifact.
+
+**Fix:**
+- Check `BuildReports/build-report.json` for build details
+- Check `Logs/Editor.log` for Unity-side errors
+- Verify `outputDirectory` in BuildConfig matches expected path
+- Verify scene list is not empty
+- The wrapper treats missing expected artifacts as failure even when Unity exits 0
+
+### Missing Editor.log
+
+**Error:** No log file in the Logs directory after build failure.
+
+**Cause:** Container crashed before Unity wrote any log, or the log mount was misconfigured.
+
+**Fix:**
+- Check Docker container exit code for OOM or signal kills
+- Verify the Logs directory mount in the docker command
+- Use `--dry-run` to inspect the mount configuration
+
+---
+
+## Platform Issues
+
+### Unsupported platform
+
+**Error:** `Target 'iOS' is unsupported by the Docker-only build platform`
+
+**Cause:** Attempting to build an unsupported target (iOS, Windows).
+
+**Fix:**
+- Use a dedicated macOS pipeline for iOS builds
+- Use a dedicated Windows pipeline for Windows builds
+- See [PLATFORM_LIMITATIONS.md](PLATFORM_LIMITATIONS.md)
+
+### Android SDK/NDK mismatch
+
+**Error:** `Android SDK/NDK version mismatch` or Gradle build failures
+
+**Cause:** The project requires a different SDK/NDK version than installed in the image.
+
+**Fix:**
+- Check the image manifest for installed SDK/NDK versions
+- Update `docker/variants/android.Dockerfile` and rebuild the image
+- Do not install SDK components at build time
 
 ---
 
 ## Schema Validation Errors
 
-### "AJV validation failed: scenes: must NOT have fewer than 1 items"
+### Empty scenes array
 
-**Cause:** `scenes` array is empty in the config.
+**Error:** `scenes: must NOT have fewer than 1 items`
 
 **Fix:** Add at least one scene path to the `scenes` array.
 
-### "AJV validation failed: bundleVersion: must match pattern"
+### Invalid bundleVersion
 
-**Cause:** `bundleVersion` is not in `MAJOR.MINOR.PATCH` format.
+**Error:** `bundleVersion: must match pattern`
 
-**Fix:** Change to a valid semver string, e.g. `"1.0.0"` not `"1.0"`.
+**Fix:** Use `MAJOR.MINOR.PATCH` format, e.g. `"1.0.0"` not `"1.0"`.
 
-### "AJV validation failed: android.applicationId: must match pattern"
+### Invalid applicationId
 
-**Cause:** The application ID is not in reverse-DNS format.
+**Error:** `android.applicationId: must match pattern`
 
-**Fix:** Use format `com.company.game`. Must start with a letter, contain at least two dot-separated segments, no hyphens (Android) or hyphens OK (iOS).
+**Fix:** Use reverse-DNS format: `com.company.game`. Must start with a letter.
 
-### "developmentBuild must be false for production"
+### Production dev build
 
-**Cause:** A production-environment config has `developmentBuild: true`.
+**Error:** `developmentBuild must be false for production`
 
 **Fix:** Set `developmentBuild: false` in `BuildConfig.production.json`.
 
 ---
 
-## Android Build Errors
+## General Issues
 
-### "Gradle build failed: Could not find keystore file"
+### Slow first build
 
-**Cause:** `ANDROID_KEYSTORE_BASE64` secret is empty or incorrectly encoded.
-
-**Fix:** Re-encode the keystore: `base64 -w 0 my.keystore` and update the secret.
-
-### "Error: wrong password in keystore"
-
-**Cause:** `ANDROID_KEYSTORE_PASSWORD` does not match the keystore.
-
-**Fix:** Verify the password locally: `keytool -list -keystore my.keystore` and enter the password when prompted.
-
-### "This app bundle targeting API 33 must comply with…"
-
-**Cause:** Google Play's API level requirements have increased.
-
-**Fix:** Increase `android.targetSdkVersion` to 34 or the level currently required by Google Play (check the Play Console for the current deadline).
-
-### "NDK not found" (IL2CPP builds)
-
-**Cause:** The NDK module is not installed for the Unity version on the runner.
-
-**Fix:** Install via Unity Hub (Add Modules → Android Build Support → NDK) or set `ANDROID_NDK_HOME` environment variable on self-hosted runners.
-
----
-
-## iOS Build Errors
-
-### "No signing certificate 'iOS Distribution' found"
-
-**Cause:** The certificate was not imported into the keychain, or `IOS_CERTIFICATE_BASE64` is empty.
+**Cause:** No Library cache exists. Unity must import all assets.
 
 **Fix:**
-1. Confirm the secret is set and non-empty.
-2. Verify the base64 decodes to a valid .p12: `echo "$IOS_CERTIFICATE_BASE64" | base64 -d > test.p12 && openssl pkcs12 -info -in test.p12 -noout -passin pass:"$IOS_CERTIFICATE_PASSWORD"`
+- Expected for first build; subsequent builds reuse cached Library volume
+- Set `cache-mode: safe` (default) to enable caching
 
-### "The provisioning profile ... doesn't include signing certificate"
-
-**Cause:** The distribution certificate used for signing is not included in the provisioning profile.
-
-**Fix:** Download a new provisioning profile from the Apple Developer portal that includes the current distribution certificate.
-
-### "Xcode build failed: No matching provisioning profiles found for application identifier"
-
-**Cause:** The provisioning profile's App ID does not match `ios.bundleIdentifier` in the config.
-
-**Fix:** Confirm the bundle identifier matches exactly (case-sensitive). Download a provisioning profile for the correct App ID.
-
-### "altool: Error: Unable to upload archive. Failed to get authorization for team"
-
-**Cause:** `APPLE_CONNECT_API_KEY_ID`, `APPLE_CONNECT_API_ISSUER_ID`, or `APPLE_CONNECT_API_KEY_P8_BASE64` is invalid or the key has been revoked.
-
-**Fix:** Generate a new API key in App Store Connect (Users and Access → Keys) and update the secrets.
-
----
-
-## Unity Build Errors
-
-### "Build failed: 'Assets/...' is not a valid scene path"
-
-**Cause:** A scene listed in `scenes` does not exist at the specified path.
-
-**Fix:** Verify paths are correct relative to the project root (not the Unity project folder), and that they end in `.unity`.
-
-### "Build failed: Scripts have compile errors"
-
-**Cause:** The Unity project has script compilation errors.
-
-**Fix:** This is a code issue, not a CI issue. Pull the branch locally, open the project in Unity, and fix the errors in the Console window. Common causes: missing package references, API changes between Unity versions, conditional compilation errors.
-
-### "Build failed: 'BuildTarget' is not supported on this platform"
-
-**Cause:** The Unity Editor does not have the required platform module installed.
-
-**Fix:** Install the module via Unity Hub (Add Modules for the specific Unity version).
-
-### "Build log shows timeout after 6 hours"
-
-**Cause:** Shader compilation or asset import took too long.
+### Build passes locally but fails in CI
 
 **Fix:**
-1. Enable `cleanBuildCache: false` to benefit from incremental builds.
-2. Investigate large shader libraries in the project.
-3. Consider splitting the build into smaller jobs if the project is genuinely very large.
-
----
-
-## GitHub Actions Issues
-
-### "Workflow is not triggered by tag push"
-
-**Cause:** The workflow's `on:` trigger doesn't include the tag pattern.
-
-**Fix:** Ensure the consumer workflow includes:
-```yaml
-on:
-  push:
-    tags: ['v*']
-```
-
-### "Reusable workflow not found"
-
-**Cause:** The `@v1` tag doesn't exist yet in `unity-build-workflows`.
-
-**Fix:** Pin to a specific SHA or the `main` branch while testing: `@main`. Once the first release tag is created, switch to `@v1`.
-
-### "Environment secrets not available to workflow"
-
-**Cause:** The `environment:` key is not set on the job calling the reusable workflow, or the branch doesn't match the environment's deployment branch rule.
-
-**Fix:** Add `environment: production` to the calling job and ensure the branch/tag satisfies the environment's branch restriction.
-
----
-
-## Quality Gate Failures
-
-### "Build size exceeds maxBuildSizeMB"
-
-**Cause:** Build artifact is larger than the configured limit.
-
-**Fix:**
-1. Profile asset sizes using Unity's Build Report tool (Window → Build Report).
-2. Compress textures more aggressively.
-3. Enable `buildAppBundle: true` for Android to reduce delivery size.
-4. If the limit is too strict, increase `maxBuildSizeMB` in the production config.
-
-### "Validation rule 'no_missing_scripts' failed"
-
-**Cause:** One or more GameObjects in the build scenes have missing MonoBehaviour components.
-
-**Fix:** Open each scene in Unity, use the `Edit → Find Missing Scripts` tool (or a custom editor script) to locate and fix broken references.
+- Use the same image reference locally and in CI
+- Use `--dry-run` to compare Docker commands
+- Check Unity version matches exactly
+- Verify all required secrets are set in CI
 
 ---
 
 ## Still Stuck?
 
-1. Download the full Unity build log artifact from the failed workflow run.
-2. Search for `Error` in the log (case-sensitive; Unity uses capital-E).
-3. Open an issue at the repository with the relevant log lines, your `BuildConfig` (redact secret values), and the workflow run URL.
+1. Download the full build log artifact from the failed workflow run
+2. Search for `Error` in `Editor.log` (case-sensitive; Unity uses capital-E)
+3. Open an issue with: relevant log lines, BuildConfig (redact secrets), workflow run URL

@@ -1,20 +1,135 @@
 # Security
 
-This document describes the security model, secret handling practices, fork safety measures, and threat model for `unity-build-workflows`.
+This document describes the security model for the Docker-mandatory Unity CI/CD platform.
 
 ---
 
-## Threat Model
+## Docker Trust Boundary
 
-The primary assets being protected:
+The CI runner trusts Docker Engine. The Docker container trusts the Unity image. The image is built, scanned, and published through a controlled pipeline.
 
-| Asset | Risk | Mitigation |
+```
+Untrusted: Game project code, third-party Unity packages
+Trusted:   Docker Engine, published Unity images, entrypoint scripts
+```
+
+### Image Trust
+
+- Images are built from `build-unity-image.yml` workflow only
+- Images are scanned for vulnerabilities before publication
+- Images are referenced by digest in production workflows
+- Image manifests record the source commit and build timestamp
+- SBOM is generated for each published image
+
+### Registry Access
+
+- Images are published to `ghcr.io/buzzelstudio/unity-builder`
+- Only the image build workflow has push access
+- Game build workflows have pull access only
+- Arbitrary caller-provided images are rejected in release mode
+
+---
+
+## Runtime Secret Injection
+
+Secrets are injected into containers at runtime only. They are never baked into image layers.
+
+### Injection Methods
+
+| Secret | Method | Container Path |
 |---|---|---|
-| Android signing keystore | Unauthorized APK/AAB signing | Secrets scoped to protected environments; never logged |
-| iOS distribution certificate | Unauthorized IPA signing / App Store submission | Same as keystore; cleaned from keychain after build |
-| App Store Connect API key | Unauthorized app submissions or app data access | Environment-scoped; short-lived use |
-| Unity license serial | License theft / activation exhaustion | Repository secret; not available to forks |
-| Production build artifacts | Tampering before distribution | Builds run in isolated jobs; artifact checksums recorded |
+| UNITY_LICENSE | Environment variable | Written to `/tmp/unity-license.ulf` at runtime |
+| UNITY_EMAIL | Environment variable | Used for activation, then cleared |
+| UNITY_PASSWORD | Environment variable | Used for activation, then cleared |
+| ANDROID_KEYSTORE | Bind mount (temp file) | Read-only mount, deleted after signing |
+
+### Security Rules
+
+1. **No secrets in image layers** — `docker history` must not reveal any secret material
+2. **No secrets in command-line arguments** — Secrets pass via environment variables or file mounts, never as CLI args (visible in `ps`)
+3. **Restrictive file permissions** — Temporary secret files use mode 600
+4. **Cleanup on all exit paths** — Trap handlers remove secret files even on failure
+5. **No secret upload** — Artifact upload steps exclude secret file patterns
+6. **Masked in logs** — GitHub Actions masks secret values in output
+
+### Verification
+
+The test suite includes `test_secret_redaction.py` which verifies:
+- Docker commands do not contain secret values
+- Image history does not contain secrets
+- Artifact directories do not contain license files
+- Known secret patterns are redacted from log output
+
+---
+
+## Container Security
+
+### Runtime Restrictions
+
+Containers run with:
+- `--cap-drop=ALL` — Drop all Linux capabilities
+- `--security-opt=no-new-privileges` — Prevent privilege escalation
+- `--init` — PID 1 signal handling
+- `--user "$(id -u):$(id -g)"` — Non-root execution
+- No `--privileged` flag
+- No Docker socket mount (`/var/run/docker.sock`)
+- No host networking (unless justified)
+
+### No Docker-in-Docker
+
+Unity build containers do not run Docker inside Docker. The CI runner manages Docker; the container runs Unity only.
+
+### Resource Limits
+
+Workflows can set CPU and memory limits to prevent runaway builds:
+```
+--container-cpus 4
+--container-memory 8g
+```
+
+### Timeout
+
+Workflow-level timeout prevents zombie containers:
+```yaml
+timeout-minutes: 60
+```
+
+---
+
+## Image Digest Enforcement
+
+### Development Builds
+
+Development builds may use human-readable tags:
+```
+ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+```
+
+### Production/Release Builds
+
+Production builds must use digest-pinned references:
+```
+ghcr.io/buzzelstudio/unity-builder@sha256:abc123...
+```
+
+The `resolve-unity-image` action enforces this when `release-mode: true`.
+
+---
+
+## Fork Pull Request Safety
+
+GitHub Actions does not provide repository secrets to workflows triggered by pull requests from forks. This is a GitHub platform-level protection.
+
+**What fork PR workflows can access:**
+- Public repository contents
+- `GITHUB_TOKEN` with read-only permissions on public repositories
+- No repository secrets
+- No environment secrets
+
+**Recommended policy:**
+- Run validation and schema checks on fork PRs (no secrets required)
+- Skip Unity container builds on fork PRs
+- Full builds run only on pushes to protected branches
 
 ---
 
@@ -26,6 +141,7 @@ Secrets are stored in GitHub's encrypted secret store (at repository or environm
 - Written to disk outside of a temporary file used immediately and deleted
 - Printed in logs (GitHub masks known secret values; scripts additionally use `set +x` around secret expansion)
 - Passed as command-line arguments (use environment variables instead)
+- Baked into Docker image layers
 
 ### Secret Injection Pattern
 
@@ -33,43 +149,24 @@ All sensitive values are injected via environment variables, not shell arguments
 
 ```bash
 # Good — value not visible in process list
-export KEYSTORE_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
-./sign.sh
+export UNITY_LICENSE="${{ secrets.UNITY_LICENSE }}"
+docker run -e UNITY_LICENSE ...
 
 # Bad — value visible in process list
-./sign.sh --password "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+docker run --env UNITY_LICENSE="<actual-content>" ...
 ```
-
-### Temporary Keystore File
-
-The Android signing keystore and iOS certificate are decoded from base64 to temporary files:
-
-```bash
-KEYSTORE_PATH=$(mktemp)
-echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-# ... build and sign ...
-rm -f "$KEYSTORE_PATH"
-```
-
-The `rm` is placed in a `trap EXIT` handler so it runs even if the script fails.
 
 ---
 
-## Fork Pull Request Safety
+## Temporary Credential Cleanup
 
-GitHub Actions does not provide repository secrets to workflows triggered by pull requests from forks. This is a GitHub platform-level protection and is the primary defense against malicious PRs exfiltrating secrets.
+All temporary credential files are removed after container execution:
 
-**What fork PR workflows can access:**
-- Public repository contents
-- `GITHUB_TOKEN` with read-only permissions on public repositories
-- No repository secrets
-- No environment secrets
+1. Unity license file (`/tmp/unity-license.ulf`)
+2. Android keystore (temporary mount)
+3. Any authentication tokens
 
-**What this means for `unity-build-workflows`:**
-
-Pull request workflows from forks can run schema validation, linting, and test compilation, but they cannot sign builds or access production resources. This is by design.
-
-If your repository is private and you want to allow trusted contributors' fork PRs to run full builds, use the `pull_request_target` event with explicit approval gating — but understand the security implications before doing so.
+Cleanup runs via bash `trap` on EXIT, INT, and TERM signals. Cleanup failures are logged but do not mask build failures.
 
 ---
 
@@ -81,11 +178,6 @@ Production secrets are scoped to the `production` GitHub Environment, which enfo
 2. **Branch/tag restriction** — only tags matching `v*` from `main` can deploy to production
 3. **No fork access** — forks cannot trigger environment deployments
 
-This means even if a malicious commit is pushed to a branch, it cannot access production secrets without:
-- Merging to `main` (requires PR approval)
-- Creating a `v*` tag (requires push access to `main`)
-- Having the deployment reviewed and approved
-
 ---
 
 ## `GITHUB_TOKEN` Permissions
@@ -95,28 +187,11 @@ Workflows use the minimum required `GITHUB_TOKEN` permissions:
 ```yaml
 permissions:
   contents: read
-  actions: read
-  checks: write        # For test result annotations
-  id-token: write      # For OIDC (if used for cloud auth)
+  packages: read    # for image pull
+  checks: write     # for test result annotations
 ```
 
-The default `GITHUB_TOKEN` is not granted write access to the repository contents, preventing workflows from accidentally modifying source code.
-
----
-
-## OIDC for Cloud Authentication (Optional)
-
-If your `postBuild` hooks upload artifacts to AWS S3, Google Cloud Storage, or Azure Blob Storage, prefer OIDC over long-lived access keys:
-
-```yaml
-- name: Configure AWS credentials
-  uses: aws-actions/configure-aws-credentials@v4
-  with:
-    role-to-assume: arn:aws:iam::123456789012:role/unity-build-upload
-    aws-region: ap-southeast-1
-```
-
-OIDC tokens are short-lived and bound to the specific workflow run, making them far more secure than static access keys stored as secrets.
+Image build workflows additionally require `packages: write` for image push.
 
 ---
 
@@ -132,20 +207,16 @@ All actions in the workflows are pinned to their full commit SHA (not a floating
 - uses: actions/checkout@v4
 ```
 
-Dependabot is configured to keep action dependencies up to date via SHA pinning.
-
 ---
 
 ## Artifact Integrity
 
-Each build produces a `build-manifest.json` alongside the artifact containing:
+Each build produces a `build-metadata.json` alongside the artifact containing:
 - SHA-256 hash of the build output
 - Build configuration hash
-- Runner hostname
+- Image reference and digest used
 - Build timestamp
 - GitHub run ID and SHA
-
-This allows verifying that a distributed build artifact matches the one produced by CI.
 
 ---
 
@@ -154,10 +225,9 @@ This allows verifying that a distributed build artifact matches the one produced
 | Secret | Rotation Frequency | Trigger for Immediate Rotation |
 |---|---|---|
 | `ANDROID_KEYSTORE_*` | Annual | Departing team member, suspected compromise |
-| `IOS_CERTIFICATE_*` | Before expiry (1 year) | Departing team member, Apple revocation |
-| `APPLE_CONNECT_API_KEY_*` | Annual | Departing team member, suspected compromise |
 | `UNITY_LICENSE` | Per subscription renewal | License revocation |
-| `SLACK_WEBHOOK_URL` | On rotation by Slack admin | Suspected leak |
+| `CLOUDFLARE_API_TOKEN` | Annual | Token compromise |
+| `GOOGLE_PLAY_*` | Annual | Departing team member |
 
 ---
 

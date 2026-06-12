@@ -6,15 +6,18 @@ Thank you for your interest in contributing. This document explains how to propo
 
 ## What Belongs Here
 
-This repository is a **platform library** for Unity CI/CD. Contributions should fit one of these categories:
+This repository is a **Docker-mandatory CI/CD platform library** for Unity games. Contributions should fit one of these categories:
 
-- Bug fixes to existing workflows, scripts, or schema
-- New platform support (e.g., tvOS, Nintendo Switch via partner SDK)
-- New composite actions that are useful across multiple Unity projects
+- Bug fixes to existing workflows, scripts, Docker images, or schema
+- New Docker image variants or platform support (e.g., Linux dedicated server)
+- New composite actions for Docker-based Unity workflows
 - Documentation improvements
-- New BuildConfig fields that are broadly applicable (not project-specific)
+- New BuildConfig fields that are broadly applicable
+- Security improvements to the Docker execution model
 
 Project-specific hooks and custom build methods belong in the consumer repository, not here.
+
+**Important:** All Unity operations must run inside Docker containers. Do not add native Unity execution paths.
 
 ---
 
@@ -23,33 +26,30 @@ Project-specific hooks and custom build methods belong in the consumer repositor
 ### Prerequisites
 
 - Git
-- Node.js 18+ (for schema validation via `ajv-cli`)
-- `jq` (for config merge testing)
+- Python 3.8+ (for scripts and tests)
+- Docker Engine 20.10+ (for local testing)
+- `jq` (for config inspection)
 - `shellcheck` (for shell script linting)
-- A Unity installation is not required to contribute to the workflow YAML or documentation.
+- A Unity installation is **not required** to contribute. Docker handles the Unity environment.
 
 ### Setup
 
 ```bash
 git clone https://github.com/BuzzelStudio/unity-build-workflows.git
 cd unity-build-workflows
-npm install   # installs ajv-cli and other dev tools
+pip install -r tests/requirements.txt
 ```
 
-### Validate the Schema
+### Run Tests
 
 ```bash
-npx ajv-cli validate \
-  -s schemas/unity-build-config.schema.json \
-  -d templates/BuildConfig.base.example.json
+pytest tests/
 ```
-
-All four template files must validate without errors.
 
 ### Lint Shell Scripts
 
 ```bash
-shellcheck scripts/**/*.sh
+shellcheck docker/unity/*.sh scripts/docker/*.sh
 ```
 
 ---
@@ -58,9 +58,10 @@ shellcheck scripts/**/*.sh
 
 1. Fork the repository and create a branch: `git checkout -b feature/my-improvement`
 2. Make your changes.
-3. Run validation: `npm test` (runs schema validation + shellcheck)
-4. Commit with a conventional commit message (see below).
-5. Push and open a pull request against `main`.
+3. Run tests: `pytest tests/`
+4. Run linting: `shellcheck docker/unity/*.sh`
+5. Commit with a conventional commit message.
+6. Push and open a pull request against `main`.
 
 ---
 
@@ -70,76 +71,66 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
 <type>(<scope>): <short description>
-
-[optional body]
-
-[optional footer]
 ```
 
-Types:
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
-| Type | When to Use |
-|---|---|
-| `feat` | New feature or workflow capability |
-| `fix` | Bug fix |
-| `docs` | Documentation only changes |
-| `refactor` | Code change that neither fixes a bug nor adds a feature |
-| `test` | Adding or correcting tests |
-| `chore` | Tooling, CI config, dependency updates |
-
-Scopes: `android`, `ios`, `windows`, `webgl`, `schema`, `scripts`, `docs`, `release`.
+Scopes: `docker`, `android`, `webgl`, `linux`, `schema`, `scripts`, `docs`, `release`, `actions`, `workflows`
 
 Examples:
 ```
-feat(android): add symbol export support for Crashlytics
-fix(ios): return license before failing on code sign error
-docs(security): add OIDC section for cloud auth
+feat(docker): add GPU support to linux variant
+fix(android): correct Gradle cache volume name
+docs(security): add SBOM generation details
+test(docker): add entrypoint timeout test
 ```
 
 ---
 
 ## Pull Request Requirements
 
-Before a PR can be merged:
-
-- [ ] All schema validation tests pass (`npm test`)
-- [ ] `shellcheck` passes with no errors
-- [ ] YAML workflow files are valid (checked by `actionlint` in CI)
-- [ ] New workflow inputs are documented in [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md)
-- [ ] New platform or signing changes include a documentation update
+- [ ] All tests pass (`pytest tests/`)
+- [ ] `shellcheck` passes for shell scripts
+- [ ] No native Unity invocation introduced (checked by `test_no_native_unity_invocation.py`)
+- [ ] YAML workflow files are valid
 - [ ] CHANGELOG.md has an entry under `[Unreleased]`
 - [ ] At least one approval from a maintainer
-
-For changes that affect the workflow input interface (adding/removing/renaming inputs), open an issue first to discuss backward compatibility implications before writing code.
 
 ---
 
 ## Breaking Changes
 
-A breaking change is any modification to the public interface that would require consumer repositories to update their workflow files. Examples:
-
-- Removing a workflow input
-- Renaming a workflow input
-- Changing the type or valid values of an input
-- Removing an output that downstream jobs depend on
-
-Breaking changes require:
+A breaking change requires:
 1. Prior discussion in a GitHub issue
-2. A major version bump (v1 → v2)
-3. A migration guide in the PR description and in `docs/`
-4. The previous major version tag (`v1`) must remain functional for a transition period
+2. A major version bump (v2 → v3)
+3. A migration guide in the PR description
+4. Updated CHANGELOG.md
 
 ---
 
-## Testing Workflow Changes
+## Docker-Specific Guidelines
 
-Because testing reusable GitHub Actions workflows requires running them in GitHub Actions, test your changes by:
+### Dockerfiles
 
-1. Pushing your branch to a fork of this repository
-2. Creating a test consumer repository
-3. Referencing your fork's branch: `uses: your-fork/unity-build-workflows/.github/workflows/android.yml@your-branch`
+- Keep images minimal — only add packages needed for the build
+- Pin base images by tag (digest in production)
+- Do not bake secrets into image layers
+- Add OCI labels for traceability
+- Test entrypoint changes with fake Unity executable
 
-The repository's own CI runs structural validation (`actionlint`, `shellcheck`, schema checks) but cannot run a full Unity build.
+### Entrypoint
+
+- Use `set -Eeuo pipefail`
+- Validate all inputs before invoking Unity
+- Use traps for cleanup
+- Preserve exit codes
+
+### Container Security
+
+- No `--privileged`
+- No Docker socket mount
+- `--cap-drop=ALL`
+- `--security-opt=no-new-privileges`
 
 ---
 
@@ -147,23 +138,24 @@ The repository's own CI runs structural validation (`actionlint`, `shellcheck`, 
 
 ### Shell Scripts
 
-- Use `set -euo pipefail` at the top of every script.
-- Prefer `[[ ]]` over `[ ]` for conditionals in bash scripts.
-- Quote all variable expansions: `"${MY_VAR}"` not `$MY_VAR`.
-- Add `shellcheck` disable comments only when necessary, with a comment explaining why.
+- `set -Eeuo pipefail` at the top
+- Prefer `[[ ]]` over `[ ]`
+- Quote all variable expansions
+- Use `shellcheck` disable comments sparingly
+
+### Python Scripts
+
+- Python 3.8+ compatible
+- Use `argparse` for CLI
+- Type hints encouraged
+- Follow existing patterns in `scripts/docker/`
 
 ### GitHub Actions YAML
 
-- All action references must be pinned to a full commit SHA with a version comment.
-- Use `env:` blocks to pass secrets to scripts rather than inline `${{ secrets.X }}` in `run:` blocks.
-- Add `description:` to all workflow inputs.
-- Group related jobs with `needs:` to make the job graph clear.
-
-### JSON Schema
-
-- All new properties must have a `description` field.
-- Use `additionalProperties: false` on all object definitions.
-- New enum values go at the end of the `enum` array to avoid renumbering (which can affect validation error messages).
+- All action references pinned to commit SHA with version comment
+- Use `env:` blocks for secrets, not inline `${{ secrets.X }}`
+- Add `description:` to all inputs
+- Use `if: always()` on cleanup/upload steps
 
 ---
 
@@ -171,4 +163,4 @@ The repository's own CI runs structural validation (`actionlint`, `shellcheck`, 
 
 - BuzzelStudio mobile team (`@BuzzelStudio/mobile`)
 
-For questions that don't fit a GitHub issue, reach out via the internal `#ci-platform` Slack channel.
+For questions, use the internal `#ci-platform` Slack channel.

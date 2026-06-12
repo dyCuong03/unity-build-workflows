@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1.0.0",
+  "contractVersion": 1,
+  "imageReference": "ghcr.io/buzzelstudio/unity-android:latest",
+  "unityVersion": "2022.3.45f1",
+  "variant": "android",
+  "buildTimestamp": "2026-06-12T10:00:00Z",
+  "androidSdkVersion": 34,
+  "androidNdkVersion": "r23b",
+  "jdkVersion": "17.0.9"
+}
