@@ -255,8 +255,137 @@ Common errors and their fixes for the Docker-mandatory Unity CI/CD platform.
 
 ---
 
+---
+
+## iOS Issues
+
+### "No signing certificate found"
+
+**Error:** `error: No signing certificate "iPhone Distribution" found`
+
+**Cause:** The distribution certificate is not in the temp keychain.
+
+**Fix:**
+1. Verify `IOS_DISTRIBUTION_CERTIFICATE_BASE64` contains a valid P12 (not truncated)
+2. Confirm `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` is correct
+3. Check certificate expiry: download and inspect locally:
+   ```bash
+   echo "$IOS_DISTRIBUTION_CERTIFICATE_BASE64" | base64 --decode > cert.p12
+   openssl pkcs12 -in cert.p12 -nokeys -passin pass:YOUR_PASS | openssl x509 -noout -dates
+   ```
+4. Ensure the certificate is a **Distribution** cert, not a Development cert
+
+### "Provisioning profile doesn't include the application-identifier"
+
+**Error:** `error: Provisioning profile "..." doesn't include the application-identifier`
+
+**Cause:** Bundle ID mismatch between BuildConfig and the provisioning profile.
+
+**Fix:**
+- Confirm `ios.bundleIdentifier` in BuildConfig exactly matches the profile's App ID
+- Download the profile and inspect: `security cms -D -i profile.mobileprovision | grep -A2 application-identifier`
+
+### "Provisioning profile is expired"
+
+**Error:** `error: Provisioning profile "..." is expired`
+
+**Fix:**
+1. Renew the profile at [Apple Developer Portal](https://developer.apple.com/account/resources/profiles/list)
+2. Download the new `.mobileprovision`
+3. Re-encode: `base64 -i NewProfile.mobileprovision`
+4. Update `IOS_PROVISIONING_PROFILE_BASE64` secret
+
+### Xcode Migration Issues
+
+**Symptom:** Builds that worked with Xcode 14 fail with Xcode 15.
+
+**Common causes:**
+- Bitcode is removed in Xcode 14+ — set `enableBitcode: false`
+- Privacy manifest requirements in Xcode 15 — add `PrivacyInfo.xcprivacy` to your Unity project
+
+**Fix:** Set `xcodeVersion` in BuildConfig to pin the Xcode version:
+```json
+"ios": {
+  "xcodeVersion": "15.2"
+}
+```
+
+### Archive Fails — "The scheme does not exist"
+
+**Error:** `error: The scheme "MyGame" does not exist`
+
+**Cause:** Unity generated a Xcode project with a different scheme name.
+
+**Fix:** Check what scheme was generated:
+```bash
+xcodebuild -list -workspace Builds/iOS/Xcode/MyGame.xcworkspace
+```
+Set the correct scheme via the `SCHEME` environment variable or the iOS build script parameter.
+
+### Missing Unity iOS Build Support
+
+**Error:** `Error building Player: Currently selected build target (iOS) requires...`
+
+**Cause:** The Unity installation on the macOS runner does not have the iOS Build Support module.
+
+**Fix:**
+- The `macos-unity-xcode` runner must have Unity installed with iOS Build Support
+- Check the runner setup in the workflow: `unity-version` must match the installed version
+- For self-hosted runners, reinstall Unity with iOS module: `Unity Hub → Installs → Add Module → iOS Build Support`
+
+### Unity License Failure on macOS
+
+**Error:** `Unity license activation failed`
+
+**Cause:** `UNITY_LICENSE`, `UNITY_EMAIL`, or `UNITY_PASSWORD` secrets are wrong or missing.
+
+**Fix:** Same as Docker lane. See [Unity License Issues](#unity-license-issues) section above.
+
+### TestFlight Upload Rejected
+
+**Error:** `ERROR ITMS-90503: Invalid Bundle` or similar
+
+**Common causes:**
+- Build number (CFBundleVersion) already used — increment it
+- Marketing version must be `MAJOR.MINOR.PATCH` format
+- Missing required capabilities or privacy strings
+
+**Fix:**
+- Increment the release tag (new tag → new `github_run_number` → new build number)
+- Check App Store Connect for specific rejection details under **Activity → Builds**
+
+### TestFlight Processing Delays
+
+**Symptom:** Build uploaded successfully but not visible to testers.
+
+**Cause:** App Store Connect processing queue. Normal processing takes 5–30 minutes; unusual binary characteristics (new frameworks, large size) can take hours.
+
+**Fix:** Wait. Check App Store Connect → TestFlight → Your App → Builds for status. If stuck in "Processing" for > 2 hours, contact Apple Developer Support.
+
+### Certificate Rotation — Builds Fail After Rotation
+
+**Symptom:** Builds start failing after a certificate was rotated.
+
+**Cause:** Old provisioning profiles are bound to the old certificate. After rotation, all profiles must be regenerated.
+
+**Fix:**
+1. Revoke the old certificate in Apple Developer Portal (only after new cert is working)
+2. Regenerate all provisioning profiles (they are now signed with the new cert)
+3. Update both `IOS_DISTRIBUTION_CERTIFICATE_BASE64` and `IOS_PROVISIONING_PROFILE_BASE64`
+
+### iOS Build Attempted on Linux Runner
+
+**Error:** `Platform 'iOS' requires executor 'macos-unity-xcode'`
+
+**Cause:** `target-platform: iOS` was used in a workflow running on `ubuntu-latest`.
+
+**Fix:** iOS requires a macOS runner. The resolver enforces this — use `unity-build-ios.yml` which specifies `runs-on: macos-13`.
+
+---
+
 ## Still Stuck?
 
 1. Download the full build log artifact from the failed workflow run
 2. Search for `Error` in `Editor.log` (case-sensitive; Unity uses capital-E)
-3. Open an issue with: relevant log lines, BuildConfig (redact secrets), workflow run URL
+3. For iOS: check `Logs/iOS/xcodebuild.log` for Xcode errors
+4. Open an issue with: relevant log lines, BuildConfig (redact secrets), workflow run URL

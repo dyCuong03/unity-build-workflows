@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/unity-build-config.schema.json",
+  "projectName": "my-ios-game",
+  "companyName": "BuzzelStudio",
+  "productName": "My iOS Game",
+  "bundleVersion": "1.0.0",
+  "outputDirectory": "Builds/iOS",
+  "scenes": [
+    "Assets/Scenes/Main.unity"
+  ],
+  "iOS": {
+    "bundleIdentifier": "com.example.game"
+  }
+}

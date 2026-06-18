@@ -1,0 +1,43 @@
+name: iOS TestFlight Upload
+description: >
+  Uploads an IPA to TestFlight via the App Store Connect API (xcrun altool).
+  Gated — only runs when explicitly enabled. Reports upload-accepted status only;
+  processing/distribution completion must be verified in App Store Connect.
+  The ASC private key is scrubbed from disk after upload regardless of outcome.
+
+inputs:
+  ipa-path:
+    description: Path to the .ipa file to upload
+    required: true
+  app-store-connect-key-id:
+    description: App Store Connect API key ID
+    required: true
+  app-store-connect-issuer-id:
+    description: App Store Connect API issuer ID
+    required: true
+  app-store-connect-private-key:
+    description: App Store Connect API private key (.p8 file content)
+    required: true
+  report-path:
+    description: Directory to write upload-metadata.json and logs
+    required: false
+    default: BuildReports/iOS
+
+outputs:
+  upload-status:
+    description: Upload result — upload-accepted or failed
+    value: ${{ steps.upload.outputs.upload-status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Upload to TestFlight
+      id: upload
+      shell: bash
+      env:
+        IPA_PATH: ${{ inputs.ipa-path }}
+        APP_STORE_CONNECT_KEY_ID: ${{ inputs.app-store-connect-key-id }}
+        APP_STORE_CONNECT_ISSUER_ID: ${{ inputs.app-store-connect-issuer-id }}
+        APP_STORE_CONNECT_PRIVATE_KEY: ${{ inputs.app-store-connect-private-key }}
+        REPORT_PATH: ${{ inputs.report-path }}
+      run: bash scripts/ios/testflight_upload.sh

@@ -42,12 +42,20 @@
     "symbolExport": "public"
   },
 
-  "ios": {
+  "iOS": {
     "bundleIdentifier": "com.acmestudios.myunitygame",
+    "marketingVersion": "1.0.0",
     "targetOSVersion": "14.0",
-    "automaticSigning": false,
-    "developmentTeam": "ABCDE12345",
-    "exportMethod": "app-store",
+    "architecture": "ARM64",
+    "developmentTeamId": "ABCDE12345",
+    "signingStyle": "manual",
+    "provisioningProfileSpecifier": "MyUnityGame Distribution",
+    "codeSignIdentity": "iPhone Distribution",
+    "exportMethod": "app-store-connect",
+    "enableBitcode": false,
+    "generateSymbols": true,
+    "uploadSymbols": true,
+    "uploadToTestFlight": false,
     "generateXcodeProjectOnly": false
   },
 

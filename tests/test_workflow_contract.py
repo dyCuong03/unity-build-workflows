@@ -446,12 +446,19 @@ class TestDockerOnlyWorkflowContract:
             "setup-unity action found — it must be removed after Docker migration:\n" + \
             "\n".join(f"  {v}" for v in violations)
 
-    def test_unity_build_ios_workflow_does_not_exist(self, workflows_dir):
-        """iOS builds require macOS runners (not Docker-supported) — workflow must be removed."""
+    def test_unity_build_ios_workflow_exists(self, workflows_dir):
+        """
+        iOS builds are supported via the macos-unity-xcode executor (v2.1.0+).
+        unity-build-ios.yml must exist after the iOS pipeline was added.
+
+        NOTE: This replaces the v2.0.0-era test that asserted iOS workflow must NOT
+        exist (when iOS was unsupported). iOS is now supported via native macOS runner,
+        not Docker. The workflow MUST exist for iOS builds to work.
+        """
         ios_workflow = workflows_dir / "unity-build-ios.yml"
-        assert not ios_workflow.exists(), \
-            "unity-build-ios.yml must NOT exist after Docker migration " \
-            "(iOS requires macOS native runners, not Docker)"
+        assert ios_workflow.exists(), \
+            "unity-build-ios.yml must exist (added in v2.1.0 for macOS/Xcode iOS pipeline). " \
+            "iOS is no longer unsupported — it uses the macos-unity-xcode executor."
 
     def test_unity_build_windows_workflow_does_not_exist(self, workflows_dir):
         """Windows builds are not Docker-supported on Linux runners — workflow must be removed."""

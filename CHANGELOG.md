@@ -12,6 +12,81 @@ The public API is the set of reusable workflow inputs/outputs documented in [doc
 
 ---
 
+## [2.1.0] — 2026-06-18
+
+This release adds production iOS support via a dedicated macOS executor lane.
+iOS was previously unsupported (Docker-only platform). It is now a first-class
+build target via the `macos-unity-xcode` executor.
+
+**Semver guidance:** This is a **minor** (feature) release. The workflow input
+interface gains a new reusable workflow (`unity-build-ios.yml`) and new
+BuildConfig `ios` fields, but the existing Docker-lane interface is unchanged.
+Consumer repositories targeting Android/WebGL/Linux do not need to update.
+
+### Added
+
+#### iOS Pipeline
+- `unity-build-ios.yml` — Reusable workflow for the full iOS pipeline:
+  Unity → Xcode project generation → archive → IPA export → (optional) TestFlight upload.
+- `scripts/ios/build_ios.sh` — Unity batch-mode iOS build (Xcode project generation).
+- `scripts/ios/setup_signing.sh` — Temp keychain creation, certificate import, provisioning profile install, ASC key write.
+- `scripts/ios/archive_ios.sh` — `xcodebuild archive` with workspace/project auto-detection and scheme resolution.
+- `scripts/ios/export_ios.sh` — `xcodebuild -exportArchive` with auto-generated `ExportOptions.plist`.
+- `scripts/ios/upload_testflight.sh` — TestFlight upload via `xcrun altool` / `notarytool`.
+- `scripts/ios/cleanup_ios.sh` — Unconditional cleanup: temp keychain, provisioning profile, ASC key file.
+- `scripts/common/resolve_platform_executor.py` — Platform→executor resolver. iOS+macOS → `macos-unity-xcode`; Docker platforms+linux → `docker-unity`. Exits non-zero for cross-lane mismatches.
+
+#### iOS BuildConfig Fields (new in `iOS` section)
+
+> **Canonical key is `iOS`.** The lowercase alias `ios` is deprecated-but-accepted
+> (schema `$refs` both to one definition). Use `iOS` in all new configs and templates.
+- `marketingVersion` — CFBundleShortVersionString
+- `sdkVersion` — `iphoneos` or `iphonesimulator`
+- `architecture` — `ARM64` or `x86_64`
+- `xcodeVersion` — pinned Xcode version
+- `developmentTeamId` — 10-char Apple Team ID
+- `signingStyle` — `manual` or `automatic`
+- `provisioningProfileSpecifier` — profile name for manual signing
+- `codeSignIdentity` — signing identity string
+- `enableBitcode` — boolean (default false)
+- `generateSymbols` — boolean (default true)
+- `uploadSymbols` — boolean (default false)
+- `uploadToTestFlight` — boolean (default false)
+
+#### Tests
+- `tests/test_ios_build_config.py` — iOS BuildConfig schema validation (valid, invalid bundle IDs, enums, contract fields).
+- `tests/test_ios_executor_resolution.py` — Platform→executor resolution, iOS-on-Linux rejection, Docker-on-macOS rejection.
+- `tests/test_ios_shell_scripts.py` — Shell script tests: archive/export success/failure, secret redaction, cleanup, artifact contract, missing IPA/archive, TestFlight rejection, fork rejection, Unity failure simulations.
+- `tests/fixtures/valid_ios_config.json` — Full iOS config fixture.
+- `tests/fixtures/valid_ios_minimal.json` — Minimal iOS config fixture.
+- `tests/fixtures/invalid_ios_bundle_id.json` — Invalid bundle ID fixture.
+- `tests/fixtures/fake_xcodebuild.sh` — Fake xcodebuild for macOS-free testing.
+
+#### Documentation
+- `docs/IOS.md` — Full iOS pipeline guide.
+- `docs/IOS_SIGNING.md` — Certificate, provisioning profile, and ASC key setup.
+- `docs/IOS_RELEASE.md` — Release workflow, GitHub Environment, versioning, TestFlight.
+
+### Changed
+- `docs/PLATFORM_LIMITATIONS.md` — iOS section rewritten from "unsupported" to "supported via macOS". Windows remains unsupported.
+- `docs/ARCHITECTURE.md` — Added `macos-unity-xcode` executor lane alongside `docker-unity`. Added iOS to supported platforms table.
+- `docs/BUILD_CONFIG.md` — `ios` object section fully documented with all contract fields.
+- `docs/SECURITY.md` — Added iOS secret inventory, temp credential lifecycle, macOS-specific guidance, and updated rotation policy table.
+- `docs/TROUBLESHOOTING.md` — Added iOS section: cert errors, Xcode migration, TestFlight issues, profile expiry, cert rotation.
+- `README.md` — Added iOS integration example, iOS secrets reference, updated platform table and documentation index.
+
+### Migration from v2.0.0
+
+Existing Android/WebGL/Linux workflows are **unaffected**. iOS migration:
+
+1. Add the `ios` BuildConfig block to your `base.json` (see [docs/IOS.md](docs/IOS.md))
+2. Add iOS GitHub Secrets (see [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md))
+3. Create a caller workflow using `unity-build-ios.yml@v2`
+4. For releases: create a `production` GitHub Environment (see [docs/IOS_RELEASE.md](docs/IOS_RELEASE.md))
+5. If you previously redirected users away from iOS using `docs/PLATFORM_LIMITATIONS.md`, update any internal documentation pointing to that "unsupported" section.
+
+---
+
 ## [2.0.0] — 2026-06-12
 
 ### BREAKING CHANGES
@@ -136,6 +211,7 @@ This release migrates the entire build platform from native Unity Editor executi
 
 ---
 
-[Unreleased]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/releases/tag/v1.0.0

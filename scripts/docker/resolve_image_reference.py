@@ -8,7 +8,8 @@ Responsibilities:
 - Load and parse image manifest (from file or registry)
 - Enforce immutable digest references in release mode
 - Validate image contract version compatibility
-- Reject unsupported targets (iOS, Windows64) with clear errors
+- Reject macOS-executor targets (iOS) with executor-routing guidance
+- Reject explicitly unsupported targets (Windows64) with clear errors
 
 Usage (standalone):
   python3 scripts/docker/resolve_image_reference.py \
@@ -42,12 +43,20 @@ PLATFORM_VARIANT_MAP: Dict[str, str] = {
     "Linux64": "linux",
 }
 
-# Platforms that are NOT supported in Docker (require native tools/licences)
-UNSUPPORTED_PLATFORMS: Dict[str, str] = {
+# Platforms that must use the macOS executor — Docker image resolution is not
+# applicable.  These are NOT "unsupported builds"; they have their own
+# executor path.  Callers that reach this Docker-path script for these
+# platforms have made an executor routing error.
+MACOS_EXECUTOR_PLATFORMS: Dict[str, str] = {
     "iOS": (
-        "iOS builds require macOS and Xcode — Docker is not supported. "
-        "Use the native iOS workflow (ios-build.yml)."
+        "iOS requires the macos-unity-xcode executor, not a Docker image. "
+        "Route iOS builds through the ios-build.yml workflow on an approved macOS runner. "
+        "Use scripts/common/resolve_platform_executor.py to determine the correct executor."
     ),
+}
+
+# Platforms that are explicitly unsupported on ALL executors.
+UNSUPPORTED_PLATFORMS: Dict[str, str] = {
     "Windows64": (
         "Windows64 IL2CPP cross-compilation is not yet available in Docker. "
         "Use the windows-build runner or a Windows agent."
@@ -175,7 +184,15 @@ def resolve(
       supported_targets – list of platforms this image supports
       unity_version   – Unity version embedded in image
     """
-    # 1. Reject unsupported platforms early with clear guidance
+    # 1a. Reject macOS-executor platforms — they are not unsupported builds, but
+    #     they must NOT use a Docker image.  Give the caller a routing hint.
+    if target_platform in MACOS_EXECUTOR_PLATFORMS:
+        raise ValueError(
+            f"Platform '{target_platform}' does not use the Docker executor. "
+            + MACOS_EXECUTOR_PLATFORMS[target_platform]
+        )
+
+    # 1b. Reject explicitly unsupported platforms with clear guidance
     if target_platform in UNSUPPORTED_PLATFORMS:
         raise ValueError(
             f"Platform '{target_platform}' is not supported in Docker builds. "

@@ -48,18 +48,18 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete layer diagram.
 
 ## Supported Platforms
 
-| Platform | Image Variant | Runner OS | Status |
+| Platform | Executor | Runner OS | Status |
 |---|---|---|---|
-| Android | `android` | ubuntu-latest | **Supported** |
-| WebGL | `webgl` | ubuntu-latest | **Supported** |
-| Linux Standalone | `linux` | ubuntu-latest | **Supported** |
-| Linux Dedicated Server | `linux` | ubuntu-latest | **Supported** |
+| Android | `docker-unity` | ubuntu-latest | **Supported** |
+| WebGL | `docker-unity` | ubuntu-latest | **Supported** |
+| Linux Standalone | `docker-unity` | ubuntu-latest | **Supported** |
+| Linux Dedicated Server | `docker-unity` | ubuntu-latest | **Supported** |
+| **iOS** | `macos-unity-xcode` | macos-13+ | **Supported** (v2.1.0+) |
 
 ### Unsupported Platforms
 
 | Platform | Reason |
 |---|---|
-| iOS | Requires macOS + Xcode. Use a dedicated macOS pipeline. See [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md). |
 | Windows | Requires Windows containers. Use a dedicated Windows pipeline. See [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md). |
 
 Unsupported targets fail with an actionable error message. The repository never silently falls back to native Unity execution.
@@ -83,6 +83,7 @@ At minimum: `UNITY_LICENSE`. See [templates/build-secrets.example.md](templates/
 
 ### 3. Create `.github/workflows/build.yml`
 
+**Android/WebGL/Linux (Docker lane):**
 ```yaml
 name: Unity Docker CI
 
@@ -91,16 +92,9 @@ on:
   push:
     branches: [develop, staging]
   workflow_dispatch:
-    inputs:
-      platform:
-        type: choice
-        options:
-          - Android
-          - WebGL
-          - Linux64
 
 jobs:
-  build:
+  build-android:
     uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
     with:
       project-path: .
@@ -114,9 +108,50 @@ jobs:
     secrets: inherit
 ```
 
-No Docker executor option — Docker is mandatory and implicit.
+**iOS (macOS lane):**
+```yaml
+name: iOS Build
+
+on:
+  push:
+    branches: [main, release/*]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-ios.yml@v2
+    with:
+      project-path: .
+      unity-version: '6000.0.26f1'
+      target-platform: iOS
+      environment: staging
+      build-config-path: BuildConfig
+      upload-artifact: true
+    secrets: inherit
+```
+
+The executor is selected automatically from `target-platform` — no `executor-mode` input exists.
 
 See [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) for the full onboarding walkthrough.
+See [docs/IOS.md](docs/IOS.md) for the iOS pipeline guide.
+
+### 4. Add iOS Secrets (iOS builds only)
+
+For iOS, add these secrets at **Settings → Secrets and variables → Actions**:
+
+```
+UNITY_LICENSE                           # .ulf license content
+UNITY_EMAIL                             # Unity account email
+UNITY_PASSWORD                          # Unity account password
+IOS_DISTRIBUTION_CERTIFICATE_BASE64    # Base64-encoded .p12 certificate
+IOS_DISTRIBUTION_CERTIFICATE_PASSWORD  # .p12 export password
+IOS_PROVISIONING_PROFILE_BASE64        # Base64-encoded .mobileprovision
+APP_STORE_CONNECT_KEY_ID               # ASC API key ID (for TestFlight)
+APP_STORE_CONNECT_ISSUER_ID            # ASC issuer UUID (for TestFlight)
+APP_STORE_CONNECT_PRIVATE_KEY          # .p8 key contents (for TestFlight)
+```
+
+See [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) for setup instructions.
 
 ---
 
@@ -196,19 +231,22 @@ Current version: **2.0.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 | Document | Contents |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer diagram, Docker execution flow, extension points |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer diagram, executor lanes (docker-unity + macos-unity-xcode), extension points |
 | [docs/DOCKER_BUILD.md](docs/DOCKER_BUILD.md) | Container flow, mounts, caches, licensing, debugging |
 | [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) | Base image, variants, scanning, SBOM, tagging, deprecation |
 | [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) | Step-by-step onboarding guide |
-| [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md) | Every BuildConfig field documented |
+| [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md) | Every BuildConfig field documented (including full iOS section) |
 | [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export via Docker |
+| [docs/IOS.md](docs/IOS.md) | **NEW** — Full iOS pipeline: Unity → Xcode → archive → IPA → TestFlight |
+| [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) | **NEW** — Certificate, provisioning profile, ASC key setup |
+| [docs/IOS_RELEASE.md](docs/IOS_RELEASE.md) | **NEW** — Release workflow, protected environment, versioning, TestFlight |
 | [docs/WEBGL.md](docs/WEBGL.md) | WebGL compression, hosting via Docker |
 | [docs/LINUX.md](docs/LINUX.md) | Linux standalone and dedicated server builds |
-| [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS/Windows exclusion, GPU, native plugins |
+| [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS now supported via macOS; Windows unsupported; GPU/native plugin limits |
 | [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) | Tag-based release, environments, digest enforcement |
 | [docs/SELF_HOSTED_RUNNER.md](docs/SELF_HOSTED_RUNNER.md) | Runner setup with Docker requirements |
-| [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, image trust, fork safety |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common Docker and Unity errors |
+| [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, iOS credentials, image trust, fork safety |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Docker, Unity, and iOS errors; cert rotation; Xcode migration |
 | [docs/adr/001-docker-mandatory-architecture.md](docs/adr/001-docker-mandatory-architecture.md) | Architecture decision record |
 
 ---

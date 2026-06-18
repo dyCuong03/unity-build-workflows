@@ -1,0 +1,93 @@
+name: iOS Archive and Export
+description: >
+  Archives an Xcode project to a .xcarchive and exports it to an .ipa.
+  Validates the IPA after export. Requires iOS signing keychain to be set up
+  (use ios-setup-signing action first).
+
+inputs:
+  xcode-project-path:
+    description: Path to the Unity-generated Xcode project directory (Builds/iOS/Xcode/)
+    required: true
+  scheme:
+    description: Xcode scheme to build
+    required: false
+    default: Unity-iPhone
+  configuration:
+    description: Xcode build configuration
+    required: false
+    default: Release
+  archive-path:
+    description: Output path for the .xcarchive
+    required: false
+    default: Builds/iOS/Archive/Game.xcarchive
+  export-path:
+    description: Output directory for the exported .ipa
+    required: false
+    default: Builds/iOS/Export
+  export-options-path:
+    description: Path to ExportOptions.plist (from ios-setup-signing)
+    required: true
+  development-team:
+    description: Apple Developer Team ID
+    required: true
+  archive-log-path:
+    description: Path to write xcode-archive.log
+    required: false
+    default: Logs/iOS/xcode-archive.log
+  export-log-path:
+    description: Path to write xcode-export.log
+    required: false
+    default: Logs/iOS/xcode-export.log
+
+outputs:
+  archive-path:
+    description: Path to the produced .xcarchive
+    value: ${{ steps.archive.outputs.archive-path }}
+  ipa-path:
+    description: Path to the exported .ipa file
+    value: ${{ steps.export.outputs.ipa-path }}
+  archive-log-path:
+    description: Path to the xcodebuild archive log
+    value: ${{ steps.archive.outputs.archive-log-path }}
+  export-log-path:
+    description: Path to the xcodebuild export log
+    value: ${{ steps.export.outputs.export-log-path }}
+  bundle-id:
+    description: Bundle identifier extracted from the validated IPA
+    value: ${{ steps.validate.outputs.bundle-id }}
+  bundle-version:
+    description: CFBundleShortVersionString from validated IPA
+    value: ${{ steps.validate.outputs.bundle-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: xcodebuild archive
+      id: archive
+      shell: bash
+      env:
+        XCODE_PROJECT_PATH: ${{ inputs.xcode-project-path }}
+        SCHEME: ${{ inputs.scheme }}
+        CONFIGURATION: ${{ inputs.configuration }}
+        ARCHIVE_PATH: ${{ inputs.archive-path }}
+        LOG_PATH: ${{ inputs.archive-log-path }}
+        DEVELOPMENT_TEAM: ${{ inputs.development-team }}
+        KEYCHAIN_PATH: ${{ env.KEYCHAIN_PATH }}
+      run: bash scripts/ios/xcode_archive.sh
+
+    - name: xcodebuild exportArchive
+      id: export
+      shell: bash
+      env:
+        ARCHIVE_PATH: ${{ inputs.archive-path }}
+        EXPORT_OPTIONS_PATH: ${{ inputs.export-options-path }}
+        EXPORT_PATH: ${{ inputs.export-path }}
+        LOG_PATH: ${{ inputs.export-log-path }}
+      run: bash scripts/ios/xcode_export.sh
+
+    - name: Validate IPA
+      id: validate
+      shell: bash
+      env:
+        IPA_PATH: ${{ steps.export.outputs.ipa-path }}
+      run: bash scripts/ios/validate_ipa.sh

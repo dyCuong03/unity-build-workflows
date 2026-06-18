@@ -41,11 +41,20 @@ CACHE_SCHEMA_VERSION = "v1"
 DEFAULT_REGISTRY = "ghcr.io/buzzell-studio"
 DEFAULT_TIMEOUT = 3600  # seconds
 
-# Platforms that cannot be built in Docker — fail fast with guidance
+# Platforms that must not run through this Docker-invocation path.
+#
+# iOS IMPORTANT: iOS native invocation is permitted ONLY via the approved
+# macos-unity-xcode workflow components (ios-build.yml and its composite
+# actions).  This Docker runner must never attempt to execute Unity for iOS,
+# even on a macOS host.  The macOS workflow handles Unity IL2CPP compilation,
+# Xcode archive, signing, and IPA export in its own tightly controlled steps.
+#
+# The error message for iOS is the exact contract string checked by
+# resolve_platform_executor.py and downstream gating scripts.
 DOCKER_UNSUPPORTED_PLATFORMS = {
     "iOS": (
-        "iOS builds require macOS with Xcode. "
-        "Use the ios-build.yml workflow on a macOS runner."
+        "Target `iOS` requires an approved macOS runner with Xcode and "
+        "Unity iOS Build Support. Linux Docker execution is not supported."
     ),
     "Windows64": (
         "Windows64 IL2CPP cross-compilation is not yet supported in Docker. "
@@ -466,11 +475,15 @@ def main() -> None:
     args = parse_args()
 
     # ── Early platform check ───────────────────────────────────────────────
+    # Docker regression guard: reject any platform that must not run through
+    # this Docker-invocation path.  iOS uses the macos-unity-xcode executor;
+    # Windows64 is explicitly unsupported.  Android, WebGL, and Linux* are
+    # permitted here and must not bypass Docker (enforced by the executor
+    # resolver; this script IS the Docker path for those platforms).
     if args.target_platform in DOCKER_UNSUPPORTED_PLATFORMS:
-        _abort(
-            f"Platform '{args.target_platform}' is not supported in Docker. "
-            + DOCKER_UNSUPPORTED_PLATFORMS[args.target_platform]
-        )
+        # Emit the exact contract error string stored in the dict (no prefix)
+        # so downstream log parsers can match it unambiguously.
+        _abort(DOCKER_UNSUPPORTED_PLATFORMS[args.target_platform])
 
     # ── Validate project path ──────────────────────────────────────────────
     project_path = Path(args.project_path)

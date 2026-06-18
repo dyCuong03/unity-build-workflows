@@ -19,6 +19,7 @@
 │  • unity-build.yml (main orchestrator)                           │
 │  • unity-build-android.yml, unity-build-webgl.yml,               │
 │    unity-build-linux.yml                                         │
+│  • unity-build-ios.yml  ← NEW (macOS runner, Xcode)             │
 │  • unity-test.yml, unity-validate.yml                            │
 │  • unity-release.yml, unity-nightly.yml                          │
 │  • build-unity-image.yml, scan-unity-image.yml                   │
@@ -97,16 +98,43 @@ See [IMAGE_LIFECYCLE.md](IMAGE_LIFECYCLE.md) for full image strategy.
 
 ---
 
+## Executor Lanes
+
+The platform has two executor lanes selected automatically by `scripts/common/resolve_platform_executor.py`:
+
+### docker-unity Lane (Linux runners)
+
+```
+CI Runner (ubuntu-latest)
+  └── Docker Engine
+        └── ghcr.io/buzzelstudio/unity-builder@sha256:<digest>
+              └── entrypoint.sh → Unity -batchmode -executeMethod
+```
+
+### macos-unity-xcode Lane (macOS runners)
+
+```
+CI Runner (macos-13 / macos-latest)
+  ├── Unity (native, pre-installed)
+  │     └── Unity -batchmode -buildTarget iOS → Builds/iOS/Xcode/
+  └── Xcode (native, selected via xcode-select)
+        ├── xcodebuild archive → Builds/iOS/Archive/
+        ├── xcodebuild -exportArchive → Builds/iOS/Export/
+        └── xcrun altool → TestFlight (optional)
+```
+
+The two lanes are **mutually exclusive** — each platform resolves to exactly one executor.
+
 ## Supported Platforms
 
-| Platform | Image Variant | Docker Support |
-|---|---|---|
-| Android | `android` | Full — cross-compilation via Android SDK/NDK |
-| WebGL | `webgl` | Full — cross-compilation via Emscripten |
-| Linux64 | `linux` | Full — native compilation |
-| LinuxServer | `linux` | Full — native compilation |
-| iOS | — | **Unsupported** — requires macOS + Xcode |
-| Windows64 | — | **Unsupported** — requires Windows containers |
+| Platform | Executor | Runner OS | Support |
+|---|---|---|---|
+| Android | `docker-unity` | ubuntu-latest | Full — Docker, cross-compilation via Android SDK/NDK |
+| WebGL | `docker-unity` | ubuntu-latest | Full — Docker, cross-compilation via Emscripten |
+| Linux64 | `docker-unity` | ubuntu-latest | Full — Docker, native compilation |
+| LinuxServer | `docker-unity` | ubuntu-latest | Full — Docker, native compilation |
+| iOS | `macos-unity-xcode` | macos-13+ | Full — native macOS + Xcode pipeline |
+| Windows64 | — | — | **Unsupported** — requires Windows containers |
 
 See [PLATFORM_LIMITATIONS.md](PLATFORM_LIMITATIONS.md).
 

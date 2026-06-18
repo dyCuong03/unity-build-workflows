@@ -6,21 +6,155 @@ Validate BuildConfig JSON files against schema and semantic rules.
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
-# Minimal JSON schema validator (no external deps required)
-REQUIRED_FIELDS_BASE = {"version", "bundle_id"}
+# Base fields expected in every BuildConfig (camelCase per current schema).
+# bundle_id/team_id are platform-specific and live inside 'ios'/'android' blocks.
+REQUIRED_FIELDS_BASE = {"bundleVersion"}
 REQUIRED_FIELDS_PER_PLATFORM: dict[str, set[str]] = {
-    "Android": {"package_name", "min_sdk_version", "target_sdk_version"},
-    "iOS": {"bundle_id", "team_id"},
-    "Windows64": {"product_name"},
-    "WebGL": {"product_name"},
+    # Android block fields validated by the 'android' sub-block; no top-level requirements.
+    "Android": set(),
+    # iOS block validated by _validate_ios_block(); bundleIdentifier + signing checked there.
+    "iOS": set(),
+    "Windows64": set(),
+    "WebGL": set(),
 }
 DEV_FLAGS = ["development_build", "allow_debugging", "enable_deep_profiling", "connect_to_host"]
-SEMVER_RE = __import__("re").compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$")
+SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$")
 KNOWN_ENVIRONMENTS = {"development", "staging", "production"}
+
+# ── iOS 'ios' block validation ─────────────────────────────────────────────
+
+_IOS_BUNDLE_ID_RE = re.compile(
+    r"^[a-zA-Z][a-zA-Z0-9_\-]*(\.[a-zA-Z][a-zA-Z0-9_\-]*){1,}$"
+)
+_IOS_VERSION_RE = re.compile(r"^\d+\.\d+$")
+_IOS_MIN_TARGET = (14, 0)
+_IOS_SUPPORTED_ARCHITECTURES = frozenset({"ARM64", "Universal"})
+# "app-store" kept for backward compat; "app-store-connect" is the canonical new name
+_IOS_SUPPORTED_EXPORT_METHODS = frozenset({
+    "app-store", "app-store-connect", "ad-hoc", "development", "enterprise",
+})
+_IOS_SUPPORTED_SIGNING_STYLES = frozenset({"manual", "automatic"})
+
+
+def _validate_ios_block(
+    ios: dict,
+    errors: list,
+    warnings: list,
+) -> None:
+    """
+    Validate the camelCase fields inside the 'ios' BuildConfig block.
+
+    Called when platform == 'iOS' and the top-level config contains an 'ios' key.
+    No secrets are validated here — they live in GitHub secrets only.
+    """
+    # ── bundleIdentifier ───────────────────────────────────────────────────
+    bundle_id = ios.get("bundleIdentifier", "")
+    if not bundle_id:
+        errors.append(
+            "Missing required field in ios block: 'bundleIdentifier' "
+            "(e.g. com.company.game)."
+        )
+    elif not _IOS_BUNDLE_ID_RE.match(bundle_id):
+        errors.append(
+            f"ios.bundleIdentifier '{bundle_id}' is not a valid reverse-DNS identifier. "
+            "Expected at least two dot-separated components starting with a letter."
+        )
+
+    # ── buildNumber ────────────────────────────────────────────────────────
+    build_number = ios.get("buildNumber")
+    if build_number is not None and not re.match(r"^\d+$", str(build_number)):
+        errors.append(
+            f"ios.buildNumber '{build_number}' must be a numeric string (e.g. '42')."
+        )
+
+    # ── marketingVersion ───────────────────────────────────────────────────
+    marketing_version = ios.get("marketingVersion")
+    if marketing_version is not None:
+        if not re.match(r"^\d+\.\d+\.\d+$", str(marketing_version)):
+            errors.append(
+                f"ios.marketingVersion '{marketing_version}' must follow semver "
+                "MAJOR.MINOR.PATCH format (e.g. '1.2.3')."
+            )
+
+    # ── targetOSVersion ────────────────────────────────────────────────────
+    target_os = ios.get("targetOSVersion", "14.0")
+    if not _IOS_VERSION_RE.match(str(target_os)):
+        errors.append(
+            f"ios.targetOSVersion '{target_os}' must be in MAJOR.MINOR format (e.g. '14.0')."
+        )
+    else:
+        try:
+            parts = str(target_os).split(".")
+            major, minor = int(parts[0]), int(parts[1])
+            if (major, minor) < _IOS_MIN_TARGET:
+                errors.append(
+                    f"ios.targetOSVersion '{target_os}' is below the minimum supported "
+                    f"deployment target {'.'.join(str(v) for v in _IOS_MIN_TARGET)}."
+                )
+        except (ValueError, IndexError):
+            errors.append(
+                f"ios.targetOSVersion '{target_os}' could not be parsed."
+            )
+
+    # ── architecture ───────────────────────────────────────────────────────
+    architecture = ios.get("architecture")
+    if architecture is not None and architecture not in _IOS_SUPPORTED_ARCHITECTURES:
+        errors.append(
+            f"ios.architecture '{architecture}' is not supported. "
+            f"Supported values: {', '.join(sorted(_IOS_SUPPORTED_ARCHITECTURES))}."
+        )
+
+    # ── exportMethod ───────────────────────────────────────────────────────
+    export_method = ios.get("exportMethod", "app-store")
+    if export_method not in _IOS_SUPPORTED_EXPORT_METHODS:
+        errors.append(
+            f"ios.exportMethod '{export_method}' is not supported. "
+            f"Supported values: {', '.join(sorted(_IOS_SUPPORTED_EXPORT_METHODS))}."
+        )
+
+    # ── signingStyle / automaticSigning ────────────────────────────────────
+    # New: signingStyle (string enum).  Legacy: automaticSigning (boolean).
+    if "signingStyle" in ios:
+        signing_style = ios["signingStyle"]
+        if signing_style not in _IOS_SUPPORTED_SIGNING_STYLES:
+            errors.append(
+                f"ios.signingStyle '{signing_style}' is not valid. "
+                f"Supported values: {', '.join(sorted(_IOS_SUPPORTED_SIGNING_STYLES))}."
+            )
+    elif "automaticSigning" in ios:
+        signing_style = "automatic" if ios["automaticSigning"] else "manual"
+    else:
+        signing_style = "manual"  # schema default
+
+    if signing_style == "manual":
+        if not ios.get("provisioningProfileSpecifier"):
+            errors.append(
+                "ios signingStyle is 'manual' but ios.provisioningProfileSpecifier is missing."
+            )
+        if not ios.get("codeSignIdentity"):
+            errors.append(
+                "ios signingStyle is 'manual' but ios.codeSignIdentity is missing."
+            )
+
+    # ── uploadToTestFlight advisory ────────────────────────────────────────
+    if ios.get("uploadToTestFlight") is True:
+        warnings.append(
+            "ios.uploadToTestFlight is true — this is a request flag only. "
+            "The actual TestFlight upload requires App Store Connect secrets configured "
+            "in the workflow."
+        )
+
+    # ── enableBitcode advisory ─────────────────────────────────────────────
+    if ios.get("enableBitcode") is True:
+        warnings.append(
+            "ios.enableBitcode is true. Bitcode was deprecated in Xcode 14+. "
+            "Set to false for modern toolchains."
+        )
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
@@ -102,6 +236,7 @@ def validate(
 
     # iOS-specific
     if platform == "iOS":
+        # Legacy top-level min_ios_version check (kept for backward compat)
         min_ios = config.get("min_ios_version", "")
         if min_ios:
             parts = str(min_ios).split(".")
@@ -111,6 +246,19 @@ def validate(
                     warnings.append(f"min_ios_version {min_ios} is below iOS 12 — may not pass App Store review")
             except ValueError:
                 errors.append(f"min_ios_version '{min_ios}' is not a valid version number")
+
+        # Validate the iOS block — 'iOS' is canonical, 'ios' is legacy fallback.
+        ios_block = config.get("iOS") or config.get("ios")
+        used_key = "iOS" if "iOS" in config else ("ios" if "ios" in config else None)
+        if ios_block is not None:
+            if isinstance(ios_block, dict):
+                if used_key == "ios":
+                    warnings.append(
+                        "BuildConfig uses legacy 'ios' key — migrate to canonical 'iOS'."
+                    )
+                _validate_ios_block(ios_block, errors, warnings)
+            else:
+                errors.append(f"'{used_key}' key in BuildConfig must be an object.")
 
     return errors, warnings
 

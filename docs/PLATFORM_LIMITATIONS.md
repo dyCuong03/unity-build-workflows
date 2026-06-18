@@ -1,33 +1,40 @@
 # Platform Limitations
 
-This repository uses a Docker-mandatory architecture. All Unity operations run inside Linux containers. This creates inherent limitations for certain platforms.
+This repository operates two execution lanes:
 
-## Unsupported Platforms
+- **`docker-unity`** — Docker-mandatory lane for Android, WebGL, and Linux builds. Runs on `ubuntu-latest`.
+- **`macos-unity-xcode`** — Native macOS lane for iOS builds. Runs on `macos-13` or `macos-latest`.
+
+The platform executor resolver (`scripts/common/resolve_platform_executor.py`) selects the correct lane automatically based on `target-platform`. Docker and macOS builds are **mutually exclusive** — each platform runs in exactly one lane.
+
+## Supported Platforms
 
 ### iOS
 
-**Status:** Unsupported by this repository.
+**Status:** Supported via the `macos-unity-xcode` executor (macOS runner, native Xcode).
 
-**Reason:** Unity iOS builds produce an Xcode project that requires macOS-native Xcode toolchain for:
-- Code signing with Apple certificates
-- Provisioning profile application
-- IPA archive export (`xcodebuild -exportArchive`)
-- App Store Connect upload
+**Executor:** `macos-unity-xcode` — a macOS GitHub Actions runner with Unity and Xcode pre-installed.
 
-No verified Docker solution exists for the complete iOS build pipeline. Running Xcode inside a Linux container is not possible.
+**Why macOS is required:** Unity iOS builds produce an Xcode project that requires the macOS-native Xcode toolchain for:
+- Code signing with Apple certificates (`security` + keychain)
+- Provisioning profile installation
+- IPA archive export (`xcodebuild archive`, `xcodebuild -exportArchive`)
+- App Store Connect upload (`xcrun altool` / `notarytool`)
 
-**Alternative:** Use a dedicated macOS-based CI pipeline:
-- GitHub Actions `macos-latest` runner with native Unity installation
-- Self-hosted macOS runner with Unity Hub
-- Dedicated iOS build service (e.g., Codemagic, Bitrise)
+**Docker is not used for iOS.** Running Xcode inside a Linux container is not possible.
 
-**Error message when attempted:**
+**How to use:** Add `target-platform: iOS` to your caller workflow. The resolver automatically selects the `macos-unity-xcode` executor.
+
+**Attempting iOS on a Linux runner** produces:
 ```
-Target `iOS` is unsupported by the Docker-only build platform.
-This repository does not permit native Unity execution.
-Use the dedicated macOS release pipeline documented in
-docs/PLATFORM_LIMITATIONS.md.
+ERROR: Platform 'iOS' requires executor 'macos-unity-xcode' (macOS runner).
+Current runner-os is 'linux', which is incompatible.
+Use a macOS runner: runs-on: macos-latest
 ```
+
+**Full documentation:** [docs/IOS.md](IOS.md), [docs/IOS_SIGNING.md](IOS_SIGNING.md), [docs/IOS_RELEASE.md](IOS_RELEASE.md)
+
+## Unsupported Platforms
 
 ### Windows
 
@@ -72,14 +79,14 @@ Native plugins (.so, .dll, .dylib) must be compatible with the container's Linux
 
 ### Cross-Compilation
 
-| Build Target | Container OS | Cross-Compilation |
-|---|---|---|
-| Android | Linux | Yes — Android SDK/NDK handles cross-compilation |
-| WebGL | Linux | Yes — Emscripten handles cross-compilation |
-| Linux64 | Linux | Native compilation |
-| LinuxServer | Linux | Native compilation |
-| iOS | Linux | **No** — requires Xcode on macOS |
-| Windows64 | Linux | **No** — requires MSVC on Windows |
+| Build Target | Executor | Runner OS | Compilation |
+|---|---|---|---|
+| Android | `docker-unity` | Linux | Cross-compilation via Android SDK/NDK |
+| WebGL | `docker-unity` | Linux | Cross-compilation via Emscripten |
+| Linux64 | `docker-unity` | Linux | Native compilation |
+| LinuxServer | `docker-unity` | Linux | Native compilation |
+| iOS | `macos-unity-xcode` | macOS | Native — Xcode on macOS |
+| Windows64 | — | — | **Unsupported** — requires Windows containers |
 
 ### Container Resource Limits
 

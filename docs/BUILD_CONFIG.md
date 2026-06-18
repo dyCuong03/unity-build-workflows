@@ -86,19 +86,33 @@ Full reference for every field in the `BuildConfig` JSON schema. Validate your c
 
 ---
 
-## `ios` Object
+## `iOS` Object
 
-**Note:** iOS builds are unsupported by the Docker-only platform. The `ios` config section remains in the schema for projects using dedicated macOS pipelines alongside this repository.
+> **Canonical key is `iOS` (capital S).** The lowercase alias `ios` is still accepted for
+> backward compatibility but is deprecated and will emit a warning in v3.0.0.
 
-| Field | Type | Required | Default |
-|---|---|---|---|
-| `bundleIdentifier` | string | Yes | — |
-| `buildNumber` | string | No | derived |
-| `targetOSVersion` | string | No | `14.0` |
-| `automaticSigning` | boolean | No | `false` |
-| `developmentTeam` | string | No | — |
-| `exportMethod` | enum | No | `app-store` |
-| `generateXcodeProjectOnly` | boolean | No | `false` |
+iOS builds run on the `macos-unity-xcode` executor (macOS runner + native Xcode). See [IOS.md](IOS.md) for the full pipeline.
+
+**No secrets in BuildConfig.** Certificates, profiles, and ASC keys are GitHub Secrets. See [IOS_SIGNING.md](IOS_SIGNING.md).
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `bundleIdentifier` | string | **Yes** | — | iOS bundle ID (reverse-DNS, e.g. `com.studio.game`) |
+| `buildNumber` | string | No | derived | CFBundleVersion. Numeric string. Derived from `buildNumberStrategy` if omitted |
+| `marketingVersion` | string | No | `bundleVersion` | CFBundleShortVersionString — user-facing version |
+| `sdkVersion` | enum | No | `iphoneos` | `iphoneos` (device) or `iphonesimulator` |
+| `targetOSVersion` | string | No | `14.0` | Minimum iOS deployment target (`MAJOR.MINOR`) |
+| `architecture` | enum | No | `ARM64` | `ARM64` for device, `x86_64` for simulator |
+| `xcodeVersion` | string | No | runner default | Xcode version to select on the macOS runner |
+| `developmentTeamId` | string | No | — | 10-character Apple Developer Team ID |
+| `signingStyle` | enum | No | `manual` | `manual` (CI-recommended) or `automatic` |
+| `provisioningProfileSpecifier` | string | No | — | Provisioning profile name for manual signing |
+| `codeSignIdentity` | string | No | `iPhone Distribution` | Code signing identity string |
+| `exportMethod` | enum | No | `app-store` | `app-store`, `ad-hoc`, `enterprise`, `development` |
+| `enableBitcode` | boolean | No | `false` | Enable Bitcode (deprecated in Xcode 14+) |
+| `generateSymbols` | boolean | No | `true` | Generate `.dSYM` symbol files |
+| `uploadSymbols` | boolean | No | `false` | Upload dSYMs to App Store Connect |
+| `uploadToTestFlight` | boolean | No | `false` | Submit IPA to TestFlight after export |
 
 ---
 

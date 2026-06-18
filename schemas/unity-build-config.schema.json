@@ -187,50 +187,14 @@
       }
     },
 
+    "iOS": {
+      "description": "Canonical iOS platform configuration block. No secrets — all signing credentials live in GitHub secrets.",
+      "$ref": "#/definitions/iosBlock"
+    },
+
     "ios": {
-      "type": "object",
-      "description": "iOS platform configuration.",
-      "required": ["bundleIdentifier"],
-      "additionalProperties": false,
-      "properties": {
-        "bundleIdentifier": {
-          "type": "string",
-          "pattern": "^[a-zA-Z][a-zA-Z0-9\\-]*(\\.[a-zA-Z][a-zA-Z0-9\\-]*){1,}$",
-          "description": "iOS bundle identifier, e.g. com.company.game."
-        },
-        "buildNumber": {
-          "type": "string",
-          "pattern": "^\\d+$",
-          "description": "CFBundleVersion build number string. If omitted, derived from buildNumberStrategy."
-        },
-        "targetOSVersion": {
-          "type": "string",
-          "pattern": "^\\d+\\.\\d+$",
-          "default": "14.0",
-          "description": "Minimum iOS deployment target version."
-        },
-        "automaticSigning": {
-          "type": "boolean",
-          "default": false,
-          "description": "Use Xcode automatic signing. When false, manual provisioning profile is required via secrets."
-        },
-        "developmentTeam": {
-          "type": "string",
-          "pattern": "^[A-Z0-9]{10}$",
-          "description": "Apple Developer Team ID (10-character alphanumeric string)."
-        },
-        "exportMethod": {
-          "type": "string",
-          "enum": ["app-store", "ad-hoc", "enterprise", "development"],
-          "default": "app-store",
-          "description": "IPA export method."
-        },
-        "generateXcodeProjectOnly": {
-          "type": "boolean",
-          "default": false,
-          "description": "Stop after generating the Xcode project, without building the IPA. Useful for local Xcode testing."
-        }
-      }
+      "description": "Deprecated: use 'iOS' key. Accepted for backward compatibility with existing configs.",
+      "$ref": "#/definitions/iosBlock"
     },
 
     "windows": {
@@ -423,6 +387,114 @@
     "bundleIdPattern": {
       "type": "string",
       "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-]*(\\.[a-zA-Z][a-zA-Z0-9_\\-]*){1,}$"
+    },
+
+    "iosBlock": {
+      "type": "object",
+      "description": "iOS platform configuration shared by canonical 'iOS' and deprecated 'ios' keys. No secrets.",
+      "required": ["bundleIdentifier"],
+      "additionalProperties": false,
+      "properties": {
+        "bundleIdentifier": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9\\-]*(\\.[a-zA-Z][a-zA-Z0-9\\-]*){1,}$",
+          "description": "Reverse-DNS iOS bundle identifier, e.g. com.company.game."
+        },
+        "buildNumber": {
+          "type": "string",
+          "pattern": "^\\d+$",
+          "description": "CFBundleVersion build number — numeric string. If omitted, derived from buildNumberStrategy."
+        },
+        "marketingVersion": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "CFBundleShortVersionString marketing version in MAJOR.MINOR.PATCH semver format."
+        },
+        "sdkVersion": {
+          "type": "string",
+          "enum": ["iphoneos", "iphonesimulator"],
+          "default": "iphoneos",
+          "description": "Xcode SDK target. 'iphoneos' for device/App Store builds; 'iphonesimulator' for simulator builds."
+        },
+        "targetOSVersion": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$",
+          "default": "14.0",
+          "description": "Minimum iOS deployment target (e.g. '14.0', '15.0'). Must be 14.0 or higher."
+        },
+        "architecture": {
+          "type": "string",
+          "enum": ["ARM64", "Universal"],
+          "default": "ARM64",
+          "description": "CPU architecture. 'ARM64' for modern devices; 'Universal' includes ARM64 + x86_64 for simulators."
+        },
+        "xcodeVersion": {
+          "type": "string",
+          "description": "Xcode version required to build this project (e.g. '15.2', '16.0'). Informational — used for runner selection."
+        },
+        "automaticSigning": {
+          "type": "boolean",
+          "default": false,
+          "description": "Legacy field: use Xcode automatic signing. Prefer signingStyle instead."
+        },
+        "signingStyle": {
+          "type": "string",
+          "enum": ["manual", "automatic"],
+          "default": "manual",
+          "description": "Code signing style. 'manual' requires provisioningProfileSpecifier + codeSignIdentity; 'automatic' delegates to Xcode."
+        },
+        "developmentTeam": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{10}$",
+          "description": "Apple Developer Team ID (10-character uppercase alphanumeric string). Legacy alias for developmentTeamId."
+        },
+        "developmentTeamId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{10}$",
+          "description": "Apple Developer Team ID (10-character uppercase alphanumeric string)."
+        },
+        "provisioningProfileSpecifier": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provisioning profile name or UUID. Required when signingStyle is 'manual'. The actual profile is supplied via IOS_PROVISIONING_PROFILE_BASE64 secret."
+        },
+        "codeSignIdentity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Code signing identity string (e.g. 'iPhone Distribution'). Required when signingStyle is 'manual'."
+        },
+        "exportMethod": {
+          "type": "string",
+          "enum": ["app-store", "app-store-connect", "ad-hoc", "enterprise", "development"],
+          "default": "app-store",
+          "description": "IPA export method. 'app-store' and 'app-store-connect' are equivalent for App Store/TestFlight distribution."
+        },
+        "enableBitcode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Bitcode in the Xcode archive. Deprecated by Apple in Xcode 14+; keep false for modern toolchains."
+        },
+        "generateSymbols": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate dSYM symbol files alongside the IPA for crash reporting."
+        },
+        "uploadSymbols": {
+          "type": "boolean",
+          "default": true,
+          "description": "Upload dSYM files to App Store Connect alongside the IPA. Effective only when uploadToTestFlight is true."
+        },
+        "uploadToTestFlight": {
+          "type": "boolean",
+          "default": false,
+          "description": "Request that the workflow upload the IPA to TestFlight. The actual upload is gated by the workflow deploy step and App Store Connect secrets."
+        },
+        "generateXcodeProjectOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Stop after generating the Xcode project, without building the IPA. Useful for local Xcode testing."
+        }
+      }
     }
   }
 }

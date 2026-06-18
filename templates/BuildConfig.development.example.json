@@ -42,12 +42,17 @@
     "symbolExport": "debugging"
   },
 
-  "ios": {
+  "iOS": {
     "bundleIdentifier": "com.acmestudios.myunitygame.dev",
+    "marketingVersion": "1.0.0",
     "targetOSVersion": "14.0",
-    "automaticSigning": true,
-    "developmentTeam": "ABCDE12345",
+    "architecture": "ARM64",
+    "developmentTeamId": "ABCDE12345",
+    "signingStyle": "automatic",
     "exportMethod": "development",
+    "enableBitcode": false,
+    "generateSymbols": false,
+    "uploadToTestFlight": false,
     "generateXcodeProjectOnly": false
   },
 

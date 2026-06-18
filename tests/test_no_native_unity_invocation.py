@@ -25,8 +25,22 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 
-# The ONLY file allowed to contain direct Unity invocations.
-ALLOWED_PATH = "docker/unity/entrypoint.sh"
+# Files approved to contain direct (non-Docker) Unity invocations.
+# docker/unity/entrypoint.sh            — Docker container entrypoint (Docker lane)
+# .github/workflows/unity-build-ios.yml — iOS pipeline (native Unity on macOS)
+# .github/workflows/unity-test-ios.yml  — iOS test runner (native Unity on macOS)
+# .github/workflows/unity-release-ios.yml — iOS release pipeline (tag-triggered)
+# scripts/ios/run_unity_ios.sh          — Unity batch-mode caller (macOS only, called by workflows)
+# The iOS files are an approved exception: Xcode requires native Unity on macOS.
+# All other files must use the Docker executor.
+ALLOWED_PATH = "docker/unity/entrypoint.sh"  # kept for test backward-compat
+ALLOWED_PATHS = frozenset({
+    "docker/unity/entrypoint.sh",
+    ".github/workflows/unity-build-ios.yml",
+    ".github/workflows/unity-test-ios.yml",
+    ".github/workflows/unity-release-ios.yml",  # iOS release pipeline (tag-triggered)
+    "scripts/ios/run_unity_ios.sh",             # iOS Unity batch-mode invocation (macOS only)
+})
 
 # ---------------------------------------------------------------------------
 # Patterns that indicate a direct (non-Docker) Unity invocation
@@ -96,12 +110,24 @@ def _is_excluded(path: Path) -> bool:
 
 
 def _is_allowed(path: Path) -> bool:
-    """Return True if this file is the one approved location for Unity invocations."""
+    """
+    Return True if this file is an approved location for Unity invocations.
+
+    Approved locations:
+    - docker/unity/entrypoint.sh              — Docker container entrypoint
+    - .github/workflows/unity-build-ios.yml   — iOS pipeline (native macOS/Xcode)
+    - .github/workflows/unity-test-ios.yml    — iOS test runner (native macOS/Xcode)
+    - .github/workflows/unity-release-ios.yml — iOS release pipeline
+    - scripts/ios/run_unity_ios.sh            — Unity batch-mode caller (macOS only)
+
+    iOS files are approved exceptions to the Docker-mandatory rule.
+    iOS builds require native Unity on macOS because Xcode only runs on macOS.
+    """
     try:
         rel = path.relative_to(REPO_ROOT)
     except ValueError:
         return False
-    return str(rel).replace("\\", "/") == ALLOWED_PATH
+    return str(rel).replace("\\", "/") in ALLOWED_PATHS
 
 
 def _scan_file(path: Path) -> list[tuple[int, str, str]]:
@@ -263,25 +289,46 @@ class TestNoNativeUnityInvocation:
         all_violations = _collect_violations()
         if all_violations:
             msg = _format_violation_message(all_violations)
+            allowed_list = ", ".join(sorted(ALLOWED_PATHS))
             pytest.fail(
-                f"REGRESSION: Native Unity invocations found outside "
-                f"{ALLOWED_PATH}.\n"
-                f"Only docker/unity/entrypoint.sh may invoke Unity directly.\n\n"
+                f"REGRESSION: Native Unity invocations found outside approved paths.\n"
+                f"Approved: {allowed_list}\n"
+                f"iOS workflows (unity-build-ios.yml, unity-test-ios.yml) are approved "
+                f"exceptions — all other files must use the Docker executor.\n\n"
                 f"{msg}"
             )
 
     def test_allowed_path_constant_is_correct(self):
-        """Sanity check: the ALLOWED_PATH constant points to the real entrypoint."""
-        # This test verifies our constant is well-formed, not that the file exists
-        # (it will be created by Task #2 / Docker infrastructure task)
-        assert ALLOWED_PATH == "docker/unity/entrypoint.sh", \
-            "ALLOWED_PATH constant must point to docker/unity/entrypoint.sh"
-        assert "/" in ALLOWED_PATH, "ALLOWED_PATH must use forward slashes"
+        """Sanity check: ALLOWED_PATHS contains the expected approved files."""
+        assert "docker/unity/entrypoint.sh" in ALLOWED_PATHS, \
+            "docker/unity/entrypoint.sh must be in ALLOWED_PATHS"
+        assert ".github/workflows/unity-build-ios.yml" in ALLOWED_PATHS, \
+            "unity-build-ios.yml must be in ALLOWED_PATHS (approved iOS exception)"
+        for path in ALLOWED_PATHS:
+            assert "/" in path, f"All paths must use forward slashes: {path}"
 
-    def test_entrypoint_is_only_allowed_location(self):
-        """Document the contract: only entrypoint.sh may call Unity directly."""
-        # Meta-test: confirm our allowlist has exactly one entry
-        assert ALLOWED_PATH == "docker/unity/entrypoint.sh"
+    def test_entrypoint_is_in_allowed_paths(self):
+        """Document the contract: entrypoint.sh must remain in the approved allowlist."""
+        assert "docker/unity/entrypoint.sh" in ALLOWED_PATHS
+
+    def test_ios_workflow_is_approved_exception(self):
+        """
+        iOS workflows and the run_unity_ios.sh shell script are approved exceptions
+        to the Docker-mandatory architecture. iOS builds require native Unity on
+        macOS because Xcode only runs on macOS.
+        All three iOS workflows and the iOS Unity runner script must be in ALLOWED_PATHS.
+        """
+        ios_approved = [
+            ".github/workflows/unity-build-ios.yml",
+            ".github/workflows/unity-test-ios.yml",
+            ".github/workflows/unity-release-ios.yml",
+            "scripts/ios/run_unity_ios.sh",
+        ]
+        for path in ios_approved:
+            assert path in ALLOWED_PATHS, (
+                f"{path} must be an approved exception. "
+                "iOS native Unity execution on macOS is required for Xcode integration."
+            )
 
 
 # ---------------------------------------------------------------------------

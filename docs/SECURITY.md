@@ -220,11 +220,73 @@ Each build produces a `build-metadata.json` alongside the artifact containing:
 
 ---
 
+## iOS-Specific Secret Handling
+
+iOS builds introduce additional secrets that require careful management.
+
+### iOS Secrets Inventory
+
+| Secret | Type | Scope | Notes |
+|---|---|---|---|
+| `IOS_DISTRIBUTION_CERTIFICATE_BASE64` | P12 certificate | Repository or `production` env | Base64-encoded, no line breaks |
+| `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | P12 export password | Repository or `production` env | Never passed as CLI arg |
+| `IOS_PROVISIONING_PROFILE_BASE64` | `.mobileprovision` | Repository | Base64-encoded |
+| `APP_STORE_CONNECT_KEY_ID` | ASC API key ID | `production` env | Safe to treat as non-sensitive |
+| `APP_STORE_CONNECT_ISSUER_ID` | UUID | `production` env | Safe to treat as non-sensitive |
+| `APP_STORE_CONNECT_PRIVATE_KEY` | `.p8` file contents | `production` env | **High sensitivity** — rotate on compromise |
+
+### iOS Temporary Credential Lifecycle
+
+```
+CI Start
+  │
+  ├── setup_signing.sh
+  │     ├── Creates temp keychain with random password
+  │     ├── Imports cert into temp keychain (cert P12 decoded from env, deleted immediately after import)
+  │     ├── Installs provisioning profile to ~/Library/MobileDevice/Provisioning Profiles/
+  │     └── Writes ASC key to $RUNNER_TEMP/asc_key.p8 (mode 600)
+  │
+  ├── [Build, archive, export, upload steps]
+  │
+  └── cleanup_ios.sh (trap on EXIT — always runs)
+        ├── security delete-keychain "$TEMP_KEYCHAIN_PATH"
+        ├── rm -f "$PROVISIONING_PROFILE_PATH"
+        └── rm -f "$ASC_KEY_PATH"
+```
+
+### No Secrets in Xcode Build Logs
+
+`xcodebuild` can emit verbose logs. The archive script uses:
+```bash
+CODE_SIGN_IDENTITY="${IOS_CODE_SIGN_IDENTITY}"   # env var, not literal
+```
+Never inline secret values in xcodebuild `-xcconfig` flags.
+
+### Scoping ASC Secrets to production Environment
+
+`APP_STORE_CONNECT_*` secrets must be scoped to the `production` GitHub Environment, not the repository. This prevents:
+- Staging builds from accidentally uploading to TestFlight
+- Fork PRs from accessing production credentials (GitHub does not provide environment secrets to fork PRs)
+
+### SHA-Pinned Actions
+
+All GitHub Actions in iOS workflows are pinned to their full commit SHA:
+```yaml
+- uses: maxim-lobanov/setup-xcode@60606e260d2fc5762a71e64e74b2174e8ea3c8bd  # v1.6.0
+```
+This prevents supply chain attacks via compromised action tags.
+
+---
+
 ## Secret Rotation Policy
 
 | Secret | Rotation Frequency | Trigger for Immediate Rotation |
 |---|---|---|
 | `ANDROID_KEYSTORE_*` | Annual | Departing team member, suspected compromise |
+| `IOS_DISTRIBUTION_CERTIFICATE_BASE64` | Annual (certificate expiry) | Compromised private key, departing team member |
+| `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | On certificate rotation | — |
+| `IOS_PROVISIONING_PROFILE_BASE64` | Annual (profile expiry) | Bundle ID change, team change |
+| `APP_STORE_CONNECT_PRIVATE_KEY` | Annual | Compromised key, role change |
 | `UNITY_LICENSE` | Per subscription renewal | License revocation |
 | `CLOUDFLARE_API_TOKEN` | Annual | Token compromise |
 | `GOOGLE_PLAY_*` | Annual | Departing team member |

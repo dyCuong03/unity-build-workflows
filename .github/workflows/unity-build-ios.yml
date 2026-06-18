@@ -1,0 +1,251 @@
+name: Unity Build iOS
+
+# macOS-native workflow. Generates an Xcode project from Unity source.
+# Development/ad-hoc signing only. Does NOT upload to TestFlight.
+# Runner: macos-unity-xcode (self-hosted macOS runner with Xcode + Unity iOS Build Support).
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        type: string
+        required: false
+        default: '.'
+      unity-version:
+        type: string
+        required: true
+      environment:
+        type: string
+        required: false
+        default: development
+      build-config-path:
+        type: string
+        required: false
+        default: BuildConfig
+      cache-mode:
+        description: Library cache strategy (off, safe, aggressive)
+        type: string
+        required: false
+        default: safe
+      build-addressables:
+        type: boolean
+        required: false
+        default: false
+      upload-artifact:
+        type: boolean
+        required: false
+        default: true
+      artifact-retention-days:
+        type: number
+        required: false
+        default: 14
+      clean-build:
+        type: boolean
+        required: false
+        default: false
+      build-version:
+        type: string
+        required: true
+
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+
+    outputs:
+      artifact-name:
+        description: Name of the uploaded Xcode project artifact
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+jobs:
+  build:
+    name: Build iOS Xcode Project (${{ inputs.environment }})
+    runs-on: macos-unity-xcode
+    environment: ${{ inputs.environment }}
+    outputs:
+      artifact-name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+
+    steps:
+      # ── Guard: enforce macOS runner ───────────────────────────────────────────
+      - name: Verify macOS runner
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" != "macOS" ]]; then
+            echo "::error::Target \`iOS\` requires an approved macOS runner with Xcode and Unity iOS Build Support. Linux Docker execution is not supported."
+            exit 1
+          fi
+          echo "[ios-guard] Runner OS: ${{ runner.os }} — OK"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # ── Platform executor validation ────────────────────────────────────────
+      - name: Validate platform executor
+        shell: bash
+        env:
+          TARGET_PLATFORM: iOS
+          RUNNER_OS_VAL: ${{ runner.os }}
+        run: |
+          if [[ -f "scripts/common/resolve_platform_executor.py" ]]; then
+            python3 scripts/common/resolve_platform_executor.py \
+              --target-platform iOS \
+              --runner-os "${RUNNER_OS_VAL}"
+          else
+            echo "::notice::resolve_platform_executor.py not yet present — skipping resolver check"
+            echo "executor=macos-unity-xcode"
+          fi
+
+      # ── Verify Unity installation ────────────────────────────────────────────
+      - name: Resolve Unity installation
+        id: unity-install
+        shell: bash
+        env:
+          UNITY_VERSION: ${{ inputs.unity-version }}
+        run: |
+          UNITY_EDITOR="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+          IOS_SUPPORT="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/PlaybackEngines/iOSSupport"
+
+          if [[ ! -f "${UNITY_EDITOR}" ]]; then
+            echo "::error::Unity editor not found at: ${UNITY_EDITOR}"
+            echo "::error::Install Unity ${UNITY_VERSION} with iOS Build Support on this runner."
+            exit 1
+          fi
+
+          if [[ ! -d "${IOS_SUPPORT}" ]]; then
+            echo "::error::Unity iOS Build Support not found at: ${IOS_SUPPORT}"
+            echo "::error::Install the iOS Build Support module for Unity ${UNITY_VERSION}."
+            exit 1
+          fi
+
+          echo "unity-editor=${UNITY_EDITOR}" >> "$GITHUB_OUTPUT"
+          echo "[ios-install] Unity: ${UNITY_EDITOR}"
+          echo "[ios-install] iOS Support: ${IOS_SUPPORT} — OK"
+
+      # ── Validate BuildConfig ─────────────────────────────────────────────────
+      - name: Validate BuildConfig
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          TARGET_PLATFORM: iOS
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          python3 scripts/common/validate_build_config.py \
+            --config-path "${PROJECT_PATH}/${BUILD_CONFIG_PATH}" \
+            --platform    iOS \
+            --environment "${ENVIRONMENT}"
+
+      # ── Library cache ────────────────────────────────────────────────────────
+      - name: Restore Library cache
+        id: restore-cache
+        if: inputs.cache-mode != 'off'
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: macOS-unity-${{ inputs.unity-version }}-iOS-${{ hashFiles(format('{0}/Packages/manifest.json', inputs.project-path), format('{0}/Packages/packages-lock.json', inputs.project-path)) }}-cache-schema-v2
+          restore-keys: |
+            macOS-unity-${{ inputs.unity-version }}-iOS-
+
+      - name: Clean Library cache
+        if: inputs.clean-build == true
+        shell: bash
+        run: |
+          rm -rf "${{ inputs.project-path }}/Library"
+          echo "[clean-build] Library/ removed"
+
+      # ── Generate build metadata ──────────────────────────────────────────────
+      - name: Generate build metadata
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_VERSION: ${{ inputs.build-version }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          python3 scripts/common/generate_build_metadata.py \
+            --project-path "${PROJECT_PATH}" \
+            --platform     iOS \
+            --version      "${BUILD_VERSION}" \
+            --environment  "${ENVIRONMENT}" \
+            --build-number "${{ github.run_number }}" \
+            --commit       "${{ github.sha }}"
+
+      # ── Unity license activation ─────────────────────────────────────────────
+      - name: Activate Unity license
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh activate
+
+      # ── Unity iOS build (Xcode project generation) ──────────────────────────
+      - name: Build Unity iOS (generate Xcode project)
+        id: unity-build
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          PROJECT_PATH: ${{ inputs.project-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          OUTPUT_PATH: Builds/iOS/Xcode
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh build
+
+      # ── Build Addressables (optional) ────────────────────────────────────────
+      - name: Build Addressables
+        if: inputs.build-addressables == true
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          PROJECT_PATH: ${{ inputs.project-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh build-addressables
+
+      # ── Set artifact name ────────────────────────────────────────────────────
+      - name: Set artifact name
+        id: set-artifact-name
+        shell: bash
+        run: |
+          NAME="ios-xcode-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}"
+          printf 'artifact-name=%s\n' "${NAME}" >> "$GITHUB_OUTPUT"
+
+      # ── Upload Xcode project artifact ────────────────────────────────────────
+      - name: Upload Xcode project artifact
+        id: upload
+        if: always() && inputs.upload-artifact == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+          path: Builds/iOS/Xcode/
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: warn
+
+      # ── Upload logs and reports (always) ────────────────────────────────────
+      - name: Upload iOS logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-logs-${{ inputs.environment }}-${{ inputs.build-version }}-${{ github.run_number }}
+          path: |
+            Logs/iOS/
+            BuildReports/iOS/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ── Return Unity license ─────────────────────────────────────────────────
+      - name: Return Unity license
+        if: always()
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh return-license

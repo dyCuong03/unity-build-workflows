@@ -1,0 +1,34 @@
+{
+  "$schema": "../../schemas/unity-build-config.schema.json",
+  "projectName": "my-ios-game",
+  "companyName": "BuzzelStudio",
+  "productName": "My iOS Game",
+  "bundleVersion": "1.0.0",
+  "buildNumberStrategy": "github_run_number",
+  "outputDirectory": "Builds/iOS",
+  "scenes": [
+    "Assets/Scenes/Bootstrap.unity",
+    "Assets/Scenes/MainMenu.unity"
+  ],
+  "scriptingBackend": "IL2CPP",
+  "developmentBuild": false,
+  "runTests": false,
+  "iOS": {
+    "bundleIdentifier": "com.buzzellstudio.myiosgame",
+    "buildNumber": "42",
+    "marketingVersion": "1.0.0",
+    "sdkVersion": "iphoneos",
+    "targetOSVersion": "14.0",
+    "architecture": "ARM64",
+    "xcodeVersion": "15.2",
+    "developmentTeamId": "ABCDE12345",
+    "signingStyle": "manual",
+    "provisioningProfileSpecifier": "MyApp Distribution",
+    "codeSignIdentity": "iPhone Distribution",
+    "exportMethod": "app-store",
+    "enableBitcode": false,
+    "generateSymbols": true,
+    "uploadSymbols": true,
+    "uploadToTestFlight": false
+  }
+}

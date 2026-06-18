@@ -1,0 +1,238 @@
+name: Unity Test iOS
+
+# Runs Unity EditMode tests on a macOS runner for the iOS platform.
+# Does NOT use distribution signing credentials.
+# Optional: tests Xcode project generation when license is available.
+
+on:
+  workflow_call:
+    inputs:
+      project-path:
+        type: string
+        required: false
+        default: '.'
+      unity-version:
+        type: string
+        required: true
+      test-level:
+        description: Tests to run (editmode, full). 'full' also attempts Xcode generation.
+        type: string
+        required: false
+        default: editmode
+      cache-mode:
+        type: string
+        required: false
+        default: safe
+      build-config-path:
+        type: string
+        required: false
+        default: BuildConfig
+      environment:
+        type: string
+        required: false
+        default: development
+
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+
+    outputs:
+      tests-passed:
+        description: Whether all tests passed
+        value: ${{ jobs.test.outputs.tests-passed }}
+      test-report-artifact:
+        description: Name of the uploaded test results artifact
+        value: ${{ jobs.test.outputs.test-report-artifact }}
+
+jobs:
+  test:
+    name: Test iOS (${{ inputs.test-level }})
+    runs-on: macos-unity-xcode
+    outputs:
+      tests-passed: ${{ steps.check-results.outputs.tests-passed }}
+      test-report-artifact: ${{ steps.set-artifact-name.outputs.artifact-name }}
+
+    steps:
+      # ── Guard: enforce macOS runner ───────────────────────────────────────────
+      - name: Verify macOS runner
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" != "macOS" ]]; then
+            echo "::error::Target \`iOS\` requires an approved macOS runner with Xcode and Unity iOS Build Support. Linux Docker execution is not supported."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      # ── Platform executor validation ────────────────────────────────────────
+      - name: Validate platform executor
+        shell: bash
+        env:
+          RUNNER_OS_VAL: ${{ runner.os }}
+        run: |
+          if [[ -f "scripts/common/resolve_platform_executor.py" ]]; then
+            python3 scripts/common/resolve_platform_executor.py \
+              --target-platform iOS \
+              --runner-os "${RUNNER_OS_VAL}"
+          else
+            echo "::notice::resolve_platform_executor.py not yet present — skipping"
+          fi
+
+      # ── Validate BuildConfig ─────────────────────────────────────────────────
+      - name: Validate BuildConfig
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          python3 scripts/common/validate_build_config.py \
+            --config-path "${PROJECT_PATH}/${BUILD_CONFIG_PATH}" \
+            --platform    iOS \
+            --environment "${ENVIRONMENT}"
+
+      # ── Resolve Unity installation ───────────────────────────────────────────
+      - name: Resolve Unity installation
+        id: unity-install
+        shell: bash
+        env:
+          UNITY_VERSION: ${{ inputs.unity-version }}
+        run: |
+          UNITY_EDITOR="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+          if [[ ! -f "${UNITY_EDITOR}" ]]; then
+            echo "::error::Unity editor not found: ${UNITY_EDITOR}"
+            exit 1
+          fi
+          echo "unity-editor=${UNITY_EDITOR}" >> "$GITHUB_OUTPUT"
+          echo "[unity-install] ${UNITY_EDITOR} — OK"
+
+      # ── Library cache ────────────────────────────────────────────────────────
+      - name: Restore Library cache
+        if: inputs.cache-mode != 'off'
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: macOS-unity-${{ inputs.unity-version }}-iOS-${{ hashFiles(format('{0}/Packages/manifest.json', inputs.project-path), format('{0}/Packages/packages-lock.json', inputs.project-path)) }}-cache-schema-v2
+          restore-keys: |
+            macOS-unity-${{ inputs.unity-version }}-iOS-
+
+      # ── License activation ───────────────────────────────────────────────────
+      - name: Activate Unity license
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh activate
+
+      # ── Run EditMode tests ───────────────────────────────────────────────────
+      - name: Run EditMode tests
+        id: test-editmode
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          LOG_PATH: Logs/iOS
+          TEST_RESULTS_PATH: TestResults/iOS
+        run: bash scripts/ios/run_unity_ios.sh test-editmode
+
+      # ── Optional: test Xcode generation ─────────────────────────────────────
+      - name: Test Xcode project generation
+        id: test-xcode-gen
+        if: inputs.test-level == 'full'
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          PROJECT_PATH: ${{ inputs.project-path }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          OUTPUT_PATH: Builds/iOS/Xcode
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh test-xcode-gen
+
+      # ── Check test results ───────────────────────────────────────────────────
+      - name: Check test results
+        id: check-results
+        if: always()
+        shell: bash
+        env:
+          EDITMODE_EXIT: ${{ steps.test-editmode.outputs.exit-code || '0' }}
+        run: |
+          PASSED="true"
+          FAILURES=0
+
+          for xml_file in TestResults/iOS/*.xml TestResults/**/*.xml; do
+            [[ -f "${xml_file}" ]] || continue
+            FILE_FAILS=$(python3 -c "import sys,xml.etree.ElementTree as ET; root=ET.parse(sys.argv[1]).getroot(); print(int(root.get('failures',0))+int(root.get('errors',0)))" "${xml_file}" 2>/dev/null || echo 0)
+            FAILURES=$((FAILURES + FILE_FAILS))
+          done
+
+          [[ "${EDITMODE_EXIT}" != "0" ]] && FAILURES=$((FAILURES + 1))
+
+          [[ "${FAILURES}" -gt 0 ]] && PASSED="false"
+
+          printf 'tests-passed=%s\n' "${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "Test failures: ${FAILURES} | Passed: ${PASSED}"
+
+      - name: Set artifact name
+        id: set-artifact-name
+        shell: bash
+        run: |
+          printf 'artifact-name=ios-test-results-%s-%s\n' \
+            "${{ inputs.test-level }}" "${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # ── Upload test results ──────────────────────────────────────────────────
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.set-artifact-name.outputs.artifact-name }}
+          path: TestResults/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload iOS test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-logs-${{ inputs.test-level }}-${{ github.run_number }}
+          path: Logs/iOS/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Publish test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Unity iOS Tests (${{ inputs.test-level }})
+          path: TestResults/**/*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      # ── Return Unity license ─────────────────────────────────────────────────
+      - name: Return Unity license
+        if: always()
+        shell: bash
+        env:
+          UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
+          LOG_PATH: Logs/iOS
+        run: bash scripts/ios/run_unity_ios.sh return-license
+
+      # ── Fail if tests failed ─────────────────────────────────────────────────
+      - name: Fail if tests failed
+        if: steps.check-results.outputs.tests-passed == 'false'
+        shell: bash
+        run: |
+          echo "::error::One or more iOS Unity tests failed. See test report artifact for details."
+          exit 1

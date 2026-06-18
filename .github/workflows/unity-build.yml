@@ -1,8 +1,9 @@
 name: Unity Build
 
-# Docker-mandatory orchestrator. All Unity operations run inside containers.
-# Supported platforms: Android, WebGL, Linux64, LinuxServer
-# Native Unity invocations are NOT supported.
+# Orchestrator for all supported Unity platforms.
+# Docker platforms (Android, WebGL, Linux64, LinuxServer): run inside containers on ubuntu-latest.
+# iOS: runs natively on macos-unity-xcode runner (no Docker).
+# Supported platforms: Android, WebGL, Linux64, LinuxServer, iOS
 
 on:
   workflow_call:
@@ -17,7 +18,7 @@ on:
         type: string
         required: true
       target-platform:
-        description: Target platform (Android, WebGL, Linux64, LinuxServer)
+        description: Target platform (Android, WebGL, Linux64, LinuxServer, iOS)
         type: string
         required: true
       environment:
@@ -102,6 +103,18 @@ on:
         required: false
       CLOUDFLARE_ACCOUNT_ID:
         required: false
+      IOS_DISTRIBUTION_CERTIFICATE_BASE64:
+        required: false
+      IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:
+        required: false
+      IOS_PROVISIONING_PROFILE_BASE64:
+        required: false
+      APP_STORE_CONNECT_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: false
+      APP_STORE_CONNECT_PRIVATE_KEY:
+        required: false
 
     outputs:
       build-artifact-name:
@@ -129,6 +142,53 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+
+      - name: Validate platform executor
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ inputs.target-platform }}
+          RUNNER_OS_VAL: ${{ runner.os }}
+        run: |
+          # Fail fast on bad platform/runner combos before dispatching any build job.
+          # iOS requires macOS — this ubuntu runner is only the orchestrator; the iOS
+          # build will be dispatched to macos-unity-xcode by the build-ios job.
+          # Docker platforms (Android, WebGL, Linux64, LinuxServer) must not dispatch
+          # to the macOS runner.
+          # The resolver CLI takes --target-platform and --runner-os.
+          # For iOS, the orchestrator (ubuntu) dispatches to macOS — validate
+          # the platform name by passing --runner-os macOS so the resolver
+          # confirms iOS → macos-unity-xcode without raising a Linux-mismatch error.
+          # For Docker platforms, pass the actual runner OS to enforce the contract.
+          if [[ -f "scripts/common/resolve_platform_executor.py" ]]; then
+            if [[ "${TARGET_PLATFORM}" == "iOS" ]]; then
+              EXECUTOR=$(python3 scripts/common/resolve_platform_executor.py \
+                --target-platform iOS \
+                --runner-os macOS)
+              echo "executor=${EXECUTOR}"
+              echo "::notice::iOS will be dispatched to ${EXECUTOR} runner"
+            else
+              EXECUTOR=$(python3 scripts/common/resolve_platform_executor.py \
+                --target-platform "${TARGET_PLATFORM}" \
+                --runner-os "${RUNNER_OS_VAL}")
+              echo "executor=${EXECUTOR}"
+            fi
+          else
+            echo "::notice::resolve_platform_executor.py not yet available — using inline platform guard"
+            case "${TARGET_PLATFORM}" in
+              Android|WebGL|Linux64|LinuxServer|StandaloneLinux64)
+                echo "executor=docker-unity"
+                ;;
+              iOS)
+                echo "executor=macos-unity-xcode"
+                echo "::notice::iOS build will be dispatched to macos-unity-xcode runner"
+                ;;
+              *)
+                echo "::error::Unsupported target platform: '${TARGET_PLATFORM}'"
+                echo "::error::Supported: Android, WebGL, Linux64, LinuxServer, iOS"
+                exit 1
+                ;;
+            esac
+          fi
 
       - name: Detect changed paths
         id: filter
@@ -164,10 +224,12 @@ jobs:
           echo "Resolved build version: ${VERSION}"
 
   # ─── 2. VALIDATE ───────────────────────────────────────────────────────────────
+  # Skipped for iOS — validate uses Docker (ubuntu) which cannot run Unity iOS.
+  # iOS build-ios job performs its own validation on the macOS runner.
   validate:
     name: Validate
     needs: detect-changes
-    if: needs.detect-changes.outputs.should-build == 'true'
+    if: needs.detect-changes.outputs.should-build == 'true' && inputs.target-platform != 'iOS'
     uses: ./.github/workflows/unity-validate.yml
     with:
       project-path: ${{ inputs.project-path }}
@@ -287,10 +349,36 @@ jobs:
       image-digest: ${{ inputs.image-digest }}
     secrets: inherit
 
+  build-ios:
+    name: Build iOS
+    # iOS uses a macOS native runner — bypasses Docker-based validate/test jobs.
+    # The build-ios workflow performs its own platform guard, BuildConfig validation,
+    # and license activation on the macos-unity-xcode runner.
+    needs: [detect-changes, validate, test]
+    if: |
+      always() &&
+      inputs.target-platform == 'iOS' &&
+      needs.detect-changes.outputs.should-build == 'true' &&
+      (needs.validate.result == 'skipped' || needs.validate.result == 'success') &&
+      (inputs.test-level == 'none' || needs.test.result == 'skipped' || needs.test.outputs.tests-passed == 'true')
+    uses: ./.github/workflows/unity-build-ios.yml
+    with:
+      project-path: ${{ inputs.project-path }}
+      unity-version: ${{ inputs.unity-version }}
+      environment: ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      cache-mode: ${{ inputs.cache-mode }}
+      build-addressables: ${{ inputs.build-addressables }}
+      upload-artifact: ${{ inputs.upload-artifact }}
+      clean-build: ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      build-version: ${{ needs.detect-changes.outputs.build-version }}
+    secrets: inherit
+
   # ─── 5. REPORT ─────────────────────────────────────────────────────────────────
   report:
     name: Build Report
-    needs: [detect-changes, validate, test, build-android, build-webgl, build-linux]
+    needs: [detect-changes, validate, test, build-android, build-webgl, build-linux, build-ios]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -307,12 +395,14 @@ jobs:
           ANDROID_RESULT: ${{ needs.build-android.result }}
           WEBGL_RESULT: ${{ needs.build-webgl.result }}
           LINUX_RESULT: ${{ needs.build-linux.result }}
+          IOS_RESULT: ${{ needs.build-ios.result }}
           PLATFORM: ${{ inputs.target-platform }}
         run: |
           case "$PLATFORM" in
             Android)      RESULT="$ANDROID_RESULT" ;;
             WebGL)        RESULT="$WEBGL_RESULT" ;;
             Linux64|LinuxServer) RESULT="$LINUX_RESULT" ;;
+            iOS)          RESULT="$IOS_RESULT" ;;
             *)            RESULT="skipped" ;;
           esac
           echo "result=${RESULT}" >> "$GITHUB_OUTPUT"

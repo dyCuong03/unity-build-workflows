@@ -1,0 +1,79 @@
+name: iOS Setup Signing
+description: >
+  Sets up iOS code signing by creating an isolated keychain, importing the
+  distribution certificate, and installing the provisioning profile.
+  Outputs keychain-path, keychain-name, profile-uuid, and profile-path for
+  downstream steps. Always pair with ios-cleanup-signing (if: always()).
+
+inputs:
+  ios-distribution-certificate-base64:
+    description: Base64-encoded Apple distribution certificate (.p12)
+    required: true
+  ios-distribution-certificate-password:
+    description: Passphrase for the .p12 certificate
+    required: true
+  ios-provisioning-profile-base64:
+    description: Base64-encoded provisioning profile (.mobileprovision)
+    required: true
+  export-method:
+    description: IPA export method (app-store, ad-hoc, enterprise, development)
+    required: false
+    default: app-store
+  bundle-identifier:
+    description: iOS bundle identifier (e.g. com.company.game)
+    required: true
+  development-team:
+    description: Apple Developer Team ID (10-character alphanumeric)
+    required: true
+
+outputs:
+  keychain-path:
+    description: Path to the isolated signing keychain
+    value: ${{ steps.create-keychain.outputs.keychain-path }}
+  keychain-name:
+    description: Name of the signing keychain
+    value: ${{ steps.create-keychain.outputs.keychain-name }}
+  profile-uuid:
+    description: UUID of the installed provisioning profile
+    value: ${{ steps.install-profile.outputs.profile-uuid }}
+  profile-path:
+    description: Filesystem path of the installed provisioning profile
+    value: ${{ steps.install-profile.outputs.profile-path }}
+  export-options-path:
+    description: Path to the generated ExportOptions.plist
+    value: ${{ steps.generate-export-options.outputs.export-options-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create isolated keychain
+      id: create-keychain
+      shell: bash
+      run: bash scripts/ios/create_keychain.sh
+
+    - name: Import distribution certificate
+      id: import-certificate
+      shell: bash
+      env:
+        IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ inputs.ios-distribution-certificate-base64 }}
+        IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ inputs.ios-distribution-certificate-password }}
+        KEYCHAIN_PATH: ${{ steps.create-keychain.outputs.keychain-path }}
+        KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
+      run: bash scripts/ios/import_certificate.sh
+
+    - name: Install provisioning profile
+      id: install-profile
+      shell: bash
+      env:
+        IOS_PROVISIONING_PROFILE_BASE64: ${{ inputs.ios-provisioning-profile-base64 }}
+      run: bash scripts/ios/install_profile.sh
+
+    - name: Generate ExportOptions.plist
+      id: generate-export-options
+      shell: bash
+      env:
+        EXPORT_METHOD: ${{ inputs.export-method }}
+        BUNDLE_IDENTIFIER: ${{ inputs.bundle-identifier }}
+        DEVELOPMENT_TEAM: ${{ inputs.development-team }}
+        PROFILE_UUID: ${{ steps.install-profile.outputs.profile-uuid }}
+      run: bash scripts/ios/generate_export_options.sh
