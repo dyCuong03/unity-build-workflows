@@ -250,6 +250,7 @@ Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 | [docs/IOS.md](docs/IOS.md) | **NEW** — Full iOS pipeline: Unity → Xcode → archive → IPA → TestFlight |
 | [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) | **NEW** — Certificate, provisioning profile, ASC key setup |
 | [docs/IOS_RELEASE.md](docs/IOS_RELEASE.md) | **NEW** — Release workflow, protected environment, versioning, TestFlight |
+| [docs/IOS_VERIFICATION.md](docs/IOS_VERIFICATION.md) | **NEW** — macOS runner verification runbook (Level 0–3, checklist) |
 | [docs/WEBGL.md](docs/WEBGL.md) | WebGL compression, hosting via Docker |
 | [docs/LINUX.md](docs/LINUX.md) | Linux standalone and dedicated server builds |
 | [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS now supported via macOS; Windows unsupported; GPU/native plugin limits |
