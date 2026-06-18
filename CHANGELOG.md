@@ -12,6 +12,41 @@ The public API is the set of reusable workflow inputs/outputs documented in [doc
 
 ---
 
+## [2.2.0] — 2026-06-18
+
+### Added
+
+#### Discord Build Notifications
+
+- `.github/actions/discord-notify/action.yml` — New composite action that posts a Discord embed on build completion via `curl` (no third-party action, no supply-chain exposure).
+  - Inputs: `status`, `platform`, `environment`, `build-version`, `run-url`, `artifact-name` (optional), `extra-text` (optional).
+  - Webhook URL read from `DISCORD_WEBHOOK_URL` environment variable — never an action input.
+  - No-ops gracefully when `DISCORD_WEBHOOK_URL` is unset or empty (exit 0, notice log).
+  - Uses `set +x` and `::add-mask::` to prevent the webhook URL from appearing in logs.
+  - `curl` failures are non-fatal (`::warning::` only); a Discord outage cannot block a release.
+  - Payload JSON constructed via `python3` for safe quoting; validated before sending.
+  - Embed includes: title with status emoji (✅/❌/⚠️), color (green/red/grey), repository, platform, environment, version, short commit SHA, triggered-by, run URL, and (when available) artifact name.
+
+#### Workflow wiring (`if: always()` — notifies on success AND failure)
+
+- `unity-build.yml` — `DISCORD_WEBHOOK_URL` added to `secrets:` block; `discord-notify` step added to `report` job; reports the platform-resolved build result.
+- `unity-build-ios.yml` — `DISCORD_WEBHOOK_URL` added to `secrets:` block; `discord-notify` step added as final step of `build` job.
+- `unity-release-ios.yml` — `DISCORD_WEBHOOK_URL` passed via job-level `env:`; `discord-notify` step added as final step of `release-build` job (after signing cleanup).
+- `unity-release.yml` — New dedicated `notify` job added with `if: always()`, depending on `pre-release-checks`, `release-test`, `release-build`, and `create-github-release`. Reports `release-build` result.
+
+#### Documentation
+
+- `docs/DISCORD_NOTIFICATIONS.md` — Full guide: what it does, creating a Discord webhook, which workflows notify, success/failure/cancelled behaviour, no-op-when-unset, security notes, example embed, and troubleshooting table.
+
+### Changed
+
+- `README.md` — Added `DISCORD_WEBHOOK_URL` to secrets section, added Step 5 for Discord setup, added `docs/DISCORD_NOTIFICATIONS.md` to the documentation index, bumped current version to 2.2.0.
+- `docs/SECURITY.md` — Added "Discord Webhook Secret Handling" section documenting `set +x`, `::add-mask::`, env-var-not-input pattern, payload content policy, and rotation instructions. Added `DISCORD_WEBHOOK_URL` to the rotation policy table.
+- `docs/ADD_NEW_PROJECT.md` — Replaced placeholder Step 7 with concrete Discord notification setup instructions.
+- `docs/ARCHITECTURE.md` — Added `discord-notify/` to the Composite Action Layer diagram.
+
+---
+
 ## [2.1.0] — 2026-06-18
 
 This release adds production iOS support via a dedicated macOS executor lane.
@@ -211,7 +246,8 @@ This release migrates the entire build platform from native Unity Editor executi
 
 ---
 
-[Unreleased]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/releases/tag/v1.0.0

@@ -192,6 +192,7 @@ jobs:
     env:
       UNITY_VERSION: ${{ needs.pre-release-checks.outputs.unity-version }}
       BUILD_VERSION: ${{ needs.pre-release-checks.outputs.build-version }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
     steps:
       - name: Checkout
@@ -407,6 +408,17 @@ jobs:
           KEYCHAIN_NAME: ${{ steps.signing.outputs.keychain-name }}
           PROFILE_PATH: ${{ steps.signing.outputs.profile-path }}
         run: bash scripts/ios/cleanup_signing.sh
+
+      # ── Discord notification (if: always — notifies on success AND failure) ──
+      - name: Discord notification
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          status: ${{ job.status }}
+          platform: iOS
+          environment: production
+          build-version: ${{ needs.pre-release-checks.outputs.build-version }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
   # ─── GITHUB RELEASE ────────────────────────────────────────────────────────────
   create-github-release:

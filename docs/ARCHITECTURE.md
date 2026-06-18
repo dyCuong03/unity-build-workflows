@@ -32,6 +32,7 @@
 │  • restore-docker-cache/ — Library cache volumes                 │
 │  • collect-container-output/ — logs, reports, artifacts          │
 │  • upload-build-report/  — build report upload                  │
+│  • discord-notify/       — Discord build-completion notification │
 └───────────────────────────┬──────────────────────────────────────┘
                             │ executes
 ┌───────────────────────────▼──────────────────────────────────────┐
@@ -79,7 +80,8 @@ CI Runner (ubuntu-latest)
   ├── 5. Collect container output (collect-container-output action)
   │       └── Gather logs, reports, test results from bind mounts
   ├── 6. Upload artifacts and reports
-  └── 7. Post-build steps (signing, deployment) on host
+  ├── 7. Post-build steps (signing, deployment) on host
+  └── 8. Discord notification (discord-notify action — no-op if DISCORD_WEBHOOK_URL unset)
 ```
 
 ---

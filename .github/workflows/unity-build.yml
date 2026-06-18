@@ -115,6 +115,8 @@ on:
         required: false
       APP_STORE_CONNECT_PRIVATE_KEY:
         required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
 
     outputs:
       build-artifact-name:
@@ -381,6 +383,8 @@ jobs:
     needs: [detect-changes, validate, test, build-android, build-webgl, build-linux, build-ios]
     if: always()
     runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     outputs:
       build-artifact-name: ${{ steps.upload-report.outputs.artifact-name }}
 
@@ -418,3 +422,15 @@ jobs:
           tests-passed: ${{ needs.test.outputs.tests-passed || 'skipped' }}
           build-result: ${{ steps.build-result.outputs.result }}
           retention-days: ${{ inputs.artifact-retention-days }}
+
+      # ── Discord notification (if: always — notifies on success AND failure) ───
+      - name: Discord notification
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          status: ${{ steps.build-result.outputs.result }}
+          platform: ${{ inputs.target-platform }}
+          environment: ${{ inputs.environment }}
+          build-version: ${{ needs.detect-changes.outputs.build-version }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          artifact-name: ${{ steps.upload-report.outputs.artifact-name }}

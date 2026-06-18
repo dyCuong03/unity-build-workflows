@@ -153,6 +153,16 @@ APP_STORE_CONNECT_PRIVATE_KEY          # .p8 key contents (for TestFlight)
 
 See [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) for setup instructions.
 
+### 5. Enable Discord Notifications (optional)
+
+Add a single secret to receive build-completion embeds in a Discord channel:
+
+```
+DISCORD_WEBHOOK_URL    # Discord webhook URL — omit to disable notifications
+```
+
+Notifications cover success, failure, and cancelled status. If the secret is not set the workflows skip the notification step silently — no YAML changes needed to disable. See [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md) for setup and behaviour.
+
 ---
 
 ## Local Build Commands
@@ -223,7 +233,7 @@ uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
 - Major version increments indicate breaking changes to the workflow input interface.
 - Pin to exact version for reproducibility: `@v2.0.0`.
 
-Current version: **2.0.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -246,6 +256,7 @@ Current version: **2.0.0** — see [CHANGELOG.md](CHANGELOG.md).
 | [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) | Tag-based release, environments, digest enforcement |
 | [docs/SELF_HOSTED_RUNNER.md](docs/SELF_HOSTED_RUNNER.md) | Runner setup with Docker requirements |
 | [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, iOS credentials, image trust, fork safety |
+| [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md) | **NEW** — Discord build-completion notifications: setup, security, embed format |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Docker, Unity, and iOS errors; cert rotation; Xcode migration |
 | [docs/adr/001-docker-mandatory-architecture.md](docs/adr/001-docker-mandatory-architecture.md) | Architecture decision record |
 

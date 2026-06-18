@@ -160,17 +160,20 @@ Prerequisites: Docker Engine running locally.
 
 ---
 
-## Step 7: Configure Notifications (Optional)
+## Step 7: Configure Discord Notifications (Optional)
 
-Add build hooks in your BuildConfig:
+To receive build-completion messages in a Discord channel:
 
-```json
-"hooks": {
-  "postBuild": ["notify-slack"]
-}
-```
+1. In Discord: **Server Settings → Integrations → Webhooks → New Webhook**. Select the target channel and copy the webhook URL.
+2. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**.
+   - Name: `DISCORD_WEBHOOK_URL`
+   - Value: the Discord webhook URL
 
-Create the hook script in your project repository.
+That's it. The `unity-build.yml`, `unity-build-ios.yml`, `unity-release.yml`, and `unity-release-ios.yml` workflows will automatically post embeds on success, failure, and cancellation.
+
+If `DISCORD_WEBHOOK_URL` is not set the notification step skips silently — the build is never affected.
+
+See [DISCORD_NOTIFICATIONS.md](DISCORD_NOTIFICATIONS.md) for full details including embed format, security notes, and troubleshooting.
 
 ---
 

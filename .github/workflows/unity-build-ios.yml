@@ -54,6 +54,8 @@ on:
         required: false
       UNITY_PASSWORD:
         required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
 
     outputs:
       artifact-name:
@@ -65,6 +67,8 @@ jobs:
     name: Build iOS Xcode Project (${{ inputs.environment }})
     runs-on: macos-unity-xcode
     environment: ${{ inputs.environment }}
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     outputs:
       artifact-name: ${{ steps.set-artifact-name.outputs.artifact-name }}
 
@@ -249,3 +253,15 @@ jobs:
           UNITY_EDITOR: ${{ steps.unity-install.outputs.unity-editor }}
           LOG_PATH: Logs/iOS
         run: bash scripts/ios/run_unity_ios.sh return-license
+
+      # ── Discord notification (if: always — notifies on success AND failure) ──
+      - name: Discord notification
+        if: always()
+        uses: ./.github/actions/discord-notify
+        with:
+          status: ${{ job.status }}
+          platform: iOS
+          environment: ${{ inputs.environment }}
+          build-version: ${{ inputs.build-version }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          artifact-name: ${{ steps.set-artifact-name.outputs.artifact-name }}

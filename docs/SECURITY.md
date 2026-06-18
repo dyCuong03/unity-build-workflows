@@ -278,6 +278,28 @@ This prevents supply chain attacks via compromised action tags.
 
 ---
 
+## Discord Webhook Secret Handling
+
+`DISCORD_WEBHOOK_URL` is an optional secret that controls build-completion Discord notifications.
+
+### Why it is treated as a secret
+
+Discord webhook URLs grant anyone who holds them the ability to post messages to a channel. Leaking the URL is low-severity (no write access to code or infrastructure) but still enables spam and channel hijacking. It is stored as a GitHub secret as a matter of good practice.
+
+### Protection measures in the `discord-notify` action
+
+1. `set +x` — disables shell trace before the URL is referenced; the curl command (which contains the URL) is never echoed to the log.
+2. `::add-mask::${DISCORD_WEBHOOK_URL}` — registers the URL value with GitHub's log masker. If it appears anywhere in subsequent output (including third-party tool output) it is replaced with `***`.
+3. The URL is passed via environment variable at the **job** level, not as an action `input`. Action inputs can be surfaced in the step summary and API; environment variables cannot.
+4. The URL never appears in the JSON payload sent to Discord. Payload fields contain version strings, commit SHAs, and actor names only.
+5. Curl errors are logged as `::warning::` without printing the URL or response body.
+
+### Rotation
+
+Rotate `DISCORD_WEBHOOK_URL` by regenerating the webhook in Discord (**Server Settings → Integrations → Webhooks → Edit → Regenerate**) and updating the GitHub secret. No workflow changes are required.
+
+---
+
 ## Secret Rotation Policy
 
 | Secret | Rotation Frequency | Trigger for Immediate Rotation |
@@ -290,6 +312,7 @@ This prevents supply chain attacks via compromised action tags.
 | `UNITY_LICENSE` | Per subscription renewal | License revocation |
 | `CLOUDFLARE_API_TOKEN` | Annual | Token compromise |
 | `GOOGLE_PLAY_*` | Annual | Departing team member |
+| `DISCORD_WEBHOOK_URL` | On channel deletion or suspected leak | Regenerate in Discord Server Settings |
 
 ---
 

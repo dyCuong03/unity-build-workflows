@@ -274,3 +274,25 @@ jobs:
           prerelease: ${{ contains(needs.pre-release-checks.outputs.build-version, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── DISCORD NOTIFICATION ──────────────────────────────────────────────────────
+  notify:
+    name: Discord Notification
+    needs: [pre-release-checks, release-test, release-build, create-github-release]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Discord notification
+        uses: ./.github/actions/discord-notify
+        with:
+          status: ${{ needs.release-build.result }}
+          platform: ${{ needs.pre-release-checks.outputs.target-platform }}
+          environment: production
+          build-version: ${{ needs.pre-release-checks.outputs.build-version }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
