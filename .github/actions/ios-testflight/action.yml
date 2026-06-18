@@ -40,4 +40,4 @@ runs:
         APP_STORE_CONNECT_ISSUER_ID: ${{ inputs.app-store-connect-issuer-id }}
         APP_STORE_CONNECT_PRIVATE_KEY: ${{ inputs.app-store-connect-private-key }}
         REPORT_PATH: ${{ inputs.report-path }}
-      run: bash scripts/ios/testflight_upload.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/testflight_upload.sh"

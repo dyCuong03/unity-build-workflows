@@ -15,6 +15,17 @@
 #   Android: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS, ANDROID_KEY_PASS
 #   Android deploy: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
 #   WebGL deploy: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+#
+# Workflow reference (REQUIRED):
+#   Replace <WORKFLOW_OWNER> with the GitHub org/user that hosts unity-build-workflows.
+#   The @main ref is suitable for development. In PRODUCTION, pin to an exact released
+#   tag or commit SHA once a release exists (e.g., @v1.0.0 or @abc1234).
+#   No v1/v2 tag currently exists — do NOT invent tags.
+#
+#   IMPORTANT: workflow-repository and workflow-ref MUST be passed in every job's 'with:'
+#   block, using the same <WORKFLOW_OWNER> and @<REF> you use in the 'uses:' directive.
+#   The reusable workflows cannot self-identify their own source repo/SHA — GitHub provides
+#   no reliable context variable for this in the workflow_call context.
 
 name: Unity CI
 
@@ -43,7 +54,7 @@ jobs:
   build-android:
     name: Android
     if: ${{ inputs.target-platform == 'Android' || github.event_name != 'workflow_dispatch' }}
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@main  # TODO(production): pin to an exact released tag/SHA once a release exists
     with:
       project-path: '.'
       unity-version: '6000.0.23f1'       # ← set your project's Unity version
@@ -56,6 +67,9 @@ jobs:
       upload-artifact: true
       deploy-target: none
       release-mode: false
+      # Required: must match the repo/ref in the 'uses:' line above.
+      workflow-repository: <WORKFLOW_OWNER>/unity-build-workflows
+      workflow-ref: main                 # ← pin to exact tag/SHA in production
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -69,7 +83,7 @@ jobs:
   build-webgl:
     name: WebGL
     if: ${{ inputs.target-platform == 'WebGL' }}
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@main  # TODO(production): pin to an exact released tag/SHA once a release exists
     with:
       project-path: '.'
       unity-version: '6000.0.23f1'       # ← set your project's Unity version
@@ -81,6 +95,9 @@ jobs:
       upload-artifact: true
       deploy-target: none
       release-mode: false
+      # Required: must match the repo/ref in the 'uses:' line above.
+      workflow-repository: <WORKFLOW_OWNER>/unity-build-workflows
+      workflow-ref: main                 # ← pin to exact tag/SHA in production
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -92,7 +109,7 @@ jobs:
   build-linux:
     name: Linux64
     if: ${{ inputs.target-platform == 'Linux64' || inputs.target-platform == 'LinuxServer' }}
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@main  # TODO(production): pin to an exact released tag/SHA once a release exists
     with:
       project-path: '.'
       unity-version: '6000.0.23f1'       # ← set your project's Unity version
@@ -103,6 +120,9 @@ jobs:
       cache-mode: safe
       upload-artifact: true
       release-mode: false
+      # Required: must match the repo/ref in the 'uses:' line above.
+      workflow-repository: <WORKFLOW_OWNER>/unity-build-workflows
+      workflow-ref: main                 # ← pin to exact tag/SHA in production
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}

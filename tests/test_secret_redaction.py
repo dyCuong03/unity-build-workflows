@@ -51,7 +51,7 @@ FAKE_KEYSTORE_PASS = "android_keystore_pass_XYZ789"
 FAKE_KEY_PASS = "android_key_pass_DEF456"
 FAKE_KEYSTORE_B64 = "c3VwZXJzZWNyZXRiYXNlNjQ="
 FAKE_DIGEST = "sha256:" + "a" * 64
-FAKE_IMAGE = f"ghcr.io/buzzelstudio/unity-android@{FAKE_DIGEST}"
+FAKE_IMAGE = f"ghcr.io/example-namespace/unity-android@{FAKE_DIGEST}"
 
 
 def _make_args(**overrides) -> argparse.Namespace:

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/schemas/unity-image-manifest.schema.json",
+  "$id": "https://github.com/OWNER/unity-build-workflows/schemas/unity-image-manifest.schema.json",
   "title": "UnityImageManifest",
   "description": "Schema for Docker image manifests used by the Docker-only Unity build platform.",
   "type": "object",
@@ -36,7 +36,7 @@
     "imageReference": {
       "type": "string",
       "minLength": 1,
-      "description": "Full image reference including registry, repository, and tag. Example: ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v1.0.0"
+      "description": "Full image reference including registry, repository, and tag. Example: ghcr.io/example-namespace/unity-build:6000.0.26f1-android-v1.0.0"
     },
 
     "imageDigest": {

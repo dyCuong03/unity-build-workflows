@@ -137,7 +137,7 @@ python3 scripts/docker/run_unity_container.py \
 docker run -it --rm \
   --workdir /workspace \
   --mount type=bind,source="$(pwd)",target=/workspace \
-  ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0 \
+  ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0 \
   /bin/bash
 ```
 
@@ -145,7 +145,7 @@ docker run -it --rm \
 
 ```bash
 docker run --rm \
-  ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0 \
+  ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0 \
   version
 ```
 
@@ -153,7 +153,7 @@ docker run --rm \
 
 ```bash
 docker run --rm \
-  ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0 \
+  ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0 \
   inspect
 ```
 

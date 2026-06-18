@@ -23,7 +23,7 @@ Trusted:   Docker Engine, published Unity images, entrypoint scripts
 
 ### Registry Access
 
-- Images are published to `ghcr.io/buzzelstudio/unity-builder`
+- Images are published to `ghcr.io/<IMAGE_NAMESPACE>/unity-builder`
 - Only the image build workflow has push access
 - Game build workflows have pull access only
 - Arbitrary caller-provided images are rejected in release mode
@@ -102,14 +102,14 @@ timeout-minutes: 60
 
 Development builds may use human-readable tags:
 ```
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0
 ```
 
 ### Production/Release Builds
 
 Production builds must use digest-pinned references:
 ```
-ghcr.io/buzzelstudio/unity-builder@sha256:abc123...
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:abc123...
 ```
 
 The `resolve-unity-image` action enforces this when `release-mode: true`.
@@ -305,20 +305,19 @@ Rotate `DISCORD_WEBHOOK_URL` by regenerating the webhook in Discord (**Server Se
 | Secret | Rotation Frequency | Trigger for Immediate Rotation |
 |---|---|---|
 | `ANDROID_KEYSTORE_*` | Annual | Departing team member, suspected compromise |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Annual | Departing team member, role change |
 | `IOS_DISTRIBUTION_CERTIFICATE_BASE64` | Annual (certificate expiry) | Compromised private key, departing team member |
 | `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` | On certificate rotation | — |
 | `IOS_PROVISIONING_PROFILE_BASE64` | Annual (profile expiry) | Bundle ID change, team change |
 | `APP_STORE_CONNECT_PRIVATE_KEY` | Annual | Compromised key, role change |
 | `UNITY_LICENSE` | Per subscription renewal | License revocation |
-| `CLOUDFLARE_API_TOKEN` | Annual | Token compromise |
-| `GOOGLE_PLAY_*` | Annual | Departing team member |
 | `DISCORD_WEBHOOK_URL` | On channel deletion or suspected leak | Regenerate in Discord Server Settings |
 
 ---
 
 ## Reporting Security Vulnerabilities
 
-Do not open a public GitHub issue for security vulnerabilities. Email `security@buzzellstudio.com` with:
+Do not open a public GitHub issue for security vulnerabilities. Contact the toolkit maintainer (`<WORKFLOW_OWNER>`) through your organization's security disclosure process with:
 - Description of the vulnerability
 - Steps to reproduce
 - Potential impact

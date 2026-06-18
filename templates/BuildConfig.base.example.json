@@ -1,18 +1,15 @@
 {
   "$schema": "../schemas/unity-build-config.schema.json",
-  "projectName": "MyUnityGame",
-  "companyName": "Acme Studios",
-  "productName": "My Unity Game",
+  "projectName": "ExampleProject",
+  "companyName": "ExampleCompany",
+  "productName": "Example Project",
   "bundleVersion": "1.0.0",
   "buildNumberStrategy": "github_run_number",
 
   "outputDirectory": "Builds",
 
   "scenes": [
-    "Assets/Scenes/Boot.unity",
-    "Assets/Scenes/MainMenu.unity",
-    "Assets/Scenes/Gameplay.unity",
-    "Assets/Scenes/GameOver.unity"
+    "Assets/Scenes/Main.unity"
   ],
 
   "scriptingBackend": "IL2CPP",
@@ -27,13 +24,13 @@
   "runTests": true,
 
   "addressables": {
-    "enabled": true,
+    "enabled": false,
     "profile": "Default",
     "buildRemoteCatalog": false
   },
 
   "android": {
-    "applicationId": "com.acmestudios.myunitygame",
+    "applicationId": "com.example.project",
     "buildAppBundle": true,
     "minSdkVersion": 22,
     "targetSdkVersion": 34,
@@ -43,13 +40,13 @@
   },
 
   "iOS": {
-    "bundleIdentifier": "com.acmestudios.myunitygame",
+    "bundleIdentifier": "com.example.project",
     "marketingVersion": "1.0.0",
     "targetOSVersion": "14.0",
     "architecture": "ARM64",
     "developmentTeamId": "ABCDE12345",
     "signingStyle": "manual",
-    "provisioningProfileSpecifier": "MyUnityGame Distribution",
+    "provisioningProfileSpecifier": "Example Project Distribution",
     "codeSignIdentity": "iPhone Distribution",
     "exportMethod": "app-store-connect",
     "enableBitcode": false,
@@ -61,7 +58,7 @@
 
   "windows": {
     "architecture": "x86_64",
-    "outputName": "MyUnityGame",
+    "outputName": "ExampleProject",
     "compressOutput": true
   },
 
@@ -86,8 +83,8 @@
   },
 
   "metadata": {
-    "repository": "https://github.com/acmestudios/myunitygame",
-    "team": "mobile"
+    "repository": "https://github.com/<WORKFLOW_OWNER>/my-unity-project",
+    "team": "your-team"
   },
 
   "hooks": {

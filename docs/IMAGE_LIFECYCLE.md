@@ -40,9 +40,9 @@ Do not create a single image with all modules. Each variant contains only the mo
 ### Human-Readable Tags
 
 ```
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-webgl-v2.0.0
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-linux-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-webgl-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-linux-v2.0.0
 ```
 
 Format: `<unity-version>-<variant>-v<tooling-version>`
@@ -50,7 +50,7 @@ Format: `<unity-version>-<variant>-v<tooling-version>`
 ### Digest References (Production)
 
 ```
-ghcr.io/buzzelstudio/unity-builder@sha256:abc123...
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:abc123...
 ```
 
 Production and release workflows resolve and use digest-pinned references.
@@ -63,6 +63,77 @@ Never use:
 - `unity6`
 - `android-latest`
 - Any mutable tag in release mode
+
+## Bootstrap
+
+**Before any consumer build can run, at least one compatible image must be published to the registry.** The workflow cannot pull an image that does not exist.
+
+### Problem
+
+A first-time setup (new toolkit installation or new Unity version) has no image in `ghcr.io/<IMAGE_NAMESPACE>/unity-builder`. Consumer builds will fail immediately with:
+
+```
+Error: manifest unknown: manifest unknown
+```
+
+or the image resolver will emit:
+
+```
+ERROR: No published image found for unity-version=6000.0.26f1 variant=android.
+Run the build-unity-image.yml workflow manually to publish an image before triggering consumer builds.
+```
+
+### Dev Bootstrap Path (pre-release / first install)
+
+1. In the toolkit repository, go to **Actions → Build Unity Image → Run workflow**.
+2. Select the Unity version and variant (e.g. `6000.0.26f1`, `android`).
+3. The workflow builds → runs entrypoint tests → scans for vulnerabilities → generates SBOM → pushes to `ghcr.io/<IMAGE_NAMESPACE>/unity-builder:<unity-version>-<variant>-<tooling-version>`.
+4. The image digest is recorded in the image manifest artifact.
+5. Consumer builds can now pull the image by tag (dev) or digest (production).
+
+This path uses a human-readable tag (`<unity-version>-<variant>-<tooling-version>`). It is suitable for development but **not** for production — production requires a digest-pinned reference.
+
+### Production Digest-Pinned Path
+
+```
+build-unity-image.yml dispatch
+  │
+  ├── 1. Build image (BuildKit)
+  ├── 2. Entrypoint smoke test (fake Unity)
+  ├── 3. Vulnerability scan (Trivy/Grype — blocks on CRITICAL)
+  ├── 4. SBOM generation (SPDX format)
+  ├── 5. Push to registry — immutable tag published
+  ├── 6. Record image digest (sha256:...)
+  └── 7. Publish image-manifest.json artifact
+         └── digest recorded for consumer digest-pinning
+```
+
+Consumer production workflows then resolve the image by digest:
+
+```
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:<digest>
+```
+
+The `resolve-unity-image` action reads the image manifest and enforces digest-only references when `release-mode: true`.
+
+### What Happens If No Image Exists
+
+If a consumer build runs before any image is published, the `resolve-unity-image` action fails with an actionable error:
+
+```
+ERROR: No compatible image found in the registry.
+  Unity version : 6000.0.26f1
+  Variant       : android
+  Registry      : ghcr.io/<IMAGE_NAMESPACE>/unity-builder
+
+To fix:
+  1. In the toolkit repo, run Actions → Build Unity Image.
+  2. Select unity-version=6000.0.26f1, variant=android.
+  3. Wait for the image to publish (~15 min).
+  4. Re-trigger your consumer build.
+```
+
+---
 
 ## Image Build Workflow
 
@@ -102,7 +173,7 @@ Uses Trivy or Grype to scan for known CVEs:
 
 ```bash
 ./scripts/docker/scan_image.sh \
-  ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0 \
+  ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0 \
   --severity HIGH,CRITICAL \
   --exit-code 1
 ```
@@ -113,7 +184,7 @@ Weekly scheduled scans via `scan-unity-image.yml` catch newly disclosed vulnerab
 
 ```bash
 ./scripts/docker/generate_sbom.sh \
-  ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+  ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0
 ```
 
 Generates SPDX-format Software Bill of Materials.

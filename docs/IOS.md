@@ -10,7 +10,7 @@ iOS builds run on the `macos-unity-xcode` executor — a macOS GitHub Actions ru
 
 | Requirement | Minimum Version | Notes |
 |---|---|---|
-| macOS runner | macOS 13 (Ventura) | `macos-13` or `macos-latest` |
+| macOS runner | macOS 13 (Ventura) | `macos-13` (approved; `macos-latest` is not claimed — it floats) |
 | Xcode | 15.0 | Set via `xcodeVersion` in BuildConfig |
 | Unity Editor | 2022.3 LTS or 6000.x | Must include iOS Build Support module |
 | Apple Developer account | Active membership | Required for signing and TestFlight |
@@ -23,7 +23,7 @@ See [IOS_SIGNING.md](IOS_SIGNING.md) for certificate and provisioning profile se
 
 ```
 Consumer Workflow
-  │ uses: unity-build-workflows/.github/workflows/unity-build-ios.yml@v2
+  │ uses: unity-build-workflows/.github/workflows/unity-build-ios.yml@<ref>
   │ with: target-platform: iOS
   │
   ▼
@@ -139,7 +139,7 @@ on:
 
 jobs:
   build-ios:
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-ios.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-ios.yml@<ref>
     with:
       project-path: .
       unity-version: '6000.0.26f1'

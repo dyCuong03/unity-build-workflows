@@ -103,9 +103,17 @@ Signing and deployment credentials are never inside the Unity container.
 Consumer repositories reference the major version:
 
 ```yaml
-uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@<ref>
 ```
 
-- `@v2` points to latest `2.x.x` release
-- Breaking changes increment to `v3`
-- Pin to exact version for reproducibility: `@v2.0.0`
+- `@main` — development / pre-release; tracks the latest commit
+- `@<commit-sha>` — pinned to a specific commit for reproducibility
+- `@vX.Y.Z` — exact published tag (stable release) — **no tags have been published yet**; check the repository Releases page
+- `@vMAJOR` (e.g. `@v2`) — floating major-version tag; **does not exist yet** — will be created alongside the first stable release of that major version
+- Breaking changes increment the major version (e.g. `v3`)
+
+> To create release tags (run when ready to ship — these commands are NOT executed yet):
+> ```bash
+> git tag vX.Y.Z && git push origin vX.Y.Z           # e.g. git tag v2.0.0
+> git tag -f vMAJOR && git push -f origin vMAJOR     # e.g. git tag -f v2 — only after first vMAJOR.x.x tag
+> ```

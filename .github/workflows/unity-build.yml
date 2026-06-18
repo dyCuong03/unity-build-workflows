@@ -2,14 +2,14 @@ name: Unity Build
 
 # Orchestrator for all supported Unity platforms.
 # Docker platforms (Android, WebGL, Linux64, LinuxServer): run inside containers on ubuntu-latest.
-# iOS: runs natively on macos-unity-xcode runner (no Docker).
+# iOS: runs natively on ios-runner-label runner (default: macos-unity-xcode — self-hosted macOS).
 # Supported platforms: Android, WebGL, Linux64, LinuxServer, iOS
 
 on:
   workflow_call:
     inputs:
       project-path:
-        description: Path to the Unity project root
+        description: Path to the Unity project root relative to the consumer repo root
         type: string
         required: false
         default: '.'
@@ -76,8 +76,41 @@ on:
         type: string
         required: false
         default: ghcr.io
+      image-namespace:
+        description: Image repository namespace override (e.g. myorg/unity-images)
+        type: string
+        required: false
+        default: ''
+      image-name:
+        description: Image name override (e.g. unity-editor)
+        type: string
+        required: false
+        default: ''
       image-digest:
         description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+      ios-runner-label:
+        description: >
+          Self-hosted runner label for macOS Unity+Xcode builds (iOS only).
+          Must be a macOS runner with Unity iOS Build Support installed.
+          GitHub-hosted macos-latest is NOT supported.
+        type: string
+        required: false
+        default: macos-unity-xcode
+      workflow-repository:
+        description: >
+          Repository that owns this workflow (owner/repo). Must be the
+          owner/repo of the unity-build-workflows toolkit. REQUIRED — the
+          reusable workflow cannot auto-detect its own source repo cross-repo.
+        type: string
+        required: false
+        default: ''
+      workflow-ref:
+        description: >
+          Git ref or SHA of the workflow repository to checkout as the toolkit.
+          Required. Must match the @<ref> used in the caller's `uses:` reference.
         type: string
         required: false
         default: ''
@@ -140,10 +173,59 @@ jobs:
       build-version: ${{ steps.resolve-version.outputs.version }}
 
     steps:
-      - name: Checkout
+      # ── 1. Consumer repo checkout ───────────────────────────────────────────
+      - name: Checkout consumer repo
         uses: actions/checkout@v4
         with:
+          path: project
           fetch-depth: 2
+
+      # ── 2. Toolkit checkout ─────────────────────────────────────────────────
+      - name: Resolve toolkit ref
+        id: toolkit
+        shell: bash
+        run: |
+          REPO="${{ inputs.workflow-repository }}"
+          REF="${{ inputs.workflow-ref }}"
+          # github.workflow_ref/_sha resolve to the TOP-LEVEL caller workflow (the
+          # consumer), NOT this reusable workflow's repo — they cannot self-identify
+          # the toolkit in cross-repo use. Auto-derive only when the caller IS this
+          # repo (same-repo CI); otherwise require explicit inputs and fail fast.
+          if [ -z "$REPO" ]; then
+            echo "::error::workflow-repository input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::workflow-ref input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-ref: <REF>"
+            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
+      - name: Checkout toolkit (unity-build-workflows)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      # ── 3. Compute effective project path ───────────────────────────────────
+      - name: Compute effective project path
+        id: paths
+        shell: bash
+        run: |
+          PP="${{ inputs.project-path }}"
+          if [ "$PP" = "." ] || [ -z "$PP" ]; then
+            echo "project-root=project" >> "$GITHUB_OUTPUT"
+          else
+            echo "project-root=project/${PP}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Validate platform executor
         shell: bash
@@ -153,23 +235,18 @@ jobs:
         run: |
           # Fail fast on bad platform/runner combos before dispatching any build job.
           # iOS requires macOS — this ubuntu runner is only the orchestrator; the iOS
-          # build will be dispatched to macos-unity-xcode by the build-ios job.
+          # build will be dispatched to ios-runner-label by the build-ios job.
           # Docker platforms (Android, WebGL, Linux64, LinuxServer) must not dispatch
           # to the macOS runner.
-          # The resolver CLI takes --target-platform and --runner-os.
-          # For iOS, the orchestrator (ubuntu) dispatches to macOS — validate
-          # the platform name by passing --runner-os macOS so the resolver
-          # confirms iOS → macos-unity-xcode without raising a Linux-mismatch error.
-          # For Docker platforms, pass the actual runner OS to enforce the contract.
-          if [[ -f "scripts/common/resolve_platform_executor.py" ]]; then
+          if [[ -f ".ci/unity-build-workflows/scripts/common/resolve_platform_executor.py" ]]; then
             if [[ "${TARGET_PLATFORM}" == "iOS" ]]; then
-              EXECUTOR=$(python3 scripts/common/resolve_platform_executor.py \
+              EXECUTOR=$(python3 .ci/unity-build-workflows/scripts/common/resolve_platform_executor.py \
                 --target-platform iOS \
                 --runner-os macOS)
               echo "executor=${EXECUTOR}"
               echo "::notice::iOS will be dispatched to ${EXECUTOR} runner"
             else
-              EXECUTOR=$(python3 scripts/common/resolve_platform_executor.py \
+              EXECUTOR=$(python3 .ci/unity-build-workflows/scripts/common/resolve_platform_executor.py \
                 --target-platform "${TARGET_PLATFORM}" \
                 --runner-os "${RUNNER_OS_VAL}")
               echo "executor=${EXECUTOR}"
@@ -195,6 +272,7 @@ jobs:
       - name: Detect changed paths
         id: filter
         shell: bash
+        working-directory: project
         run: |
           CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || echo "")
           NON_DOC=$(echo "$CHANGED" | grep -vE "^(docs/|.*\.md$|README)" || true)
@@ -212,14 +290,14 @@ jobs:
         id: resolve-version
         shell: bash
         env:
-          PROJECT_PATH: ${{ inputs.project-path }}
+          PROJECT_ROOT: ${{ steps.paths.outputs.project-root }}
           BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
           ENVIRONMENT: ${{ inputs.environment }}
           GIT_REF: ${{ github.ref }}
         run: |
-          VERSION=$(python3 scripts/common/resolve_project_version.py \
-            --project-path  "$PROJECT_PATH" \
-            --config-path   "$PROJECT_PATH/$BUILD_CONFIG_PATH" \
+          VERSION=$(python3 .ci/unity-build-workflows/scripts/common/resolve_project_version.py \
+            --project-path  "$PROJECT_ROOT" \
+            --config-path   "$PROJECT_ROOT/$BUILD_CONFIG_PATH" \
             --environment   "$ENVIRONMENT" \
             --ref           "$GIT_REF")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -240,8 +318,12 @@ jobs:
       environment: ${{ inputs.environment }}
       build-config-path: ${{ inputs.build-config-path }}
       image-registry: ${{ inputs.image-registry }}
+      image-namespace: ${{ inputs.image-namespace }}
+      image-name: ${{ inputs.image-name }}
       image-digest: ${{ inputs.image-digest }}
       release-mode: ${{ inputs.release-mode }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -263,7 +345,11 @@ jobs:
       test-level: ${{ inputs.test-level }}
       cache-mode: ${{ inputs.cache-mode }}
       image-registry: ${{ inputs.image-registry }}
+      image-namespace: ${{ inputs.image-namespace }}
+      image-name: ${{ inputs.image-name }}
       image-digest: ${{ inputs.image-digest }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -294,7 +380,11 @@ jobs:
       release-mode: ${{ inputs.release-mode }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
       image-registry: ${{ inputs.image-registry }}
+      image-namespace: ${{ inputs.image-namespace }}
+      image-name: ${{ inputs.image-name }}
       image-digest: ${{ inputs.image-digest }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets: inherit
 
   build-webgl:
@@ -321,7 +411,11 @@ jobs:
       release-mode: ${{ inputs.release-mode }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
       image-registry: ${{ inputs.image-registry }}
+      image-namespace: ${{ inputs.image-namespace }}
+      image-name: ${{ inputs.image-name }}
       image-digest: ${{ inputs.image-digest }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets: inherit
 
   build-linux:
@@ -348,14 +442,18 @@ jobs:
       release-mode: ${{ inputs.release-mode }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
       image-registry: ${{ inputs.image-registry }}
+      image-namespace: ${{ inputs.image-namespace }}
+      image-name: ${{ inputs.image-name }}
       image-digest: ${{ inputs.image-digest }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets: inherit
 
   build-ios:
     name: Build iOS
     # iOS uses a macOS native runner — bypasses Docker-based validate/test jobs.
     # The build-ios workflow performs its own platform guard, BuildConfig validation,
-    # and license activation on the macos-unity-xcode runner.
+    # and license activation on the ios-runner-label runner.
     needs: [detect-changes, validate, test]
     if: |
       always() &&
@@ -375,6 +473,9 @@ jobs:
       clean-build: ${{ inputs.clean-build }}
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
       build-version: ${{ needs.detect-changes.outputs.build-version }}
+      ios-runner-label: ${{ inputs.ios-runner-label }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref: ${{ inputs.workflow-ref }}
     secrets: inherit
 
   # ─── 5. REPORT ─────────────────────────────────────────────────────────────────
@@ -389,8 +490,46 @@ jobs:
       build-artifact-name: ${{ steps.upload-report.outputs.artifact-name }}
 
     steps:
-      - name: Checkout
+      # ── 1. Consumer repo checkout ─────────────────────────────────────────
+      - name: Checkout consumer repo
         uses: actions/checkout@v4
+        with:
+          path: project
+
+      # ── 2. Toolkit checkout ───────────────────────────────────────────────
+      - name: Resolve toolkit ref
+        id: toolkit
+        shell: bash
+        run: |
+          REPO="${{ inputs.workflow-repository }}"
+          REF="${{ inputs.workflow-ref }}"
+          # github.workflow_ref/_sha resolve to the TOP-LEVEL caller workflow (the
+          # consumer), NOT this reusable workflow's repo — they cannot self-identify
+          # the toolkit in cross-repo use. Auto-derive only when the caller IS this
+          # repo (same-repo CI); otherwise require explicit inputs and fail fast.
+          if [ -z "$REPO" ]; then
+            echo "::error::workflow-repository input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::workflow-ref input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-ref: <REF>"
+            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
+      - name: Checkout toolkit (unity-build-workflows)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
 
       - name: Determine build result
         id: build-result
@@ -413,7 +552,7 @@ jobs:
 
       - name: Upload build report
         id: upload-report
-        uses: ./.github/actions/upload-build-report
+        uses: ./.ci/unity-build-workflows/.github/actions/upload-build-report
         with:
           build-version: ${{ needs.detect-changes.outputs.build-version }}
           target-platform: ${{ inputs.target-platform }}
@@ -426,7 +565,7 @@ jobs:
       # ── Discord notification (if: always — notifies on success AND failure) ───
       - name: Discord notification
         if: always()
-        uses: ./.github/actions/discord-notify
+        uses: ./.ci/unity-build-workflows/.github/actions/discord-notify
         with:
           status: ${{ steps.build-result.outputs.result }}
           platform: ${{ inputs.target-platform }}

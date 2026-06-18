@@ -9,8 +9,8 @@
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Consumer Repository (.github/workflows/build.yml)               │
-│  • calls reusable workflows via uses: BuzzelStudio/unity-build-  │
-│    workflows/.github/workflows/<workflow>.yml@v2                 │
+│  • calls reusable workflows via uses: <WORKFLOW_OWNER>/unity-build-  │
+│    workflows/.github/workflows/<workflow>.yml@<ref>              │
 │  • provides BuildConfig JSON + GitHub secrets                    │
 └───────────────────────────┬──────────────────────────────────────┘
                             │ workflow_call
@@ -92,7 +92,7 @@ Images extend pinned GameCI base images with an organizational tooling layer:
 
 ```
 unityci/editor:6000.0.26f1-android-3  (GameCI base, pinned)
-  └─ ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+  └─ ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0
        └─ entrypoint.sh, license scripts, healthcheck, python3, jq
 ```
 
@@ -109,14 +109,14 @@ The platform has two executor lanes selected automatically by `scripts/common/re
 ```
 CI Runner (ubuntu-latest)
   └── Docker Engine
-        └── ghcr.io/buzzelstudio/unity-builder@sha256:<digest>
+        └── ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:<digest>
               └── entrypoint.sh → Unity -batchmode -executeMethod
 ```
 
 ### macos-unity-xcode Lane (macOS runners)
 
 ```
-CI Runner (macos-13 / macos-latest)
+CI Runner (macos-13)
   ├── Unity (native, pre-installed)
   │     └── Unity -batchmode -buildTarget iOS → Builds/iOS/Xcode/
   └── Xcode (native, selected via xcode-select)
@@ -135,7 +135,7 @@ The two lanes are **mutually exclusive** — each platform resolves to exactly o
 | WebGL | `docker-unity` | ubuntu-latest | Full — Docker, cross-compilation via Emscripten |
 | Linux64 | `docker-unity` | ubuntu-latest | Full — Docker, native compilation |
 | LinuxServer | `docker-unity` | ubuntu-latest | Full — Docker, native compilation |
-| iOS | `macos-unity-xcode` | macos-13+ | Full — native macOS + Xcode pipeline |
+| iOS | `macos-unity-xcode` | macos-13 | Full — native macOS + Xcode pipeline (approved runner) |
 | Windows64 | — | — | **Unsupported** — requires Windows containers |
 
 See [PLATFORM_LIMITATIONS.md](PLATFORM_LIMITATIONS.md).

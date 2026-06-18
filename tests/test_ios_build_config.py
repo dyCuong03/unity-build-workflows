@@ -89,7 +89,7 @@ class TestValidIOSConfigs:
         _assert_valid(config, schema_validator)
 
     def test_ios_bundle_identifier_three_segments_passes(self, schema_validator):
-        config = _base_config(bundleIdentifier="com.buzzellstudio.mygame")
+        config = _base_config(bundleIdentifier="com.example.game")
         _assert_valid(config, schema_validator)
 
     def test_ios_bundle_identifier_with_hyphens_passes(self, schema_validator):

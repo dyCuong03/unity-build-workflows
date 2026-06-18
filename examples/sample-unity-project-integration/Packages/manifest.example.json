@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "com.company.build-pipeline": "https://github.com/YOUR-ORG/unity-build-workflows.git?path=/unity-package/Packages/com.company.build-pipeline#main",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  }
+}

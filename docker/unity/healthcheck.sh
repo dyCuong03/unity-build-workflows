@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# healthcheck.sh — Docker HEALTHCHECK for BuzzelStudio Unity containers
+# healthcheck.sh — Docker HEALTHCHECK for Unity build toolkit containers
 #
 # Exits 0 (healthy) or 1 (unhealthy).
 # Runs as the HEALTHCHECK CMD inside the container.

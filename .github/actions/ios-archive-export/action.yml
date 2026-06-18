@@ -73,7 +73,7 @@ runs:
         LOG_PATH: ${{ inputs.archive-log-path }}
         DEVELOPMENT_TEAM: ${{ inputs.development-team }}
         KEYCHAIN_PATH: ${{ env.KEYCHAIN_PATH }}
-      run: bash scripts/ios/xcode_archive.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/xcode_archive.sh"
 
     - name: xcodebuild exportArchive
       id: export
@@ -83,11 +83,11 @@ runs:
         EXPORT_OPTIONS_PATH: ${{ inputs.export-options-path }}
         EXPORT_PATH: ${{ inputs.export-path }}
         LOG_PATH: ${{ inputs.export-log-path }}
-      run: bash scripts/ios/xcode_export.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/xcode_export.sh"
 
     - name: Validate IPA
       id: validate
       shell: bash
       env:
         IPA_PATH: ${{ steps.export.outputs.ipa-path }}
-      run: bash scripts/ios/validate_ipa.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/validate_ipa.sh"

@@ -60,17 +60,33 @@ def load_config(config_dir, environment=None, cli_overrides=None):
     # Load base config
     base_file = config_path / "base.json"
     if not base_file.exists():
-        raise FileNotFoundError(f"Base config not found: {base_file}")
+        raise FileNotFoundError(
+            f"Base config not found: {base_file}. "
+            "Create a BuildConfig/base.json with at least the required fields "
+            "(projectName, companyName, productName, bundleVersion, outputDirectory, scenes)."
+        )
 
     with open(base_file, "r", encoding="utf-8") as f:
-        config = json.load(f)
+        try:
+            config = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid JSON in {base_file} at line {exc.lineno}, column {exc.colno}: {exc.msg}. "
+                "Fix the syntax error and retry."
+            ) from exc
 
     # Load environment overlay
     if environment:
         env_file = config_path / f"{environment}.json"
         if env_file.exists():
             with open(env_file, "r", encoding="utf-8") as f:
-                env_config = json.load(f)
+                try:
+                    env_config = json.load(f)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON in {env_file} at line {exc.lineno}, column {exc.colno}: {exc.msg}. "
+                        "Fix the syntax error in the environment overlay and retry."
+                    ) from exc
             config = deep_merge(config, env_config)
 
     # Apply CLI overrides

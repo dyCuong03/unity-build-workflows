@@ -1,9 +1,11 @@
 # Platform Limitations
 
+> **Canonical platform matrix:** See [docs/PLATFORM_MATRIX.md](PLATFORM_MATRIX.md) for the authoritative, up-to-date platform support table (maintained by the platform architect). This document provides the rationale and limitations detail for each platform.
+
 This repository operates two execution lanes:
 
 - **`docker-unity`** — Docker-mandatory lane for Android, WebGL, and Linux builds. Runs on `ubuntu-latest`.
-- **`macos-unity-xcode`** — Native macOS lane for iOS builds. Runs on `macos-13` or `macos-latest`.
+- **`macos-unity-xcode`** — Native macOS lane for iOS builds. Runs on `macos-13` (approved runner; `macos-latest` is not used — it floats and is not validated).
 
 The platform executor resolver (`scripts/common/resolve_platform_executor.py`) selects the correct lane automatically based on `target-platform`. Docker and macOS builds are **mutually exclusive** — each platform runs in exactly one lane.
 
@@ -29,7 +31,7 @@ The platform executor resolver (`scripts/common/resolve_platform_executor.py`) s
 ```
 ERROR: Platform 'iOS' requires executor 'macos-unity-xcode' (macOS runner).
 Current runner-os is 'linux', which is incompatible.
-Use a macOS runner: runs-on: macos-latest
+Use an approved macOS runner: runs-on: macos-13
 ```
 
 **Full documentation:** [docs/IOS.md](IOS.md), [docs/IOS_SIGNING.md](IOS_SIGNING.md), [docs/IOS_RELEASE.md](IOS_RELEASE.md)

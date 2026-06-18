@@ -1,7 +1,7 @@
 {
   "$schema": "../../schemas/unity-build-config.schema.json",
   "projectName": "my-ios-game",
-  "companyName": "BuzzelStudio",
+  "companyName": "ExampleCompany",
   "productName": "My iOS Game",
   "bundleVersion": "1.0.0",
   "buildNumberStrategy": "github_run_number",
@@ -14,7 +14,7 @@
   "developmentBuild": false,
   "runTests": false,
   "iOS": {
-    "bundleIdentifier": "com.buzzellstudio.myiosgame",
+    "bundleIdentifier": "com.example.game",
     "buildNumber": "42",
     "marketingVersion": "1.0.0",
     "sdkVersion": "iphoneos",

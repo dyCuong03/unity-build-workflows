@@ -1,7 +1,7 @@
 {
-  "projectName": "backpack-adventures",
-  "companyName": "BuzzelStudio",
-  "productName": "Backpack Adventures",
+  "projectName": "example-project",
+  "companyName": "ExampleCompany",
+  "productName": "ExampleProject",
   "bundleVersion": "1.4.0",
   "outputDirectory": "Builds",
   "scenes": []

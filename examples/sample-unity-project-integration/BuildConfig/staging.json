@@ -1,0 +1,12 @@
+{
+  "outputDirectory": "Builds/Staging",
+  "android": {
+    "applicationId": "com.example.project.staging",
+    "buildAppBundle": true,
+    "keystoreMode": "custom"
+  },
+  "metadata": {
+    "environment": "staging",
+    "repo": "example-project"
+  }
+}

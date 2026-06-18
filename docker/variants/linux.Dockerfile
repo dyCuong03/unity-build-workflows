@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1.6
 # =============================================================================
 # docker/variants/linux.Dockerfile
-# Unity Linux build image for BuzzelStudio.
+# Unity Linux build image for the Unity build toolkit.
 # Supports StandaloneLinux64 and LinuxServer targets.
 #
 # GameCI linux-il2cpp image includes: IL2CPP toolchain, GCC, libstdc++.
 #
 # Build:
 #   docker build -f docker/variants/linux.Dockerfile \
-#     -t buzzelstudio/unity-linux:6000.0.26f1 .
+#     -t OWNER/unity-linux:6000.0.26f1 .
 # =============================================================================
 
 ARG UNITY_VERSION=6000.0.26f1
@@ -24,18 +24,20 @@ ARG UNITY_CHANGESET=a5cf46f7893b
 ARG TOOLING_VERSION=1.0.0
 ARG BUILD_TIMESTAMP
 ARG SOURCE_COMMIT
+# VENDOR: configurable image vendor label. Override with --build-arg VENDOR="My Org".
+ARG VENDOR="Unity Build Toolkit"
 
-LABEL org.opencontainers.image.title="BuzzelStudio Unity Linux" \
+LABEL org.opencontainers.image.title="Unity Build Image (linux)" \
       org.opencontainers.image.description="Unity Linux IL2CPP build image – StandaloneLinux64 + LinuxServer" \
-      org.opencontainers.image.vendor="BuzzelStudio" \
+      org.opencontainers.image.vendor="${VENDOR}" \
       org.opencontainers.image.version="${UNITY_VERSION}" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIMESTAMP}" \
-      com.buzzelstudio.unity.version="${UNITY_VERSION}" \
-      com.buzzelstudio.unity.changeset="${UNITY_CHANGESET}" \
-      com.buzzelstudio.unity.variant="linux-il2cpp" \
-      com.buzzelstudio.unity.modules="linux-il2cpp,linux-server" \
-      com.buzzelstudio.tooling.version="${TOOLING_VERSION}"
+      org.unity.build.unity-version="${UNITY_VERSION}" \
+      org.unity.build.changeset="${UNITY_CHANGESET}" \
+      org.unity.build.variant="linux-il2cpp" \
+      org.unity.build.modules="linux-il2cpp,linux-server" \
+      org.unity.build.tooling-version="${TOOLING_VERSION}"
 
 # ---------------------------------------------------------------------------
 # System deps

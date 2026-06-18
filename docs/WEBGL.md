@@ -7,7 +7,7 @@ WebGL builds run inside Docker containers using the `webgl` image variant.
 ## Image Variant
 
 ```
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-webgl-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-webgl-v2.0.0
 ```
 
 Base: `unityci/editor:6000.0.26f1-webgl-3`
@@ -20,7 +20,7 @@ Includes: Unity Editor, Emscripten toolchain
 
 ```yaml
 build-webgl:
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-webgl.yml@v2
+  uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-webgl.yml@<ref>
   with:
     project-path: .
     unity-version: '6000.0.26f1'

@@ -10,6 +10,19 @@ namespace Company.BuildPipeline.Editor
     /// Main entry point for the build pipeline.
     /// Invoked from the Unity CLI: -executeMethod Company.BuildPipeline.Editor.BuildCommand.Execute
     ///
+    /// STABLE NEUTRAL IDENTITY — DO NOT RENAME
+    /// ----------------------------------------
+    /// The namespace <c>Company.BuildPipeline</c>, the package ID
+    /// <c>com.company.build-pipeline</c>, and the execute-method
+    /// <c>Company.BuildPipeline.Editor.BuildCommand.Execute</c> are intentionally
+    /// generic placeholders.  They serve as a stable, org-neutral contract
+    /// between this toolkit and any consumer Unity project.
+    ///
+    /// The workflow toolkit hardcodes this execute-method in entrypoint.sh and
+    /// run_unity_ios.sh.  Renaming it would silently break all builds.  If you
+    /// fork this package for your organisation, keep this exact class and method
+    /// name, or update the execute-method in all workflow entry points atomically.
+    ///
     /// Supported command-line arguments:
     ///   -buildConfig    Path to the build config directory (contains base.json).
     ///   -environment    Environment name: development | staging | production

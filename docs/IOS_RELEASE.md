@@ -134,7 +134,7 @@ on:
 
 jobs:
   build-ios-release:
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-ios.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-ios.yml@<ref>
     with:
       project-path: .
       unity-version: '6000.0.26f1'
@@ -197,7 +197,7 @@ In `v2.0.0`, iOS was listed as unsupported. The `v2.1.0` release adds the `unity
 
 **Migration steps:**
 
-1. Update your workflow reference: `@v2.0.0` → `@v2` (picks up v2.1.0 automatically)
+1. Update your workflow reference: use `@main` (latest) or a specific commit SHA; use an exact tag (e.g. `@vX.Y.Z`) once a release is published — no tags exist yet; `@v2` floating tag does not exist yet
 2. Add the iOS BuildConfig fields listed in [IOS.md](IOS.md)
 3. Add the required GitHub Secrets listed in [IOS_SIGNING.md](IOS_SIGNING.md)
 4. Create the `production` GitHub Environment if using TestFlight

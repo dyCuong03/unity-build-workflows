@@ -49,7 +49,7 @@ runs:
     - name: Create isolated keychain
       id: create-keychain
       shell: bash
-      run: bash scripts/ios/create_keychain.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/create_keychain.sh"
 
     - name: Import distribution certificate
       id: import-certificate
@@ -59,14 +59,14 @@ runs:
         IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ inputs.ios-distribution-certificate-password }}
         KEYCHAIN_PATH: ${{ steps.create-keychain.outputs.keychain-path }}
         KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
-      run: bash scripts/ios/import_certificate.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/import_certificate.sh"
 
     - name: Install provisioning profile
       id: install-profile
       shell: bash
       env:
         IOS_PROVISIONING_PROFILE_BASE64: ${{ inputs.ios-provisioning-profile-base64 }}
-      run: bash scripts/ios/install_profile.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/install_profile.sh"
 
     - name: Generate ExportOptions.plist
       id: generate-export-options
@@ -76,4 +76,4 @@ runs:
         BUNDLE_IDENTIFIER: ${{ inputs.bundle-identifier }}
         DEVELOPMENT_TEAM: ${{ inputs.development-team }}
         PROFILE_UUID: ${{ steps.install-profile.outputs.profile-uuid }}
-      run: bash scripts/ios/generate_export_options.sh
+      run: bash "${{ github.action_path }}/../../../scripts/ios/generate_export_options.sh"

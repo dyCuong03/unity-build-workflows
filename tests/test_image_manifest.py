@@ -77,7 +77,7 @@ def _make_valid_manifest(**overrides) -> dict:
     base = {
         "schemaVersion": "1.0.0",
         "contractVersion": 1,
-        "imageReference": "ghcr.io/buzzelstudio/unity-webgl:2022.3.45f1",
+        "imageReference": "ghcr.io/example-namespace/unity-webgl:2022.3.45f1",
         "unityVersion": "2022.3.45f1",
         "variant": "webgl",
         "buildTimestamp": "2026-06-12T10:00:00Z",
@@ -89,7 +89,7 @@ def _make_valid_manifest(**overrides) -> dict:
 def _make_valid_android_manifest(**overrides) -> dict:
     base = _make_valid_manifest(
         variant="android",
-        imageReference="ghcr.io/buzzelstudio/unity-android:2022.3.45f1",
+        imageReference="ghcr.io/example-namespace/unity-android:2022.3.45f1",
         androidSdkVersion=34,
         androidNdkVersion="r23b",
         jdkVersion="17.0.9",
@@ -118,7 +118,7 @@ class TestValidManifest:
     def test_linux_variant_passes(self, manifest_validator):
         manifest = _make_valid_manifest(
             variant="linux-il2cpp",
-            imageReference="ghcr.io/buzzelstudio/unity-linux:2022.3.45f1",
+            imageReference="ghcr.io/example-namespace/unity-linux:2022.3.45f1",
             supportedTargets=["StandaloneLinux64", "LinuxServer"],
         )
         _assert_valid(manifest, manifest_validator)
@@ -126,7 +126,7 @@ class TestValidManifest:
     def test_base_variant_passes(self, manifest_validator):
         manifest = _make_valid_manifest(
             variant="base",
-            imageReference="ghcr.io/buzzelstudio/unity-base:2022.3.45f1",
+            imageReference="ghcr.io/example-namespace/unity-base:2022.3.45f1",
         )
         _assert_valid(manifest, manifest_validator)
 

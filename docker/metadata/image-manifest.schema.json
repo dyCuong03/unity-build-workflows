@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/docker/metadata/image-manifest.schema.json",
+  "$id": "https://github.com/OWNER/unity-build-workflows/docker/metadata/image-manifest.schema.json",
   "title": "UnityImageManifest",
-  "description": "Schema for BuzzelStudio Unity Docker image manifests. One manifest per image build.",
+  "description": "Schema for Unity build toolkit Docker image manifests. One manifest per image build.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -38,8 +38,8 @@
       "minLength": 1,
       "description": "Fully-qualified image reference including registry, name, and tag.",
       "examples": [
-        "ghcr.io/buzzelstudio/unity-android:6000.0.26f1",
-        "buzzelstudio/unity-base:6000.0.26f1"
+        "ghcr.io/example-namespace/unity-build:6000.0.26f1-android",
+        "ghcr.io/example-namespace/unity-build:6000.0.26f1-base"
       ]
     },
 
@@ -100,7 +100,7 @@
     "toolingVersion": {
       "type": "string",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "Version of the BuzzelStudio tooling layer (entrypoint.sh and supporting scripts).",
+      "description": "Version of the Unity build toolkit tooling layer (entrypoint.sh and supporting scripts).",
       "examples": ["1.0.0"]
     },
 

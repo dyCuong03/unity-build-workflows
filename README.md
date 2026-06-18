@@ -1,12 +1,12 @@
 # unity-build-workflows
 
-Docker-mandatory reusable GitHub Actions workflows for building, testing, and releasing Unity games. All Unity operations run inside pinned, versioned Docker containers — the CI runner never executes Unity directly.
+Docker-mandatory reusable GitHub Actions workflows for building, testing, and releasing Unity projects. All Unity operations run inside pinned, versioned Docker containers — the CI runner never executes Unity directly.
 
 ---
 
 ## What This Repository Is
 
-`unity-build-workflows` is a CI/CD platform library. Unity game repositories call its reusable workflows. This repository manages:
+`unity-build-workflows` is a CI/CD platform toolkit. Unity project repositories call its reusable workflows as consumers. This repository manages:
 
 - Docker image definitions for Unity build environments
 - Container entrypoints that invoke Unity in batch mode
@@ -14,16 +14,24 @@ Docker-mandatory reusable GitHub Actions workflows for building, testing, and re
 - Build configuration schemas and validation
 - Image security scanning and SBOM generation
 
-**Docker is mandatory.** There is no native Unity execution fallback.
+**Docker is mandatory.** There is no native Unity execution fallback (iOS uses a macOS runner with Xcode — not Docker).
+
+**As a consumer, you own:**
+- Your Unity project
+- A `BuildConfig/` directory
+- A small caller workflow
+- GitHub secrets
+
+**You copy nothing from this toolkit.** Your workflow calls `uses: <WORKFLOW_OWNER>/unity-build-workflows/...` and everything else is managed here.
 
 ---
 
 ## Architecture
 
 ```
-Your Game Repo
+Your Project Repo
   .github/workflows/build.yml
-       │ uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+       │ uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@<ref>
        │       secrets: inherit
        ▼
 unity-build-workflows
@@ -33,7 +41,7 @@ unity-build-workflows
   Docker Engine
        │
        ▼
-  Pinned Unity Build Image (ghcr.io/buzzelstudio/unity-builder@sha256:...)
+  Pinned Unity Build Image (ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:...)
        │
        ▼
   entrypoint.sh → Unity -batchmode -executeMethod BuildCommand.Execute
@@ -48,44 +56,57 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete layer diagram.
 
 ## Supported Platforms
 
+> See [docs/PLATFORM_MATRIX.md](docs/PLATFORM_MATRIX.md) for the canonical platform support matrix (maintained by the platform architect).
+
 | Platform | Executor | Runner OS | Status |
 |---|---|---|---|
 | Android | `docker-unity` | ubuntu-latest | **Supported** |
 | WebGL | `docker-unity` | ubuntu-latest | **Supported** |
 | Linux Standalone | `docker-unity` | ubuntu-latest | **Supported** |
 | Linux Dedicated Server | `docker-unity` | ubuntu-latest | **Supported** |
-| **iOS** | `macos-unity-xcode` | macos-13+ | **Supported** (v2.1.0+) |
-
-### Unsupported Platforms
-
-| Platform | Reason |
-|---|---|
-| Windows | Requires Windows containers. Use a dedicated Windows pipeline. See [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md). |
+| **iOS** | `macos-unity-xcode` | macos-13 | **Supported** (native macOS + Xcode lane) |
+| Windows | — | — | **Unsupported** — see [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) |
 
 Unsupported targets fail with an actionable error message. The repository never silently falls back to native Unity execution.
 
 ---
 
-## Minimal Integration
+## Consumer Quickstart
 
-### 1. Add a BuildConfig
+### 1. Add the UPM Package
+
+In your Unity project's `Packages/manifest.json`:
+
+```json
+{
+  "dependencies": {
+    "com.company.build-pipeline": "https://github.com/<WORKFLOW_OWNER>/unity-build-workflows.git?path=/unity-package/Packages/com.company.build-pipeline#<WORKFLOW_REF>"
+  }
+}
+```
+
+### 2. Add a BuildConfig
 
 ```bash
 mkdir BuildConfig
 cp templates/BuildConfig.base.example.json BuildConfig/base.json
+# Edit: projectName, companyName, applicationId/bundleIdentifier, scenes
+cp templates/BuildConfig.development.example.json BuildConfig/development.json
 cp templates/BuildConfig.staging.example.json BuildConfig/staging.json
-# Edit projectName, applicationId, scenes, etc.
+cp templates/BuildConfig.production.example.json BuildConfig/production.json
 ```
 
-### 2. Add secrets
+Environment files (`development.json`, etc.) are overlays — they contain only the fields that differ from `base.json`. See [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md).
 
-At minimum: `UNITY_LICENSE`. See [templates/build-secrets.example.md](templates/build-secrets.example.md).
+### 3. Add Secrets
 
-### 3. Create `.github/workflows/build.yml`
+At minimum: `UNITY_LICENSE`. See [templates/build-secrets.example.md](templates/build-secrets.example.md) for the full secret matrix.
 
-**Android/WebGL/Linux (Docker lane):**
+### 4. Create `.github/workflows/build.yml`
+
+**Android / WebGL / Linux (Docker lane):**
 ```yaml
-name: Unity Docker CI
+name: Unity Build
 
 on:
   pull_request:
@@ -95,7 +116,7 @@ on:
 
 jobs:
   build-android:
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@<ref>
     with:
       project-path: .
       unity-version: '6000.0.26f1'
@@ -119,7 +140,7 @@ on:
 
 jobs:
   build-ios:
-    uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-ios.yml@v2
+    uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-ios.yml@<ref>
     with:
       project-path: .
       unity-version: '6000.0.26f1'
@@ -130,30 +151,34 @@ jobs:
     secrets: inherit
 ```
 
-The executor is selected automatically from `target-platform` — no `executor-mode` input exists.
+> **Choosing `<ref>`:**
+> - Development / pre-release: `@main` (tracks latest) or `@<commit-sha>` (pinned)
+> - Stable release: use an exact released tag (e.g. `@vX.Y.Z`) — **no tags have been published yet**; check [CHANGELOG.md](CHANGELOG.md) and the repository Releases page for the first published tag.
+> - A floating `@vMAJOR` tag (e.g. `@v2`) is published only after the first stable release of that major version. It does not yet exist — do not reference it until announced.
 
-See [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) for the full onboarding walkthrough.
-See [docs/IOS.md](docs/IOS.md) for the iOS pipeline guide.
+The executor (Docker or macOS) is selected automatically from `target-platform`. No `executor-mode` input exists.
 
-### 4. Add iOS Secrets (iOS builds only)
+See [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) for the complete onboarding walkthrough.
 
-For iOS, add these secrets at **Settings → Secrets and variables → Actions**:
+### 5. Add iOS Secrets (iOS builds only)
+
+For iOS, add at **Settings → Secrets and variables → Actions**:
 
 ```
-UNITY_LICENSE                           # .ulf license content
-UNITY_EMAIL                             # Unity account email
-UNITY_PASSWORD                          # Unity account password
-IOS_DISTRIBUTION_CERTIFICATE_BASE64    # Base64-encoded .p12 certificate
-IOS_DISTRIBUTION_CERTIFICATE_PASSWORD  # .p12 export password
-IOS_PROVISIONING_PROFILE_BASE64        # Base64-encoded .mobileprovision
-APP_STORE_CONNECT_KEY_ID               # ASC API key ID (for TestFlight)
-APP_STORE_CONNECT_ISSUER_ID            # ASC issuer UUID (for TestFlight)
-APP_STORE_CONNECT_PRIVATE_KEY          # .p8 key contents (for TestFlight)
+UNITY_LICENSE                              # .ulf license content
+UNITY_EMAIL                                # Unity account email
+UNITY_PASSWORD                             # Unity account password
+IOS_DISTRIBUTION_CERTIFICATE_BASE64        # Base64-encoded .p12 certificate
+IOS_DISTRIBUTION_CERTIFICATE_PASSWORD      # .p12 export password
+IOS_PROVISIONING_PROFILE_BASE64            # Base64-encoded .mobileprovision
+APP_STORE_CONNECT_KEY_ID                   # ASC API key ID (for TestFlight)
+APP_STORE_CONNECT_ISSUER_ID                # ASC issuer UUID (for TestFlight)
+APP_STORE_CONNECT_PRIVATE_KEY              # .p8 key contents (for TestFlight)
 ```
 
-See [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) for setup instructions.
+Scope `APP_STORE_CONNECT_*` to the `production` GitHub Environment. See [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md).
 
-### 5. Enable Discord Notifications (optional)
+### 6. Enable Discord Notifications (optional)
 
 Add a single secret to receive build-completion embeds in a Discord channel:
 
@@ -161,13 +186,13 @@ Add a single secret to receive build-completion embeds in a Discord channel:
 DISCORD_WEBHOOK_URL    # Discord webhook URL — omit to disable notifications
 ```
 
-Notifications cover success, failure, and cancelled status. If the secret is not set the workflows skip the notification step silently — no YAML changes needed to disable. See [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md) for setup and behaviour.
+Notifications cover success, failure, and cancelled status. If the secret is not set the workflows skip the notification step silently. See [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md).
 
 ---
 
 ## Local Build Commands
 
-Local builds also use Docker:
+Local Android/WebGL/Linux builds also use Docker:
 
 ```bash
 # Android build
@@ -184,14 +209,11 @@ python3 scripts/docker/run_unity_container.py \
   --unity-version 6000.0.26f1 \
   --target-platform Android \
   --test-level editmode
-
-# Convenience targets (if Makefile present)
-make unity-build-android
-make unity-test-editmode
-make unity-build-webgl
 ```
 
-**Prerequisites:** Docker Engine installed and running. No local Unity installation required for builds.
+**Prerequisites:** Docker Engine installed and running. No local Unity installation required for Docker-lane builds.
+
+> **Image availability:** Local builds require a published Docker image for your Unity version and variant. If no image is published yet, see [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md#bootstrap) for the bootstrap process.
 
 ---
 
@@ -201,14 +223,16 @@ Images extend pinned [GameCI](https://game.ci/) base images with an organization
 
 ```
 unityci/editor:6000.0.26f1-android-3  (pinned GameCI base)
-  └─ ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0  (org layer)
+  └─ ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0  (org layer)
        └─ entrypoint.sh, license scripts, healthcheck, python3, jq
 ```
 
 Production workflows resolve and pin images by digest:
 ```
-ghcr.io/buzzelstudio/unity-builder@sha256:<digest>
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder@sha256:<digest>
 ```
+
+> **Important:** Images must be built and published before they can be used. See [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) for the full image lifecycle including the bootstrap process.
 
 See [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) for the full image strategy.
 
@@ -223,15 +247,28 @@ See [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) for the full image strate
 
 ## Versioning Policy
 
-Semantic versioning. Consumer repositories reference a major version tag:
+Semantic versioning (`MAJOR.MINOR.PATCH`).
 
 ```yaml
-uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build.yml@v2
+# Development / pre-release — tracks latest changes
+uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@main
+
+# Pinned to exact commit SHA — fully reproducible
+uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@abc1234
+
+# Stable release — use the exact published tag
+uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build.yml@vX.Y.Z
 ```
 
-- `@v2` points to the latest `2.x.x` release.
-- Major version increments indicate breaking changes to the workflow input interface.
-- Pin to exact version for reproducibility: `@v2.0.0`.
+> **No floating major-version tags exist yet** (e.g. `@v2`). Floating major tags will be published alongside stable releases. Until then, use `@main` for development or an exact SHA/tag for reproducibility.
+>
+> To create release tags (run when ready to ship — NOT executed yet):
+> ```bash
+> git tag vX.Y.Z && git push origin vX.Y.Z           # e.g. git tag v2.0.0
+> git tag -f vMAJOR && git push -f origin vMAJOR     # e.g. git tag -f v2 — only after first vMAJOR.x.x tag
+> ```
+
+Major version increments indicate breaking changes to the workflow input interface.
 
 Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 
@@ -242,24 +279,26 @@ Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 | Document | Contents |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layer diagram, executor lanes (docker-unity + macos-unity-xcode), extension points |
+| [docs/PLATFORM_MATRIX.md](docs/PLATFORM_MATRIX.md) | **Canonical platform support matrix** — authoritative source for all platform/executor/status combinations |
 | [docs/DOCKER_BUILD.md](docs/DOCKER_BUILD.md) | Container flow, mounts, caches, licensing, debugging |
-| [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) | Base image, variants, scanning, SBOM, tagging, deprecation |
-| [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) | Step-by-step onboarding guide |
+| [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) | Base image, variants, bootstrap, scanning, SBOM, tagging, deprecation |
+| [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) | Step-by-step consumer onboarding guide |
 | [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md) | Every BuildConfig field documented (including full iOS section) |
-| [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export via Docker |
-| [docs/IOS.md](docs/IOS.md) | **NEW** — Full iOS pipeline: Unity → Xcode → archive → IPA → TestFlight |
-| [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) | **NEW** — Certificate, provisioning profile, ASC key setup |
-| [docs/IOS_RELEASE.md](docs/IOS_RELEASE.md) | **NEW** — Release workflow, protected environment, versioning, TestFlight |
-| [docs/IOS_VERIFICATION.md](docs/IOS_VERIFICATION.md) | **NEW** — macOS runner verification runbook (Level 0–3, checklist) |
+| [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export via Docker, image bootstrap |
+| [docs/IOS.md](docs/IOS.md) | Full iOS pipeline: Unity → Xcode → archive → IPA → TestFlight |
+| [docs/IOS_SIGNING.md](docs/IOS_SIGNING.md) | Certificate, provisioning profile, ASC key setup |
+| [docs/IOS_RELEASE.md](docs/IOS_RELEASE.md) | Release workflow, protected environment, versioning, TestFlight |
+| [docs/IOS_VERIFICATION.md](docs/IOS_VERIFICATION.md) | macOS runner verification runbook (Level 0–3, checklist) |
 | [docs/WEBGL.md](docs/WEBGL.md) | WebGL compression, hosting via Docker |
 | [docs/LINUX.md](docs/LINUX.md) | Linux standalone and dedicated server builds |
-| [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS now supported via macOS; Windows unsupported; GPU/native plugin limits |
+| [docs/PLATFORM_LIMITATIONS.md](docs/PLATFORM_LIMITATIONS.md) | iOS (macOS lane, supported), Windows (unsupported), GPU/native plugin limits |
 | [docs/RELEASE_FLOW.md](docs/RELEASE_FLOW.md) | Tag-based release, environments, digest enforcement |
 | [docs/SELF_HOSTED_RUNNER.md](docs/SELF_HOSTED_RUNNER.md) | Runner setup with Docker requirements |
 | [docs/SECURITY.md](docs/SECURITY.md) | Secret handling, iOS credentials, image trust, fork safety |
-| [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md) | **NEW** — Discord build-completion notifications: setup, security, embed format |
+| [docs/DISCORD_NOTIFICATIONS.md](docs/DISCORD_NOTIFICATIONS.md) | Discord build-completion notifications: setup, security, embed format |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Docker, Unity, and iOS errors; cert rotation; Xcode migration |
 | [docs/adr/001-docker-mandatory-architecture.md](docs/adr/001-docker-mandatory-architecture.md) | Architecture decision record |
+| [docs/adr/002-ios-native-exception.md](docs/adr/002-ios-native-exception.md) | iOS macOS-lane exception decision record |
 
 ---
 
@@ -269,4 +308,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](LICENSE) — © 2024 BuzzelStudio
+[MIT](LICENSE) — © 2024 <WORKFLOW_OWNER>

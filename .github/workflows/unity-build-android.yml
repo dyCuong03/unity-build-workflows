@@ -4,6 +4,7 @@ on:
   workflow_call:
     inputs:
       project-path:
+        description: Path to the Unity project root relative to the consumer repo root
         type: string
         required: false
         default: '.'
@@ -51,11 +52,40 @@ on:
         type: string
         required: true
       image-registry:
+        description: Docker image registry (e.g. ghcr.io)
         type: string
         required: false
         default: ghcr.io
+      image-namespace:
+        description: Image repository namespace override (e.g. myorg/unity-images)
+        type: string
+        required: false
+        default: ''
+      image-name:
+        description: Image name override (e.g. unity-editor)
+        type: string
+        required: false
+        default: ''
       image-digest:
         description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+      workflow-repository:
+        description: >
+          Repository that owns this workflow (owner/repo). Must be the
+          owner/repo of the unity-build-workflows toolkit. REQUIRED — the
+          reusable workflow cannot auto-detect its own source repo cross-repo.
+          NOTE: Do NOT use github.action_repository — that is for composite actions
+          only and is empty in a workflow_call context.
+        type: string
+        required: false
+        default: ''
+      workflow-ref:
+        description: >
+          Git ref or SHA of the unity-build-workflows toolkit to checkout.
+          REQUIRED — must match the @<REF> used in the 'uses:' directive of
+          your caller workflow. Pin to a released tag/SHA in production.
         type: string
         required: false
         default: ''
@@ -92,26 +122,82 @@ jobs:
       artifact-name: ${{ steps.upload.outputs.artifact-name }}
 
     steps:
-      - name: Checkout
+      # ── 1. Consumer repo checkout ─────────────────────────────────────────────
+      # Consumer repo lands at project/ so toolkit files (.ci/) never collide with
+      # consumer assets.
+      - name: Checkout consumer repo
         uses: actions/checkout@v4
         with:
+          path: project
           lfs: true
 
-      - name: Restore Docker cache
-        uses: ./.github/actions/restore-docker-cache
+      # ── 2. Toolkit checkout ───────────────────────────────────────────────────
+      # Callers MUST supply workflow-repository + workflow-ref explicitly.
+      # github.workflow_ref / github.workflow_sha refer to the TOP-LEVEL CALLER
+      # workflow (the consumer repo), NOT this reusable workflow's own repo.
+      # GitHub exposes no context var that reliably self-identifies a reusable
+      # workflow's source repo/SHA when called cross-repo. Auto-derivation is
+      # therefore unsafe and not supported. See docs/ADD_NEW_PROJECT.md.
+      - name: Resolve toolkit ref
+        id: toolkit
+        shell: bash
+        run: |
+          REPO="${{ inputs.workflow-repository }}"
+          REF="${{ inputs.workflow-ref }}"
+          if [ -z "$REPO" ]; then
+            echo "::error::workflow-repository input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::workflow-ref input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-ref: <REF>"
+            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
+      - name: Checkout toolkit (unity-build-workflows)
+        uses: actions/checkout@v4
         with:
-          project-path: ${{ inputs.project-path }}
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      # ── 3. Compute effective project path ─────────────────────────────────────
+      # Consumer repo is at project/; Unity root = project/<project-path>.
+      - name: Compute effective project path
+        id: paths
+        shell: bash
+        run: |
+          PP="${{ inputs.project-path }}"
+          if [ "$PP" = "." ] || [ -z "$PP" ]; then
+            echo "project-root=project" >> "$GITHUB_OUTPUT"
+          else
+            echo "project-root=project/${PP}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore Docker cache
+        uses: ./.ci/unity-build-workflows/.github/actions/restore-docker-cache
+        with:
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: Android
           cache-mode: ${{ inputs.cache-mode }}
 
       - name: Resolve Unity image
         id: resolve-image
-        uses: ./.github/actions/resolve-unity-image
+        uses: ./.ci/unity-build-workflows/.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
           target-platform: Android
           image-registry: ${{ inputs.image-registry }}
+          image-namespace: ${{ inputs.image-namespace }}
+          image-name: ${{ inputs.image-name }}
           image-variant: android
           image-digest: ${{ inputs.image-digest }}
           release-mode: ${{ inputs.release-mode }}
@@ -123,27 +209,27 @@ jobs:
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           BUILD_VERSION: ${{ inputs.build-version }}
-          PROJECT_PATH: ${{ inputs.project-path }}
+          PROJECT_ROOT: ${{ steps.paths.outputs.project-root }}
           BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
-          python3 scripts/android/prepare_android_build.py \
+          python3 .ci/unity-build-workflows/scripts/android/prepare_android_build.py \
             --environment "$ENVIRONMENT" \
             --version     "$BUILD_VERSION" \
-            --config-path "$PROJECT_PATH/$BUILD_CONFIG_PATH"
+            --config-path "$PROJECT_ROOT/$BUILD_CONFIG_PATH"
 
       - name: Generate build metadata
         shell: bash
         env:
-          PROJECT_PATH: ${{ inputs.project-path }}
+          PROJECT_ROOT: ${{ steps.paths.outputs.project-root }}
           BUILD_VERSION: ${{ inputs.build-version }}
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          python3 scripts/common/generate_build_metadata.py \
-            --project-path "$PROJECT_PATH" \
+          python3 .ci/unity-build-workflows/scripts/common/generate_build_metadata.py \
+            --project-path "$PROJECT_ROOT" \
             --platform     Android \
             --version      "$BUILD_VERSION" \
             --environment  "$ENVIRONMENT" \
@@ -153,13 +239,13 @@ jobs:
       - name: Build Addressables
         id: build-addressables
         if: inputs.build-addressables == true
-        uses: ./.github/actions/run-unity-container
+        uses: ./.ci/unity-build-workflows/.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          project-path: ${{ inputs.project-path }}
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: Android
           environment: ${{ inputs.environment }}
@@ -171,13 +257,13 @@ jobs:
 
       - name: Build Unity Android
         id: build
-        uses: ./.github/actions/run-unity-container
+        uses: ./.ci/unity-build-workflows/.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          project-path: ${{ inputs.project-path }}
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: Android
           environment: ${{ inputs.environment }}
@@ -200,13 +286,13 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
-          bash scripts/android/sign_android_build.sh "$BUILD_PATH" "$ENVIRONMENT"
+          bash .ci/unity-build-workflows/scripts/android/sign_android_build.sh "$BUILD_PATH" "$ENVIRONMENT"
 
       - name: Compare build size
         if: always()
         shell: bash
         run: |
-          python3 scripts/common/compare_build_size.py \
+          python3 .ci/unity-build-workflows/scripts/common/compare_build_size.py \
             --build-path Builds/Android \
             --platform   Android \
             --version    "${{ inputs.build-version }}" || true
@@ -230,14 +316,14 @@ jobs:
           BUILD_VERSION: ${{ inputs.build-version }}
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
-          python3 scripts/android/upload_google_play.py \
+          python3 .ci/unity-build-workflows/scripts/android/upload_google_play.py \
             --build-path  "$BUILD_PATH" \
             --environment "$ENVIRONMENT" \
             --version     "$BUILD_VERSION"
 
       - name: Collect container output
         if: always()
-        uses: ./.github/actions/collect-container-output
+        uses: ./.ci/unity-build-workflows/.github/actions/collect-container-output
         with:
           target-platform: Android
           build-version: ${{ inputs.build-version }}

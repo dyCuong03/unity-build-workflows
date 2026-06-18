@@ -7,12 +7,16 @@ Android builds run inside Docker containers using the `android` image variant.
 ## Image Variant
 
 ```
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:<unity-version>-android-<tooling-version>
 ```
+
+Example: `ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0`
 
 Base: `unityci/editor:6000.0.26f1-android-3`
 
 Includes: Unity Editor, Android SDK, Android NDK, JDK, Gradle
+
+> **Image must be published first.** If no image has been built for your Unity version, consumer builds will fail with an image-not-found error. See [IMAGE_LIFECYCLE.md](IMAGE_LIFECYCLE.md#bootstrap) for the bootstrap process.
 
 ---
 
@@ -20,7 +24,7 @@ Includes: Unity Editor, Android SDK, Android NDK, JDK, Gradle
 
 ```yaml
 build-android:
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-android.yml@v2
+  uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-android.yml@<ref>
   with:
     project-path: .
     unity-version: '6000.0.26f1'
@@ -58,9 +62,9 @@ When `keystoreMode` is `debug`, Unity uses the Android debug keystore from the S
 Required secrets:
 ```
 ANDROID_KEYSTORE_BASE64      # base64-encoded .jks or .keystore
-ANDROID_KEYSTORE_PASS        # keystore password
+ANDROID_KEYSTORE_PASSWORD    # keystore password
 ANDROID_KEY_ALIAS            # key alias
-ANDROID_KEY_PASS             # key password
+ANDROID_KEY_PASSWORD         # key password
 ```
 
 The signing step runs as a post-container operation. The keystore is decoded to a temporary file, used for signing, and deleted.

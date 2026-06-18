@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       project-path:
-        description: Path to the Unity project root
+        description: Path to the Unity project root relative to the consumer repo root
         type: string
         required: false
         default: '.'
@@ -32,8 +32,33 @@ on:
         type: string
         required: false
         default: ghcr.io
+      image-namespace:
+        description: Image repository namespace override (e.g. myorg/unity-images)
+        type: string
+        required: false
+        default: ''
+      image-name:
+        description: Image name override (e.g. unity-editor)
+        type: string
+        required: false
+        default: ''
       image-digest:
         description: Pinned image digest for the test container
+        type: string
+        required: false
+        default: ''
+      workflow-repository:
+        description: >
+          Repository that owns this workflow (owner/repo). Must be the
+          owner/repo of the unity-build-workflows toolkit. REQUIRED — the
+          reusable workflow cannot auto-detect its own source repo cross-repo.
+        type: string
+        required: false
+        default: ''
+      workflow-ref:
+        description: >
+          Git ref or SHA of the workflow repository to checkout as the toolkit.
+          Required. Must match the @<ref> used in the caller's `uses:` reference.
         type: string
         required: false
         default: ''
@@ -63,39 +88,90 @@ jobs:
       test-report-artifact: ${{ steps.set-artifact-name.outputs.artifact-name }}
 
     steps:
-      - name: Checkout repository
+      # ── 1. Consumer repo checkout ─────────────────────────────────────────────
+      - name: Checkout consumer repo
         uses: actions/checkout@v4
         with:
+          path: project
           lfs: true
 
-      - name: Restore Docker cache
-        uses: ./.github/actions/restore-docker-cache
+      # ── 2. Toolkit checkout ───────────────────────────────────────────────────
+      - name: Resolve toolkit ref
+        id: toolkit
+        shell: bash
+        run: |
+          REPO="${{ inputs.workflow-repository }}"
+          REF="${{ inputs.workflow-ref }}"
+          # github.workflow_ref/_sha resolve to the TOP-LEVEL caller workflow (the
+          # consumer), NOT this reusable workflow's repo — they cannot self-identify
+          # the toolkit in cross-repo use. Auto-derive only when the caller IS this
+          # repo (same-repo CI); otherwise require explicit inputs and fail fast.
+          if [ -z "$REPO" ]; then
+            echo "::error::workflow-repository input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          if [ -z "$REF" ]; then
+            echo "::error::workflow-ref input is required."
+            echo "::error::In your caller workflow 'with:' block add:"
+            echo "::error::  workflow-ref: <REF>"
+            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
+            exit 1
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
+      - name: Checkout toolkit (unity-build-workflows)
+        uses: actions/checkout@v4
         with:
-          project-path: ${{ inputs.project-path }}
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      # ── 3. Compute effective project path ─────────────────────────────────────
+      - name: Compute effective project path
+        id: paths
+        shell: bash
+        run: |
+          PP="${{ inputs.project-path }}"
+          if [ "$PP" = "." ] || [ -z "$PP" ]; then
+            echo "project-root=project" >> "$GITHUB_OUTPUT"
+          else
+            echo "project-root=project/${PP}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore Docker cache
+        uses: ./.ci/unity-build-workflows/.github/actions/restore-docker-cache
+        with:
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: ${{ inputs.target-platform }}
           cache-mode: ${{ inputs.cache-mode }}
 
       - name: Resolve Unity image
         id: resolve-image
-        uses: ./.github/actions/resolve-unity-image
+        uses: ./.ci/unity-build-workflows/.github/actions/resolve-unity-image
         with:
           unity-version: ${{ inputs.unity-version }}
           target-platform: ${{ inputs.target-platform }}
           image-registry: ${{ inputs.image-registry }}
+          image-namespace: ${{ inputs.image-namespace }}
+          image-name: ${{ inputs.image-name }}
           image-variant: linux
           image-digest: ${{ inputs.image-digest }}
 
       - name: Run EditMode tests
         id: test-editmode
         if: inputs.test-level == 'editmode' || inputs.test-level == 'full'
-        uses: ./.github/actions/run-unity-container
+        uses: ./.ci/unity-build-workflows/.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          project-path: ${{ inputs.project-path }}
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: ${{ inputs.target-platform }}
           image-reference: ${{ steps.resolve-image.outputs.image-reference }}
@@ -107,13 +183,13 @@ jobs:
       - name: Run PlayMode tests
         id: test-playmode
         if: inputs.test-level == 'playmode' || inputs.test-level == 'full'
-        uses: ./.github/actions/run-unity-container
+        uses: ./.ci/unity-build-workflows/.github/actions/run-unity-container
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          project-path: ${{ inputs.project-path }}
+          project-path: ${{ steps.paths.outputs.project-root }}
           unity-version: ${{ inputs.unity-version }}
           target-platform: ${{ inputs.target-platform }}
           image-reference: ${{ steps.resolve-image.outputs.image-reference }}
@@ -166,7 +242,7 @@ jobs:
 
       - name: Collect EditMode output
         if: always() && (inputs.test-level == 'editmode' || inputs.test-level == 'full')
-        uses: ./.github/actions/collect-container-output
+        uses: ./.ci/unity-build-workflows/.github/actions/collect-container-output
         with:
           target-platform: ${{ inputs.target-platform }}
           command: test-editmode
@@ -176,7 +252,7 @@ jobs:
 
       - name: Collect PlayMode output
         if: always() && (inputs.test-level == 'playmode' || inputs.test-level == 'full')
-        uses: ./.github/actions/collect-container-output
+        uses: ./.ci/unity-build-workflows/.github/actions/collect-container-output
         with:
           target-platform: ${{ inputs.target-platform }}
           command: test-playmode

@@ -48,7 +48,7 @@ def docker_mod():
 # ---------------------------------------------------------------------------
 
 FAKE_DIGEST = "sha256:" + "a" * 64
-FAKE_IMAGE = f"ghcr.io/buzzelstudio/unity-android@{FAKE_DIGEST}"
+FAKE_IMAGE = f"ghcr.io/example-namespace/unity-android@{FAKE_DIGEST}"
 
 
 def _make_args(**overrides) -> argparse.Namespace:

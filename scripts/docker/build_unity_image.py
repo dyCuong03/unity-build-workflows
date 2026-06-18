@@ -10,11 +10,16 @@ Usage:
   python3 scripts/docker/build_unity_image.py \\
     --variant android \\
     --unity-version 2022.3.21f1 \\
-    --registry ghcr.io/myorg \\
+    --image-namespace myorg \\
+    [--image-registry ghcr.io] \\
+    [--oci-vendor "My Org"] \\
     [--tag 2022.3.21f1-android] \\
     [--push] \\
     [--scan] \\
     [--dockerfile-dir .docker/]
+
+BREAKING CHANGE (v2): --registry replaced by --image-namespace (REQUIRED) +
+--image-registry (optional, default ghcr.io). Full image prefix = <registry>/<namespace>.
 """
 
 import argparse
@@ -87,14 +92,20 @@ def _dockerfile_path(variant: str, dockerfile_dir: Path) -> Path:
     return candidate  # unreachable
 
 
-def _build_image_tag(registry: str, unity_version: str, variant: str, custom_tag: Optional[str]) -> str:
+def _build_image_tag(registry: str, unity_version: str, variant: str, custom_tag: Optional[str], image_name: str = "unity-build") -> str:
     if custom_tag:
-        return f"{registry}/unity-build:{custom_tag}"
-    return f"{registry}/unity-build:{unity_version}-{variant}"
+        return f"{registry}/{image_name}:{custom_tag}"
+    return f"{registry}/{image_name}:{unity_version}-{variant}"
 
 
-def _oci_labels(unity_version: str, variant: str, registry: str) -> Dict[str, str]:
-    """Standard OCI image labels."""
+def _oci_labels(unity_version: str, variant: str, registry: str, vendor: str = "Unity Build Toolkit") -> Dict[str, str]:
+    """Standard OCI image labels.
+
+    The ``vendor`` value is taken from the ``--vendor`` CLI arg (or the
+    ``UNITY_IMAGE_VENDOR`` environment variable) so that consumer organisations
+    can brand their own image registry without forking this script.  The
+    default is intentionally neutral: "Unity Build Toolkit".
+    """
     now = datetime.now(timezone.utc).isoformat()
     return {
         "org.opencontainers.image.title": f"Unity Build Image ({variant})",
@@ -103,7 +114,7 @@ def _oci_labels(unity_version: str, variant: str, registry: str) -> Dict[str, st
         ),
         "org.opencontainers.image.version": unity_version,
         "org.opencontainers.image.created": now,
-        "org.opencontainers.image.vendor": "BuzzelStudio",
+        "org.opencontainers.image.vendor": vendor,
         "org.unity.build.unity-version": unity_version,
         "org.unity.build.variant": variant,
         "org.unity.build.contract-version": IMAGE_CONTRACT_VERSION,
@@ -197,9 +208,12 @@ def _run_scan(scanner_script: Path, full_tag: str) -> None:
 def build_image(args: argparse.Namespace) -> None:
     docker = _require_docker()
 
+    # Build combined registry prefix from split args.
+    registry = f"{args.image_registry}/{args.image_namespace}"
+
     dockerfile_dir = Path(args.dockerfile_dir)
     dockerfile = _dockerfile_path(args.variant, dockerfile_dir)
-    full_tag = _build_image_tag(args.registry, args.unity_version, args.variant, args.tag)
+    full_tag = _build_image_tag(registry, args.unity_version, args.variant, args.tag, args.image_name)
 
     _log(f"Building variant   : {args.variant}")
     _log(f"Unity version      : {args.unity_version}")
@@ -219,8 +233,18 @@ def build_image(args: argparse.Namespace) -> None:
         "--build-arg", f"VARIANT={args.variant}",
     ]
 
-    # OCI labels
-    for label_key, label_value in _oci_labels(args.unity_version, args.variant, args.registry).items():
+    # OCI labels — vendor resolution order:
+    #   1. --oci-vendor explicit flag
+    #   2. UNITY_IMAGE_VENDOR env var
+    #   3. --image-namespace (the org that owns this image registry)
+    #   4. "Unity Build Toolkit" neutral fallback
+    vendor = (
+        args.oci_vendor
+        or os.environ.get("UNITY_IMAGE_VENDOR")
+        or args.image_namespace
+        or "Unity Build Toolkit"
+    )
+    for label_key, label_value in _oci_labels(args.unity_version, args.variant, registry, vendor).items():
         cmd += ["--label", f"{label_key}={label_value}"]
 
     # Tag
@@ -255,7 +279,7 @@ def build_image(args: argparse.Namespace) -> None:
 
     # ── Write manifest ─────────────────────────────────────────────────────
     manifest_path = Path(args.manifest_path)
-    _write_manifest(manifest_path, args.variant, args.unity_version, full_tag, digest, args.registry)
+    _write_manifest(manifest_path, args.variant, args.unity_version, full_tag, digest, registry)
 
     # ── Vulnerability scan ─────────────────────────────────────────────────
     if args.scan:
@@ -274,7 +298,7 @@ def build_image(args: argparse.Namespace) -> None:
         if registry_digest and registry_digest != digest:
             _write_manifest(
                 manifest_path, args.variant, args.unity_version,
-                full_tag, registry_digest, args.registry,
+                full_tag, registry_digest, registry,
             )
         _log(f"Pushed: {full_tag}")
 
@@ -292,8 +316,27 @@ def main() -> None:
                         help="Image variant to build")
     parser.add_argument("--unity-version", required=True,
                         help="Unity Editor version (e.g. 2022.3.21f1)")
-    parser.add_argument("--registry", default="ghcr.io/buzzell-studio",
-                        help="Docker registry prefix")
+    parser.add_argument("--image-registry", default="ghcr.io",
+                        help=(
+                            "Docker registry hostname (default: ghcr.io). "
+                            "Combined with --image-namespace: <registry>/<namespace>."
+                        ))
+    parser.add_argument("--image-namespace", default=None,
+                        help=(
+                            "REQUIRED. Container registry namespace / organisation "
+                            "(e.g. myorg). Full image prefix = <registry>/<namespace>."
+                        ))
+    parser.add_argument("--image-name", default="unity-build",
+                        help=(
+                            "Image repository name (default: unity-build). "
+                            "Name component in: <registry>/<namespace>/<image-name>:<tag>."
+                        ))
+    parser.add_argument("--oci-vendor", default=None,
+                        help=(
+                            "Value for the org.opencontainers.image.vendor OCI label. "
+                            "If not set, derived from --image-namespace or "
+                            "env UNITY_IMAGE_VENDOR (fallback: 'Unity Build Toolkit')."
+                        ))
     parser.add_argument("--tag",
                         help="Custom image tag (default: <version>-<variant>)")
     parser.add_argument("--push", action="store_true",
@@ -311,6 +354,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true",
                         help="Print build command without executing")
     args = parser.parse_args()
+
+    if not args.image_namespace:
+        raise ValueError(
+            "image namespace is required; pass --image-namespace <org/namespace> "
+            "(no game/org-specific default is baked in)."
+        )
 
     build_image(args)
 

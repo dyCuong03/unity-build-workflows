@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# entrypoint.sh — BuzzelStudio Unity container entrypoint
+# entrypoint.sh — Unity build toolkit container entrypoint
 #
 # This is the ONLY place Unity is invoked directly inside the container.
 # All build logic lives in Company.BuildPipeline.BuildCommand.Execute (C#).
@@ -105,6 +105,39 @@ validate_project_path() {
         log_error "Directory '${project_path}' does not look like a Unity project (missing Assets/ folder)"
         exit 1
     fi
+}
+
+# ---------------------------------------------------------------------------
+# PREFLIGHT: verify com.company.build-pipeline is installed in the consumer
+# project before launching Unity.
+#
+# The workflow toolkit invokes
+#   Company.BuildPipeline.Editor.BuildCommand.Execute
+# as the Unity -executeMethod.  If the package is absent Unity silently exits
+# with a non-zero code and no useful log entry — this check makes the failure
+# fast and actionable before Unity is launched.
+# ---------------------------------------------------------------------------
+preflight_check_build_package() {
+    local project_path="${1}"
+    local manifest="${project_path}/Packages/manifest.json"
+    local packages_lock="${project_path}/Packages/packages-lock.json"
+
+    if [[ ! -f "${manifest}" ]]; then
+        log_warn "PREFLIGHT: Packages/manifest.json not found at ${project_path} — skipping package check."
+        return 0
+    fi
+
+    if ! grep -q '"com.company.build-pipeline"' "${manifest}" 2>/dev/null &&
+       ! grep -q '"com.company.build-pipeline"' "${packages_lock}" 2>/dev/null; then
+        log_error "PREFLIGHT FAILED: Unity build pipeline package is not installed in the consumer project."
+        log_error "  Package  : com.company.build-pipeline"
+        log_error "  Method   : Company.BuildPipeline.Editor.BuildCommand.Execute"
+        log_error "  Fix      : Add 'com.company.build-pipeline' to ${manifest}"
+        log_error "             (or install it via UPM at a version compatible with the workflow toolkit)."
+        exit 1
+    fi
+
+    log_info "PREFLIGHT: com.company.build-pipeline found in consumer project."
 }
 
 # ---------------------------------------------------------------------------
@@ -279,7 +312,7 @@ case "${COMMAND}" in
 
     # -----------------------------------------------------------------------
     inspect)
-        log_info "=== BuzzelStudio Unity Container Inspect ==="
+        log_info "=== Unity Build Toolkit Container Inspect ==="
         log_info "Unity Editor   : ${UNITY_EDITOR}"
         log_info "Unity Version  : ${UNITY_VERSION:-unset}"
         log_info "Build Target   : ${ARG_TARGET_PLATFORM:-unset}"
@@ -377,6 +410,7 @@ case "${COMMAND}" in
     # -----------------------------------------------------------------------
     build)
         validate_project_path "${ARG_PROJECT_PATH}"
+        preflight_check_build_package "${ARG_PROJECT_PATH}"
 
         if [[ -z "${ARG_TARGET_PLATFORM}" ]]; then
             log_error "--target-platform is required for the 'build' command"
@@ -411,6 +445,7 @@ case "${COMMAND}" in
     # -----------------------------------------------------------------------
     build-addressables)
         validate_project_path "${ARG_PROJECT_PATH}"
+        preflight_check_build_package "${ARG_PROJECT_PATH}"
         create_output_dirs "${ARG_PROJECT_PATH}" "${ARG_OUTPUT_PATH}" \
                            "${ARG_TEST_RESULTS_PATH}" "${ARG_LOG_DIR}"
         activate_license_if_needed

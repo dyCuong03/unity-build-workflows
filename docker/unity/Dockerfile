@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.6
 # =============================================================================
 # docker/unity/Dockerfile
-# Base Unity CI image for BuzzelStudio build workflows.
+# Base Unity CI image for the Unity build toolkit.
 #
 # Build:
-#   docker build -f docker/unity/Dockerfile -t buzzelstudio/unity-base:6000.0.26f1 .
+#   docker build -f docker/unity/Dockerfile -t OWNER/unity-base:6000.0.26f1 .
 #
 # All Unity commands are invoked exclusively through entrypoint.sh.
 # Do NOT bake secrets, licenses, or credentials into this image.
@@ -25,19 +25,21 @@ ARG TOOLING_VERSION=1.0.0
 ARG BUILD_TIMESTAMP
 ARG SOURCE_COMMIT
 ARG CONTRACT_VERSION=1
+# VENDOR: configurable image vendor label. Override with --build-arg VENDOR="My Org".
+ARG VENDOR="Unity Build Toolkit"
 
-LABEL org.opencontainers.image.title="BuzzelStudio Unity Build Base" \
-      org.opencontainers.image.description="Organization Unity CI base image – no platform modules" \
-      org.opencontainers.image.vendor="BuzzelStudio" \
+LABEL org.opencontainers.image.title="Unity Build Image (base)" \
+      org.opencontainers.image.description="Unity CI base image – no platform modules" \
+      org.opencontainers.image.vendor="${VENDOR}" \
       org.opencontainers.image.version="${UNITY_VERSION}" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIMESTAMP}" \
-      com.buzzelstudio.unity.version="${UNITY_VERSION}" \
-      com.buzzelstudio.unity.changeset="${UNITY_CHANGESET}" \
-      com.buzzelstudio.unity.variant="base" \
-      com.buzzelstudio.unity.modules="" \
-      com.buzzelstudio.tooling.version="${TOOLING_VERSION}" \
-      com.buzzelstudio.contract.version="${CONTRACT_VERSION}"
+      org.unity.build.unity-version="${UNITY_VERSION}" \
+      org.unity.build.changeset="${UNITY_CHANGESET}" \
+      org.unity.build.variant="base" \
+      org.unity.build.modules="" \
+      org.unity.build.tooling-version="${TOOLING_VERSION}" \
+      org.unity.build.contract-version="${CONTRACT_VERSION}"
 
 # ---------------------------------------------------------------------------
 # System dependencies layer

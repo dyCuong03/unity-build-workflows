@@ -16,12 +16,17 @@ Usage:
     --environment development \\
     --build-config-path BuildConfig/ \\
     --output-path ./build/android \\
-    [--image-registry ghcr.io/myorg] \\
+    --image-namespace myorg \\
+    [--image-registry ghcr.io] \\
     [--image-variant android] \\
     [--image-digest sha256:...] \\
     [--cache-mode safe] \\
     [--release-mode] \\
     [--dry-run]
+
+BREAKING CHANGE (v2): --image-registry now takes only the registry hostname
+(e.g. ghcr.io). The namespace/organisation component is now a separate REQUIRED
+arg --image-namespace (e.g. myorg). Full image prefix = <registry>/<namespace>.
 """
 
 import argparse
@@ -38,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 # ── Constants ──────────────────────────────────────────────────────────────
 
 CACHE_SCHEMA_VERSION = "v1"
-DEFAULT_REGISTRY = "ghcr.io/buzzell-studio"
+DEFAULT_REGISTRY_HOST = "ghcr.io"  # Hostname only; org/namespace is --image-namespace (required)
 DEFAULT_TIMEOUT = 3600  # seconds
 
 # Platforms that must not run through this Docker-invocation path.
@@ -145,14 +150,18 @@ def _resolve_image(args: argparse.Namespace) -> Dict:
     Delegate image resolution to resolve_image_reference.py.
     Returns the resolution dict.
     """
+    # Build full registry prefix: <registry-host>/<namespace>
+    registry_prefix = f"{args.image_registry}/{args.image_namespace}"
     resolver = Path(__file__).parent / "resolve_image_reference.py"
     cmd = [
         sys.executable, str(resolver),
         "--target-platform", args.target_platform,
         "--unity-version", args.unity_version,
-        "--registry", args.image_registry,
+        "--registry", registry_prefix,
         "--output-json",
     ]
+    if args.image_name and args.image_name != "unity-build":
+        cmd += ["--image-name", args.image_name]
     if args.image_variant:
         cmd += ["--image-variant", args.image_variant]
     if args.image_digest:
@@ -391,18 +400,21 @@ Examples:
   # Local development build
   python3 scripts/docker/run_unity_container.py \\
     --project-path . --unity-version 2022.3.21f1 \\
-    --target-platform Android --environment development
+    --target-platform Android --environment development \\
+    --image-namespace myorg
 
   # CI release build with pinned digest
   python3 scripts/docker/run_unity_container.py \\
     --project-path . --unity-version 2022.3.21f1 \\
     --target-platform Android --environment production \\
+    --image-namespace myorg \\
     --release-mode --image-digest sha256:abc123...
 
   # Dry run to inspect the docker command
   python3 scripts/docker/run_unity_container.py \\
     --project-path . --unity-version 2022.3.21f1 \\
-    --target-platform WebGL --dry-run
+    --target-platform WebGL \\
+    --image-namespace myorg --dry-run
 """,
     )
 
@@ -422,10 +434,43 @@ Examples:
                         help="Path to BuildConfig directory or JSON file (host path)")
     parser.add_argument("--output-path", default="./build",
                         help="Host directory where build artefacts will be written")
+    # The action passes --command to select the Unity operation (build, test-*, etc.).
+    # The value is forwarded to the Unity invocation layer; unknown values are
+    # passed through and validated at Unity startup rather than here.
+    parser.add_argument("--command", default="build",
+                        help=(
+                            "Unity operation to run "
+                            "(build, test-editmode, test-playmode, validate, "
+                            "build-addressables). Passed through to Unity."
+                        ))
 
     # ── Image selection ────────────────────────────────────────────────────
-    parser.add_argument("--image-registry", default=DEFAULT_REGISTRY,
-                        help="Docker registry prefix")
+    parser.add_argument("--image",
+                        default=None,
+                        help=(
+                            "Pre-resolved full image reference "
+                            "(<registry>/<namespace>/<name>:<tag> or @sha256:...). "
+                            "When provided, internal resolution is skipped and "
+                            "--image-namespace is not required. The CI flow resolves "
+                            "the reference once via resolve-unity-image and passes it here."
+                        ))
+    parser.add_argument("--image-registry", default=DEFAULT_REGISTRY_HOST,
+                        help=(
+                            "Docker registry hostname only "
+                            f"(default: {DEFAULT_REGISTRY_HOST}). "
+                            "Combined with --image-namespace to form the full image prefix."
+                        ))
+    parser.add_argument("--image-namespace",
+                        default=None,
+                        help=(
+                            "REQUIRED. Container registry namespace / organisation "
+                            "(e.g. myorg). Full image prefix = <registry>/<namespace>."
+                        ))
+    parser.add_argument("--image-name", default="unity-build",
+                        help=(
+                            "Image repository name (default: unity-build). "
+                            "Overrides the name component: <registry>/<namespace>/<image-name>:<tag>."
+                        ))
     parser.add_argument("--image-variant",
                         help="Force image variant (base/android/webgl/linux)")
     parser.add_argument("--image-digest",
@@ -440,8 +485,18 @@ Examples:
                             "Library cache strategy: "
                             "off=no cache, safe=named volume, aggressive=aggressive retention"
                         ))
-    parser.add_argument("--clean-build", action="store_true",
-                        help="Wipe Library cache volume before building")
+    # --clean-build is a boolean flag that the action may pass as a string
+    # "true" or "false" (GitHub Actions bool inputs → string env vars).
+    # nargs='?' lets the flag appear with no value (const=True) or with an
+    # explicit "true"/"false" string value from the action's shell env block.
+    parser.add_argument("--clean-build",
+                        nargs="?", const=True, default=False,
+                        type=lambda v: v.lower() not in ("false", "0", "no", "off", ""),
+                        help=(
+                            "Wipe Library cache volume before building. "
+                            "Accepts flag-only or an explicit true/false string "
+                            "(for compatibility with GitHub Actions bool inputs)."
+                        ))
 
     # ── Build options ──────────────────────────────────────────────────────
     parser.add_argument("--test-level",
@@ -449,16 +504,34 @@ Examples:
                         help="Run Unity tests instead of a build")
     parser.add_argument("--build-addressables", action="store_true",
                         help="Build Addressable Asset bundles as part of the build")
-    parser.add_argument("--release-mode", action="store_true",
-                        help="Enforce release safety checks (immutable image, no dev flags)")
+    # --release-mode follows the same bool-string convention as --clean-build.
+    parser.add_argument("--release-mode",
+                        nargs="?", const=True, default=False,
+                        type=lambda v: v.lower() not in ("false", "0", "no", "off", ""),
+                        help=(
+                            "Enforce release safety checks (immutable image, no dev flags). "
+                            "Accepts flag-only or an explicit true/false string "
+                            "(for compatibility with GitHub Actions bool inputs)."
+                        ))
 
     # ── Runtime controls ───────────────────────────────────────────────────
-    parser.add_argument("--container-timeout", type=int, default=DEFAULT_TIMEOUT,
+    # --timeout is the canonical name used by run-unity-container/action.yml.
+    # --container-timeout is the legacy long form (kept for back-compat).
+    # Both set the same dest; whichever is supplied last wins.
+    parser.add_argument("--container-timeout", "--timeout",
+                        dest="container_timeout", type=int, default=DEFAULT_TIMEOUT,
                         help=f"Hard container timeout in seconds (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--cpus", type=float,
                         help="CPU limit for the container (e.g. 4.0)")
     parser.add_argument("--memory",
                         help="Memory limit for the container (e.g. 8g)")
+    # Directories for structured log and report output (wired by the action's
+    # setup-dirs step and forwarded here so the script can write artefacts to
+    # the correct host paths).  Optional: defaults keep previous behaviour.
+    parser.add_argument("--log-path", default=None,
+                        help="Host directory for Unity Editor log output")
+    parser.add_argument("--report-path", default=None,
+                        help="Host directory for build/test reports")
 
     # ── Mode flags ─────────────────────────────────────────────────────────
     parser.add_argument("--dry-run", action="store_true",
@@ -473,6 +546,19 @@ Examples:
 
 def main() -> None:
     args = parse_args()
+
+    # ── Namespace validation ───────────────────────────────────────────────
+    # --image-namespace is required ONLY when the caller does not supply a
+    # pre-resolved --image reference. The CI flow resolves the reference once
+    # (resolve-unity-image) and passes --image, so namespace is not needed
+    # there; local/standalone invocations that let this script resolve the
+    # image internally must provide --image-namespace (no generic default).
+    if not args.image and not args.image_namespace:
+        raise ValueError(
+            "image namespace is required; pass --image-namespace <org/namespace> "
+            "(or pass a pre-resolved --image <reference>). "
+            "No game/org-specific default is baked in."
+        )
 
     # ── Early platform check ───────────────────────────────────────────────
     # Docker regression guard: reject any platform that must not run through
@@ -500,12 +586,26 @@ def main() -> None:
     _docker_version_ok(docker)
 
     # ── Resolve image reference ────────────────────────────────────────────
-    _log(f"Resolving image for {args.target_platform} / Unity {args.unity_version} …")
-    resolution = _resolve_image(args)
-    image_ref = resolution["image_ref"]
-    _log(f"Image : {image_ref}")
-    if resolution.get("digest"):
-        _log(f"Digest: {resolution['digest']}")
+    if args.image:
+        # Pre-resolved reference supplied by the caller (CI resolve-unity-image
+        # flow). Use it directly; do not re-resolve. In release mode a pinned
+        # digest is still required.
+        image_ref = args.image
+        if args.image_digest and "@sha256:" not in image_ref:
+            image_ref = f"{image_ref}@{args.image_digest}"
+        if args.release_mode and "@sha256:" not in image_ref:
+            _abort(
+                "Release mode requires an immutable digest-pinned image. "
+                "Pass --image-digest sha256:<hash> or an @sha256: pinned --image."
+            )
+        _log(f"Image : {image_ref} (pre-resolved)")
+    else:
+        _log(f"Resolving image for {args.target_platform} / Unity {args.unity_version} …")
+        resolution = _resolve_image(args)
+        image_ref = resolution["image_ref"]
+        _log(f"Image : {image_ref}")
+        if resolution.get("digest"):
+            _log(f"Digest: {resolution['digest']}")
 
     # ── Optionally validate image ──────────────────────────────────────────
     if not args.skip_image_validation and not args.dry_run:

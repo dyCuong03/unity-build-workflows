@@ -1,27 +1,8 @@
 {
-  "$schema": "../../../../schemas/unity-build-config.schema.json",
-  "projectName": "my-unity-game",
-  "companyName": "Acme Games",
-  "productName": "My Unity Game",
-  "bundleVersion": "1.0.0",
-  "buildNumberStrategy": "github_run_number",
   "outputDirectory": "Builds/Production",
-  "scenes": [
-    "Assets/Scenes/Bootstrap.unity",
-    "Assets/Scenes/MainMenu.unity",
-    "Assets/Scenes/Level01.unity"
-  ],
-  "scriptingBackend": "IL2CPP",
-  "apiCompatibilityLevel": "NET_Standard_2_1",
-  "developmentBuild": false,
-  "allowDebugging": false,
-  "runTests": true,
   "android": {
-    "applicationId": "com.acmegames.myunitygame",
+    "applicationId": "com.example.project",
     "buildAppBundle": true,
-    "minSdkVersion": 22,
-    "targetSdkVersion": 34,
-    "architecture": "ARM64",
     "keystoreMode": "custom",
     "symbolExport": "public"
   },
@@ -34,6 +15,6 @@
   "metadata": {
     "environment": "production",
     "channel": "google-play",
-    "repo": "my-unity-game"
+    "repo": "example-project"
   }
 }

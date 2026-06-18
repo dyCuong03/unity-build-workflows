@@ -2,6 +2,8 @@
 
 Full reference for every field in the `BuildConfig` JSON schema. Validate your config against `schemas/unity-build-config.schema.json`.
 
+> **Environment overlays are partial by design** — they are validated after deep-merge with `base.json`, not in isolation. Only `base.json` must be independently schema-valid.
+
 ---
 
 ## Root Fields

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/BuzzelStudio/unity-build-workflows/schemas/unity-build-config.schema.json",
+  "$id": "https://github.com/OWNER/unity-build-workflows/schemas/unity-build-config.schema.json",
   "title": "UnityBuildConfig",
   "description": "Schema for Unity CI/CD build configuration files used with unity-build-workflows.",
   "type": "object",

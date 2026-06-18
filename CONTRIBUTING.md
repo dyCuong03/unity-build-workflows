@@ -35,7 +35,7 @@ Project-specific hooks and custom build methods belong in the consumer repositor
 ### Setup
 
 ```bash
-git clone https://github.com/BuzzelStudio/unity-build-workflows.git
+git clone https://github.com/<WORKFLOW_OWNER>/unity-build-workflows.git
 cd unity-build-workflows
 pip install -r tests/requirements.txt
 ```
@@ -161,6 +161,6 @@ A breaking change requires:
 
 ## Maintainers
 
-- BuzzelStudio mobile team (`@BuzzelStudio/mobile`)
+- `@<WORKFLOW_OWNER>/mobile` team
 
-For questions, use the internal `#ci-platform` Slack channel.
+For questions, open a GitHub issue or contact the platform team via your organization's preferred channel.

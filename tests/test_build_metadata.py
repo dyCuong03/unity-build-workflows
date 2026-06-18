@@ -36,7 +36,7 @@ def sample_metadata_kwargs():
         "cache_status": "hit",
         "success": True,
         "unity_version": "2022.3.45f1",
-        "project_name": "backpack-adventures",
+        "project_name": "example-project",
         "git_sha": "abc1234def5678",
         "git_branch": "main",
     }

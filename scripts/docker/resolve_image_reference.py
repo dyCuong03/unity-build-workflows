@@ -15,15 +15,26 @@ Usage (standalone):
   python3 scripts/docker/resolve_image_reference.py \
     --target-platform Android \
     --unity-version 2022.3.21f1 \
-    --registry ghcr.io/myorg \
+    --image-namespace myorg \
+    [--image-registry ghcr.io] \
     [--manifest-path .docker/image-manifest.json] \
     [--release-mode] \
     [--image-variant android] \
     [--image-digest sha256:...]
+
+  # Legacy: --registry still accepted as a convenience passthrough (combined prefix)
+  python3 scripts/docker/resolve_image_reference.py \
+    --target-platform Android \
+    --unity-version 2022.3.21f1 \
+    --registry ghcr.io/myorg
+
+BREAKING CHANGE (v2): prefer --image-namespace (required) + --image-registry (optional,
+default ghcr.io) over the legacy --registry combined-prefix arg.
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -64,6 +75,9 @@ UNSUPPORTED_PLATFORMS: Dict[str, str] = {
 }
 
 SUPPORTED_VARIANTS = {"base", "android", "webgl", "linux"}
+
+# Digest must be exactly sha256: followed by 64 lowercase hex characters.
+DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 # Minimum image contract version this tooling can consume
 MIN_CONTRACT_VERSION = 1
@@ -134,6 +148,14 @@ def enforce_immutable_reference(
     if not release_mode:
         return image_ref
 
+    # Validate format of --image-digest when provided.
+    if digest and not DIGEST_PATTERN.match(digest):
+        raise ValueError(
+            f"--image-digest '{digest}' is not a valid image digest. "
+            "Must match sha256:[0-9a-f]{64} (64 lowercase hex characters). "
+            "Example: sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
+        )
+
     # A digest reference contains '@sha256:'
     has_digest_in_ref = "@sha256:" in image_ref
     has_separate_digest = bool(digest)
@@ -169,6 +191,7 @@ def resolve(
     target_platform: str,
     unity_version: str,
     registry: str,
+    image_name: str = "unity-build",
     image_variant: Optional[str] = None,
     image_digest: Optional[str] = None,
     manifest_path: Optional[Path] = None,
@@ -233,6 +256,19 @@ def resolve(
     if manifest:
         validate_contract_version(manifest)
         images = manifest.get("images", {})
+
+        # Fail fast if the requested variant is not in the manifest.
+        # Silently falling back would produce a build-time failure inside Unity
+        # with no diagnostic — this error surfaces the problem immediately.
+        if images and variant not in images:
+            available = sorted(images.keys())
+            raise ValueError(
+                f"Image variant '{variant}' (required for platform '{target_platform}') "
+                f"is not present in the image manifest. "
+                f"Available variants: {', '.join(available) if available else '(none)'}. "
+                "Build or push the missing variant first, then update the manifest."
+            )
+
         variant_info = images.get(variant, {})
         tag = variant_info.get("tag", default_tag)
         digest_from_manifest = variant_info.get("digest", "")
@@ -252,10 +288,10 @@ def resolve(
         if not image_digest and digest_from_manifest:
             image_digest = digest_from_manifest
 
-        image_ref = f"{registry_from_manifest}/unity-build:{tag}"
+        image_ref = f"{registry_from_manifest}/{image_name}:{tag}"
     else:
         # No manifest — build reference from convention
-        image_ref = f"{registry}/unity-build:{default_tag}"
+        image_ref = f"{registry}/{image_name}:{default_tag}"
         supported_targets = list(
             k for k, v in PLATFORM_VARIANT_MAP.items() if v == variant
         )
@@ -283,8 +319,30 @@ def main() -> None:
                         help="Unity target platform (Android, WebGL, StandaloneLinux64, …)")
     parser.add_argument("--unity-version", required=True,
                         help="Unity Editor version (e.g. 2022.3.21f1)")
-    parser.add_argument("--registry", default="ghcr.io/buzzell-studio",
-                        help="Docker image registry prefix")
+    # New split args (v2). --image-namespace is required; --image-registry defaults to ghcr.io.
+    parser.add_argument("--image-registry", default="ghcr.io",
+                        help=(
+                            "Docker registry hostname (default: ghcr.io). "
+                            "Combined with --image-namespace: <registry>/<namespace>."
+                        ))
+    parser.add_argument("--image-namespace", default=None,
+                        help=(
+                            "REQUIRED (unless --registry is used). "
+                            "Container registry namespace / organisation (e.g. myorg)."
+                        ))
+    # Legacy passthrough: accept --registry <host>/<ns> for callers (e.g. run_unity_container.py)
+    # that already build the combined prefix.
+    parser.add_argument("--registry", default=None,
+                        help=(
+                            "Combined registry prefix (e.g. ghcr.io/myorg). "
+                            "Deprecated in favour of --image-registry + --image-namespace."
+                        ))
+    parser.add_argument("--image-name", default="unity-build",
+                        help=(
+                            "Image repository name (default: unity-build). "
+                            "Overrides the hardcoded name component of the image reference: "
+                            "<registry>/<namespace>/<image-name>:<tag>."
+                        ))
     parser.add_argument("--image-variant",
                         help="Force a specific image variant (base/android/webgl/linux)")
     parser.add_argument("--image-digest",
@@ -297,13 +355,27 @@ def main() -> None:
                         help="Output result as JSON (machine-readable)")
     args = parser.parse_args()
 
+    # Build the combined registry prefix.
+    # --registry (legacy combined form) takes precedence if provided.
+    # Otherwise require --image-namespace and combine with --image-registry.
+    if args.registry:
+        registry = args.registry
+    elif args.image_namespace:
+        registry = f"{args.image_registry}/{args.image_namespace}"
+    else:
+        raise ValueError(
+            "image namespace is required; pass --image-namespace <org/namespace> "
+            "(no game/org-specific default is baked in)."
+        )
+
     manifest_path = Path(args.manifest_path) if args.manifest_path else None
 
     try:
         result = resolve(
             target_platform=args.target_platform,
             unity_version=args.unity_version,
-            registry=args.registry,
+            registry=registry,
+            image_name=args.image_name,
             image_variant=args.image_variant,
             image_digest=args.image_digest,
             manifest_path=manifest_path,

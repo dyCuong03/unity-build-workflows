@@ -10,6 +10,33 @@ The public API is the set of reusable workflow inputs/outputs documented in [doc
 
 ## [Unreleased]
 
+### Added
+
+#### Generic Consumer Integration (`feature/generic-consumer-integration`)
+
+- `templates/BuildConfig.*.json` — De-game-ified all four BuildConfig templates: replaced `Acme Studios` / `com.acmestudios.myunitygame` / multi-scene game setup with generic `ExampleCompany` / `ExampleProject` / `com.example.project` / `Assets/Scenes/Main.unity`. Overlay templates (`development`, `staging`, `production`) now carry only environment-specific diffs; `base.json` is the complete, schema-valid source of truth.
+- `templates/build-secrets.example.md` — Rewritten as a full secret matrix with required-for columns: **Development / Staging / Production / Artifact-only / Store-deploy**. Covers all secret groups: `UNITY_*`, `ANDROID_*`, `GOOGLE_PLAY_*`, `IOS_*`, `APP_STORE_CONNECT_*`, `DISCORD_WEBHOOK_URL`. Production secrets (`APP_STORE_CONNECT_*`, `GOOGLE_PLAY_*`) marked for GitHub Environment scoping.
+- `docs/ADD_NEW_PROJECT.md` — Rewritten as a consumer-centric onboarding guide. Documents the consumer contract: Unity project + BuildConfig + UPM package dependency + small caller workflow + secrets. Includes the canonical caller YAML pattern (`uses: <WORKFLOW_OWNER>/unity-build-workflows/...@<ref>`), UPM manifest example, toolkit-checkout note, and `<ref>` guidance (dev=`@main`/SHA, stable=exact tag). Fixes iOS/Windows platform status: **iOS is supported** via the macOS lane; Windows is unsupported.
+- `docs/ARCHITECTURE.md` — Updated consumer diagram to use `<WORKFLOW_OWNER>` placeholder and correct `<ref>` guidance.
+- `docs/IMAGE_LIFECYCLE.md` — Added "Bootstrap" section: explains that a compatible image must be published before consumers can use it; documents the dev bootstrap path (manual `build-unity-image.yml` dispatch), the production digest-pinned path, and the actionable error when no image is found in the registry.
+- `docs/ANDROID.md` — Added image bootstrap reference and aligned `<WORKFLOW_OWNER>` placeholders.
+- `docs/SECURITY.md` — Standardized iOS secret names (`IOS_DISTRIBUTION_CERTIFICATE_BASE64`, `APP_STORE_CONNECT_PRIVATE_KEY`) throughout; aligned with secret matrix; added `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` to rotation policy.
+
+### Changed
+
+- `README.md` — Consumer-centric rewrite: UPM package step added as Step 1; `<WORKFLOW_OWNER>` placeholder used everywhere `BuzzelStudio` appeared; platform table references `docs/PLATFORM_MATRIX.md` as canonical source; versioning policy clarified: `@vMAJOR` tags do not exist yet, dev→`@main`/SHA, stable→exact tag; image disclaimer added (images must be published before use).
+- `CHANGELOG.md` — All `BuzzelStudio` GitHub URL references replaced with `<WORKFLOW_OWNER>` placeholder.
+- `CONTRIBUTING.md` — Clone URL and `@BuzzelStudio/mobile` team reference replaced with `<WORKFLOW_OWNER>` placeholder.
+- All docs — `ghcr.io/buzzelstudio/unity-builder` replaced with `ghcr.io/<WORKFLOW_OWNER>/unity-builder` throughout owned files.
+
+### Fixed
+
+- **iOS supported/unsupported contradiction** — `docs/ADD_NEW_PROJECT.md` previously stated "iOS and Windows are **not supported**" — corrected to reflect that iOS is supported via the `macos-unity-xcode` executor (added in v2.1.0). Windows remains unsupported. Platform status is now consistent across `README.md`, `docs/ARCHITECTURE.md`, `docs/PLATFORM_LIMITATIONS.md`, and `docs/ADD_NEW_PROJECT.md`.
+- **`macos-latest` claim removed** — `docs/ARCHITECTURE.md` and `docs/PLATFORM_LIMITATIONS.md` previously listed `macos-latest` as a valid runner for iOS. Corrected to `macos-13` only (approved, validated runner).
+- **`@v2` / `@v2.0.0` tag claims** — All references claiming a specific version tag (e.g. `@v2`, `@v2.0.0`, `@v2.1.0`) is currently valid have been corrected. No version tags have been published yet. Documentation now distinguishes `@main` (dev), exact SHA (pinned), and `@vX.Y.Z` (stable — use once a release is published).
+- **Package ID / UPM path** — `com.example.build-pipeline` was incorrectly used; corrected to `com.company.build-pipeline` (the canonical, intentionally neutral identifier). UPM path corrected to `/unity-package/Packages/com.company.build-pipeline#<WORKFLOW_REF>` (verified against on-disk structure).
+- **Registry namespace** — Image references now use `ghcr.io/<IMAGE_NAMESPACE>/unity-builder` (configurable via `--image-namespace`) rather than a hardcoded org name.
+
 ---
 
 ## [2.2.0] — 2026-06-18
@@ -246,8 +273,8 @@ This release migrates the entire build platform from native Unity Editor executi
 
 ---
 
-[Unreleased]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.2.0...HEAD
-[2.2.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.1.0...v2.2.0
-[2.1.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v2.0.0...v2.1.0
-[2.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/compare/v1.0.0...v2.0.0
-[1.0.0]: https://github.com/BuzzelStudio/unity-build-workflows/releases/tag/v1.0.0
+[Unreleased]: https://github.com/<WORKFLOW_OWNER>/unity-build-workflows/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/<WORKFLOW_OWNER>/unity-build-workflows/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/<WORKFLOW_OWNER>/unity-build-workflows/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/<WORKFLOW_OWNER>/unity-build-workflows/compare/v1.0.0...v2.0.0
+[1.0.0]: https://github.com/<WORKFLOW_OWNER>/unity-build-workflows/releases/tag/v1.0.0

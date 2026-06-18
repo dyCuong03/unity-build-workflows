@@ -71,9 +71,9 @@ sudo systemctl enable actions.runner.<org>-<repo>.<runner-name>
 Pre-pull Unity images on the runner to avoid download time during builds:
 
 ```bash
-docker pull ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-android-v2.0.0
-docker pull ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-webgl-v2.0.0
-docker pull ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-linux-v2.0.0
+docker pull ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-android-v2.0.0
+docker pull ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-webgl-v2.0.0
+docker pull ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-linux-v2.0.0
 ```
 
 Set up a cron job to pull latest images weekly.

@@ -158,22 +158,54 @@ def _validate_ios_block(
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
-    """Load all JSON files from a BuildConfig directory and merge them."""
+    """Load all JSON files from a BuildConfig directory and merge them.
+
+    Raises:
+        FileNotFoundError: with actionable message when the path does not exist.
+        ValueError: with file path + line/column context when JSON is malformed.
+    """
     merged: dict[str, Any] = {}
     if not config_path.is_dir():
         # Single file
         if config_path.is_file():
             with open(config_path) as f:
-                return json.load(f)
-        raise FileNotFoundError(f"Config path not found: {config_path}")
+                try:
+                    return json.load(f)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"Invalid JSON in {config_path} "
+                        f"at line {exc.lineno}, column {exc.colno}: {exc.msg}. "
+                        "Open the file, go to the reported line/column, and fix the syntax error."
+                    ) from exc
+        raise FileNotFoundError(
+            f"Config path not found: {config_path}. "
+            "Pass --config-path pointing to a BuildConfig directory or a single JSON file."
+        )
 
-    for filename in sorted(config_path.glob("*.json")):
+    json_files = sorted(config_path.glob("*.json"))
+    if not json_files:
+        raise FileNotFoundError(
+            f"No JSON files found in BuildConfig directory: {config_path}. "
+            "Add at least one *.json file with the required fields."
+        )
+
+    for filename in json_files:
         try:
             with open(filename) as f:
                 data = json.load(f)
-            merged.update(data)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in {filename}: {e}") from e
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid JSON in {filename} "
+                f"at line {exc.lineno}, column {exc.colno}: {exc.msg}. "
+                "Open the file, go to the reported line/column, and fix the syntax error."
+            ) from exc
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"Expected a JSON object (dict) in {filename}, "
+                f"got {type(data).__name__}. "
+                "Each BuildConfig file must be a top-level JSON object."
+            )
+        merged.update(data)
 
     return merged
 
@@ -194,7 +226,10 @@ def validate(
     # Check required base fields
     for field in REQUIRED_FIELDS_BASE:
         if field not in config:
-            errors.append(f"Missing required field: '{field}'")
+            errors.append(
+                f"Missing required field: '{field}'. "
+                "Add this field to your base.json BuildConfig file."
+            )
 
     # Version format
     version = config.get("version", "")
@@ -205,7 +240,10 @@ def validate(
     platform_reqs = REQUIRED_FIELDS_PER_PLATFORM.get(platform, set())
     for field in platform_reqs:
         if field not in config:
-            errors.append(f"Missing required field for {platform}: '{field}'")
+            errors.append(
+                f"Missing required field for platform '{platform}': '{field}'. "
+                f"Add '{field}' to your BuildConfig for {platform} builds."
+            )
 
     # Environment
     env = config.get("environment", environment)
@@ -286,9 +324,17 @@ def main() -> None:
         config = load_config(config_path)
     except (FileNotFoundError, ValueError) as e:
         if args.output_json:
-            print(json.dumps({"error": str(e), "error_count": 1, "warning_count": 0}))
+            print(json.dumps({
+                "config_path": str(config_path),
+                "error": str(e),
+                "error_count": 1,
+                "warning_count": 0,
+                "errors": [str(e)],
+                "warnings": [],
+                "valid": False,
+            }))
         else:
-            print(f"ERROR: {e}", file=sys.stderr)
+            print(f"ERROR [{config_path}]: {e}", file=sys.stderr)
         sys.exit(1)
 
     errors, warnings = validate(
@@ -319,10 +365,12 @@ def main() -> None:
     else:
         if errors:
             for e in errors:
-                print(f"ERROR: {e}", file=sys.stderr)
+                # Prefix each error with the config path so CI logs are immediately
+                # actionable — operator can open the file without hunting for context.
+                print(f"ERROR [{config_path}]: {e}", file=sys.stderr)
         if warnings:
             for w in warnings:
-                print(f"WARNING: {w}", file=sys.stderr)
+                print(f"WARNING [{config_path}]: {w}", file=sys.stderr)
         if not errors and not warnings:
             print(f"OK: BuildConfig valid for {args.platform} ({args.environment})")
 

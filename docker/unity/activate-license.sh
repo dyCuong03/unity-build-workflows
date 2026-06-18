@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# activate-license.sh — Unity license activation for BuzzelStudio containers
+# activate-license.sh — Unity license activation for Unity build toolkit containers
 #
 # Activation strategy (in priority order):
 #   1. UNITY_LICENSE env var     – ULF file content (base64 or raw XML)

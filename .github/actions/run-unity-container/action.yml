@@ -126,7 +126,7 @@ runs:
       run: |
         set +e  # Don't exit immediately — capture the exit code
 
-        python3 scripts/docker/run_unity_container.py \
+        python3 "${{ github.action_path }}/../../../scripts/docker/run_unity_container.py" \
           --project-path        "$PROJECT_PATH" \
           --unity-version       "$UNITY_VERSION" \
           --target-platform     "$TARGET_PLATFORM" \

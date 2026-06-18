@@ -12,7 +12,7 @@ Both targets use the `linux` image variant.
 ## Image Variant
 
 ```
-ghcr.io/buzzelstudio/unity-builder:6000.0.26f1-linux-v2.0.0
+ghcr.io/<IMAGE_NAMESPACE>/unity-builder:6000.0.26f1-linux-v2.0.0
 ```
 
 Base: `unityci/editor:6000.0.26f1-linux-il2cpp-3`
@@ -23,7 +23,7 @@ Modules: `linux-il2cpp`, `linux-server`
 
 ```yaml
 build-linux:
-  uses: BuzzelStudio/unity-build-workflows/.github/workflows/unity-build-linux.yml@v2
+  uses: <WORKFLOW_OWNER>/unity-build-workflows/.github/workflows/unity-build-linux.yml@<ref>
   with:
     project-path: .
     unity-version: '6000.0.26f1'

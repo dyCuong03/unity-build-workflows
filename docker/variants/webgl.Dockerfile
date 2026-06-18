@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1.6
 # =============================================================================
 # docker/variants/webgl.Dockerfile
-# Unity WebGL build image for BuzzelStudio.
+# Unity WebGL build image for the Unity build toolkit.
 #
 # GameCI webgl image includes: Emscripten toolchain.
 #
 # Build:
 #   docker build -f docker/variants/webgl.Dockerfile \
-#     -t buzzelstudio/unity-webgl:6000.0.26f1 .
+#     -t OWNER/unity-webgl:6000.0.26f1 .
 # =============================================================================
 
 ARG UNITY_VERSION=6000.0.26f1
@@ -23,18 +23,20 @@ ARG UNITY_CHANGESET=a5cf46f7893b
 ARG TOOLING_VERSION=1.0.0
 ARG BUILD_TIMESTAMP
 ARG SOURCE_COMMIT
+# VENDOR: configurable image vendor label. Override with --build-arg VENDOR="My Org".
+ARG VENDOR="Unity Build Toolkit"
 
-LABEL org.opencontainers.image.title="BuzzelStudio Unity WebGL" \
+LABEL org.opencontainers.image.title="Unity Build Image (webgl)" \
       org.opencontainers.image.description="Unity WebGL build image with Emscripten" \
-      org.opencontainers.image.vendor="BuzzelStudio" \
+      org.opencontainers.image.vendor="${VENDOR}" \
       org.opencontainers.image.version="${UNITY_VERSION}" \
       org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       org.opencontainers.image.created="${BUILD_TIMESTAMP}" \
-      com.buzzelstudio.unity.version="${UNITY_VERSION}" \
-      com.buzzelstudio.unity.changeset="${UNITY_CHANGESET}" \
-      com.buzzelstudio.unity.variant="webgl" \
-      com.buzzelstudio.unity.modules="webgl" \
-      com.buzzelstudio.tooling.version="${TOOLING_VERSION}"
+      org.unity.build.unity-version="${UNITY_VERSION}" \
+      org.unity.build.changeset="${UNITY_CHANGESET}" \
+      org.unity.build.variant="webgl" \
+      org.unity.build.modules="webgl" \
+      org.unity.build.tooling-version="${TOOLING_VERSION}"
 
 # ---------------------------------------------------------------------------
 # System deps and WebGL tooling

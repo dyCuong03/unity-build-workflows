@@ -1,22 +1,22 @@
 # Docker Image Infrastructure
 
 This directory contains the base Unity CI image definition and all supporting
-scripts used by BuzzelStudio build workflows.
+scripts used by the Unity build toolkit workflows.
 
 ## Image Hierarchy
 
 ```
 unityci/editor:<version>-base-3          (upstream GameCI)
-  └── docker/unity/Dockerfile            buzzelstudio/unity-base
+  └── docker/unity/Dockerfile            <example-namespace>/unity-build
 
 unityci/editor:<version>-android-3       (upstream GameCI)
-  └── docker/variants/android.Dockerfile buzzelstudio/unity-android
+  └── docker/variants/android.Dockerfile <example-namespace>/unity-build
 
 unityci/editor:<version>-webgl-3         (upstream GameCI)
-  └── docker/variants/webgl.Dockerfile   buzzelstudio/unity-webgl
+  └── docker/variants/webgl.Dockerfile   <example-namespace>/unity-build
 
 unityci/editor:<version>-linux-il2cpp-3  (upstream GameCI)
-  └── docker/variants/linux.Dockerfile   buzzelstudio/unity-linux
+  └── docker/variants/linux.Dockerfile   <example-namespace>/unity-build
 ```
 
 All variants carry the same `entrypoint.sh`, `healthcheck.sh`,
@@ -39,13 +39,13 @@ docker build \
   -f docker/unity/Dockerfile \
   --build-arg SOURCE_COMMIT=$(git rev-parse HEAD) \
   --build-arg BUILD_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ') \
-  -t buzzelstudio/unity-base:6000.0.26f1 \
+  -t <example-namespace>/unity-build:6000.0.26f1 \
   .
 
 # Android variant
 docker build \
   -f docker/variants/android.Dockerfile \
-  -t buzzelstudio/unity-android:6000.0.26f1 \
+  -t <example-namespace>/unity-build:6000.0.26f1 \
   .
 ```
 
@@ -57,7 +57,7 @@ docker run --rm \
   -v $(pwd)/Builds:/workspace/Builds \
   -v $(pwd)/Logs:/workspace/Logs \
   -e UNITY_LICENSE="$(cat path/to/Unity_v6.x.ulf)" \
-  buzzelstudio/unity-android:6000.0.26f1 \
+  <example-namespace>/unity-build:6000.0.26f1 \
   build \
     --project-path /workspace \
     --target-platform Android \
@@ -105,7 +105,7 @@ writable even when the container is run with `--user`.
 # Run as arbitrary UID
 docker run --rm --user 2000:2000 \
   -v $(pwd):/workspace \
-  buzzelstudio/unity-android:6000.0.26f1 inspect
+  <example-namespace>/unity-build:6000.0.26f1 inspect
 ```
 
 ## Environment Variables Reference

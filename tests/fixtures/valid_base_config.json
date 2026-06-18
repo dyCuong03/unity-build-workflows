@@ -1,8 +1,8 @@
 {
   "$schema": "../../schemas/unity-build-config.schema.json",
-  "projectName": "backpack-adventures",
-  "companyName": "BuzzelStudio",
-  "productName": "Backpack Adventures",
+  "projectName": "example-project",
+  "companyName": "ExampleCompany",
+  "productName": "ExampleProject",
   "bundleVersion": "1.4.0",
   "buildNumberStrategy": "github_run_number",
   "outputDirectory": "Builds/Development",
@@ -16,7 +16,7 @@
   "allowDebugging": true,
   "runTests": true,
   "android": {
-    "applicationId": "com.buzzellstudio.backpackadventures",
+    "applicationId": "com.example.project",
     "keystoreMode": "debug",
     "minSdkVersion": 22,
     "targetSdkVersion": 34,

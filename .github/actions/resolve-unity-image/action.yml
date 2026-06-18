@@ -12,6 +12,14 @@ inputs:
     description: Docker image registry hostname
     required: false
     default: ghcr.io
+  image-namespace:
+    description: Image repository namespace (e.g. myorg/unity-images). Overrides auto-derived namespace.
+    required: false
+    default: ''
+  image-name:
+    description: Image name override (e.g. unity-editor). Overrides auto-derived name.
+    required: false
+    default: ''
   image-variant:
     description: Image variant override (android, webgl, linux). Auto-detected from target-platform if empty.
     required: false
@@ -49,18 +57,32 @@ runs:
         UNITY_VERSION: ${{ inputs.unity-version }}
         TARGET_PLATFORM: ${{ inputs.target-platform }}
         IMAGE_REGISTRY: ${{ inputs.image-registry }}
+        IMAGE_NAMESPACE: ${{ inputs.image-namespace }}
+        IMAGE_NAME: ${{ inputs.image-name }}
         IMAGE_VARIANT: ${{ inputs.image-variant }}
         IMAGE_DIGEST: ${{ inputs.image-digest }}
         RELEASE_MODE: ${{ inputs.release-mode }}
       run: |
-        python3 scripts/docker/resolve_image_reference.py \
-          --unity-version "$UNITY_VERSION" \
-          --target-platform "$TARGET_PLATFORM" \
-          --registry "$IMAGE_REGISTRY" \
-          --variant "$IMAGE_VARIANT" \
-          --digest "$IMAGE_DIGEST" \
-          --release-mode "$RELEASE_MODE" \
-          --output-format github-actions
+        # Fail fast if namespace not provided — script cannot derive a valid image path without it.
+        if [ -z "$IMAGE_NAMESPACE" ]; then
+          echo "::error::image-namespace input is required for resolve-unity-image."
+          echo "::error::Set image-namespace to the registry namespace hosting your Unity images"
+          echo "::error::(e.g. myorg/unity-images). Passed via the workflow image-namespace input."
+          exit 1
+        fi
+        # NOTE: arg names --image-registry / --image-namespace / --image-name are the expected
+        # final CLI shape after unity-package-engineer updates resolve_image_reference.py.
+        # Until that script change lands, IMAGE_NAMESPACE / IMAGE_NAME are consumed as env vars.
+        python3 "${{ github.action_path }}/../../../scripts/docker/resolve_image_reference.py" \
+          --unity-version    "$UNITY_VERSION" \
+          --target-platform  "$TARGET_PLATFORM" \
+          --image-registry   "$IMAGE_REGISTRY" \
+          --image-namespace  "$IMAGE_NAMESPACE" \
+          --image-name       "$IMAGE_NAME" \
+          --variant          "$IMAGE_VARIANT" \
+          --digest           "$IMAGE_DIGEST" \
+          --release-mode     "$RELEASE_MODE" \
+          --output-format    github-actions
 
     - name: Validate image manifest
       id: validate-manifest

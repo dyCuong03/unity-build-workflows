@@ -1,8 +1,8 @@
 {
   "$schema": "../../../../schemas/unity-build-config.schema.json",
-  "projectName": "my-unity-game",
-  "companyName": "Acme Games",
-  "productName": "My Unity Game",
+  "projectName": "example-project",
+  "companyName": "ExampleCompany",
+  "productName": "ExampleProject",
   "bundleVersion": "1.0.0",
   "buildNumberStrategy": "github_run_number",
   "outputDirectory": "Builds",
@@ -17,7 +17,7 @@
   "allowDebugging": false,
   "runTests": true,
   "android": {
-    "applicationId": "com.acmegames.myunitygame",
+    "applicationId": "com.example.project",
     "buildAppBundle": true,
     "minSdkVersion": 22,
     "targetSdkVersion": 34,
@@ -30,6 +30,6 @@
     "failBuildSizeIncreasePct": 15
   },
   "metadata": {
-    "repo": "my-unity-game"
+    "repo": "example-project"
   }
 }

@@ -1,39 +1,23 @@
 {
   "$schema": "../schemas/unity-build-config.schema.json",
-  "projectName": "MyUnityGame",
-  "companyName": "Acme Studios",
-  "productName": "My Unity Game [DEV]",
-  "bundleVersion": "1.0.0",
-  "buildNumberStrategy": "github_run_number",
 
+  "productName": "Example Project [DEV]",
   "outputDirectory": "Builds/Development",
 
-  "scenes": [
-    "Assets/Scenes/Boot.unity",
-    "Assets/Scenes/MainMenu.unity",
-    "Assets/Scenes/Gameplay.unity",
-    "Assets/Scenes/GameOver.unity"
-  ],
-
   "scriptingBackend": "Mono",
-  "apiCompatibilityLevel": "NET_Standard_2_1",
 
   "developmentBuild": true,
   "allowDebugging": true,
   "connectProfiler": true,
-  "deepProfiling": false,
-  "cleanBuildCache": false,
-
-  "runTests": true,
 
   "addressables": {
-    "enabled": true,
+    "enabled": false,
     "profile": "Development",
     "buildRemoteCatalog": false
   },
 
   "android": {
-    "applicationId": "com.acmestudios.myunitygame.dev",
+    "applicationId": "com.example.project.dev",
     "buildAppBundle": false,
     "minSdkVersion": 22,
     "targetSdkVersion": 34,
@@ -43,7 +27,7 @@
   },
 
   "iOS": {
-    "bundleIdentifier": "com.acmestudios.myunitygame.dev",
+    "bundleIdentifier": "com.example.project.dev",
     "marketingVersion": "1.0.0",
     "targetOSVersion": "14.0",
     "architecture": "ARM64",
@@ -56,19 +40,17 @@
     "generateXcodeProjectOnly": false
   },
 
-  "windows": {
-    "architecture": "x86_64",
-    "outputName": "MyUnityGame_Dev",
-    "compressOutput": false
-  },
-
   "webgl": {
     "compressionFormat": "Disabled",
     "decompressionFallback": false,
     "dataCaching": false,
     "memorySize": 512,
-    "template": "Default",
     "outputName": "WebGL_Dev"
+  },
+
+  "windows": {
+    "outputName": "ExampleProject_Dev",
+    "compressOutput": false
   },
 
   "gates": {
@@ -82,13 +64,11 @@
   },
 
   "metadata": {
-    "repository": "https://github.com/acmestudios/myunitygame",
-    "team": "mobile",
     "environment": "development"
   },
 
   "hooks": {
-    "preBuild": ["inject-dev-watermark"],
-    "postBuild": ["notify-slack-dev-channel"]
+    "preBuild": [],
+    "postBuild": []
   }
 }
