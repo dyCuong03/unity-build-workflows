@@ -607,6 +607,28 @@ def main() -> None:
         if resolution.get("digest"):
             _log(f"Digest: {resolution['digest']}")
 
+    # ── Pre-pull image ─────────────────────────────────────────────────────
+    # Pull before validate so that validate_unity_image.py's docker commands
+    # hit the local cache rather than racing against a slow network pull.
+    if not args.dry_run:
+        _log("Pulling image (ensures local cache for validation and run) …")
+        try:
+            pull_result = subprocess.run(
+                [docker, "pull", image_ref],
+                timeout=600,  # 10 minutes — large Unity images can be 4 GB+
+            )
+            if pull_result.returncode != 0:
+                print(
+                    f"WARNING: docker pull exited {pull_result.returncode} — "
+                    "will continue and let docker run attempt the pull.",
+                    file=sys.stderr,
+                )
+        except subprocess.TimeoutExpired:
+            print(
+                "WARNING: Image pull timed out after 10 minutes — continuing anyway.",
+                file=sys.stderr,
+            )
+
     # ── Optionally validate image ──────────────────────────────────────────
     if not args.skip_image_validation and not args.dry_run:
         _log("Validating image …")
