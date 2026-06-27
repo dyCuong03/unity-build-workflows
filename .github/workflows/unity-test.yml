@@ -99,6 +99,9 @@ jobs:
   test:
     name: Run Tests (${{ inputs.test-level }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write  # required by dorny/test-reporter to publish test results
     outputs:
       tests-passed: ${{ steps.check-results.outputs.tests-passed }}
       test-report-artifact: ${{ steps.set-artifact-name.outputs.artifact-name }}
