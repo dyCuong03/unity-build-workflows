@@ -373,9 +373,9 @@ def main() -> None:
     # --registry (legacy combined form) takes precedence if provided.
     # Otherwise require --image-namespace and combine with --image-registry.
     if args.registry:
-        registry = args.registry
+        registry = args.registry.lower()
     elif args.image_namespace:
-        registry = f"{args.image_registry}/{args.image_namespace}"
+        registry = f"{args.image_registry}/{args.image_namespace}".lower()
     else:
         raise ValueError(
             "image namespace is required; pass --image-namespace <org/namespace> "
