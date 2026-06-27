@@ -135,7 +135,7 @@ jobs:
           docker run --rm \
             --entrypoint /bin/bash \
             "$IMAGE_TAG" \
-            -c "test -x /entrypoint.sh && echo 'Entrypoint OK.'"
+            -c "test -x /usr/local/bin/entrypoint.sh && echo 'Entrypoint OK.'"
 
           echo "Validating variant: ${VARIANT}"
           case "$VARIANT" in
