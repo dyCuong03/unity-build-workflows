@@ -84,10 +84,10 @@ WORKDIR /workspace
 # ---------------------------------------------------------------------------
 # Copy organisation tooling scripts
 # ---------------------------------------------------------------------------
-COPY docker/unity/entrypoint.sh       /usr/local/bin/entrypoint.sh
-COPY docker/unity/healthcheck.sh      /usr/local/bin/healthcheck.sh
-COPY docker/unity/activate-license.sh /usr/local/bin/activate-license.sh
-COPY docker/unity/return-license.sh   /usr/local/bin/return-license.sh
+COPY entrypoint.sh       /usr/local/bin/entrypoint.sh
+COPY healthcheck.sh      /usr/local/bin/healthcheck.sh
+COPY activate-license.sh /usr/local/bin/activate-license.sh
+COPY return-license.sh   /usr/local/bin/return-license.sh
 
 RUN chmod 755 \
         /usr/local/bin/entrypoint.sh \
