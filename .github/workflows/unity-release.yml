@@ -197,6 +197,8 @@ jobs:
       artifact-retention-days: 90
       release-mode: true
       image-digest: ${{ needs.pre-release-checks.outputs.image-digest }}
+      workflow-repository: ${{ github.repository }}
+      workflow-ref: ${{ github.sha }}
     secrets: inherit
 
   # ─── GITHUB RELEASE ────────────────────────────────────────────────────────────

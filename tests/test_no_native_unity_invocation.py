@@ -26,11 +26,12 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 
 # Files approved to contain direct (non-Docker) Unity invocations.
-# docker/unity/entrypoint.sh            — Docker container entrypoint (Docker lane)
-# .github/workflows/unity-build-ios.yml — iOS pipeline (native Unity on macOS)
-# .github/workflows/unity-test-ios.yml  — iOS test runner (native Unity on macOS)
-# .github/workflows/unity-release-ios.yml — iOS release pipeline (tag-triggered)
-# scripts/ios/run_unity_ios.sh          — Unity batch-mode caller (macOS only, called by workflows)
+# docker/unity/entrypoint.sh                — Docker container entrypoint (Docker lane)
+# .github/workflows/unity-build-ios.yml     — iOS pipeline (native Unity on macOS)
+# .github/workflows/unity-test-ios.yml      — iOS test runner (native Unity on macOS)
+# .github/workflows/unity-release-ios.yml   — iOS release pipeline (tag-triggered)
+# scripts/ios/run_unity_ios.sh              — Unity batch-mode caller (macOS only, called by workflows)
+# .github/actions/build-ios/action.yml      — iOS composite action (native Unity on macOS, added T7)
 # The iOS files are an approved exception: Xcode requires native Unity on macOS.
 # All other files must use the Docker executor.
 ALLOWED_PATH = "docker/unity/entrypoint.sh"  # kept for test backward-compat
@@ -40,6 +41,7 @@ ALLOWED_PATHS = frozenset({
     ".github/workflows/unity-test-ios.yml",
     ".github/workflows/unity-release-ios.yml",  # iOS release pipeline (tag-triggered)
     "scripts/ios/run_unity_ios.sh",             # iOS Unity batch-mode invocation (macOS only)
+    ".github/actions/build-ios/action.yml",     # iOS composite action — native Unity on macOS (T7)
 })
 
 # ---------------------------------------------------------------------------

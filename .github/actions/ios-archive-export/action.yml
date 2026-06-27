@@ -17,9 +17,9 @@ inputs:
     required: false
     default: Release
   archive-path:
-    description: Output path for the .xcarchive
+    description: Output path for the .xcarchive (e.g. Builds/iOS/Archive/MyApp.xcarchive)
     required: false
-    default: Builds/iOS/Archive/Game.xcarchive
+    default: Builds/iOS/Archive/Unity.xcarchive
   export-path:
     description: Output directory for the exported .ipa
     required: false

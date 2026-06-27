@@ -114,6 +114,22 @@ on:
         type: string
         required: false
         default: ''
+      integration-mode:
+        description: >
+          How the toolkit is supplied: 'remote' (default) checks out from
+          workflow-repository@workflow-ref; 'submodule' symlinks from the
+          consumer repo's checked-out submodule at toolkit-path.
+        type: string
+        required: false
+        default: remote
+      toolkit-path:
+        description: >
+          Relative path within the consumer repo where the toolkit submodule
+          lives (submodule mode only). Must not start with '/' or contain '..'.
+          Ignored in remote mode.
+        type: string
+        required: false
+        default: tools/unity-build-workflows
 
     secrets:
       UNITY_LICENSE:
@@ -180,40 +196,70 @@ jobs:
           path: project
           fetch-depth: 2
 
-      # ── 2. Toolkit checkout ─────────────────────────────────────────────────
-      - name: Resolve toolkit ref
+      # ── 2. Toolkit setup ─────────────────────────────────────────────────────
+      - name: Setup toolkit
         id: toolkit
         shell: bash
+        env:
+          INTEGRATION_MODE: ${{ inputs.integration-mode }}
+          TOOLKIT_PATH_INPUT: ${{ inputs.toolkit-path }}
+          WORKFLOW_REPO: ${{ inputs.workflow-repository }}
+          WORKFLOW_REF: ${{ inputs.workflow-ref }}
         run: |
-          REPO="${{ inputs.workflow-repository }}"
-          REF="${{ inputs.workflow-ref }}"
-          # github.workflow_ref/_sha resolve to the TOP-LEVEL caller workflow (the
-          # consumer), NOT this reusable workflow's repo — they cannot self-identify
-          # the toolkit in cross-repo use. Auto-derive only when the caller IS this
-          # repo (same-repo CI); otherwise require explicit inputs and fail fast.
-          if [ -z "$REPO" ]; then
-            echo "::error::workflow-repository input is required."
-            echo "::error::In your caller workflow 'with:' block add:"
-            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
-            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
-            exit 1
+          MODE="${INTEGRATION_MODE:-remote}"
+
+          if [ "$MODE" = "submodule" ]; then
+            TP="${TOOLKIT_PATH_INPUT:-tools/unity-build-workflows}"
+            # Reject path traversal and absolute paths
+            if [[ "$TP" == /* ]] || [[ "$TP" == *..* ]]; then
+              echo "::error::toolkit-path must be a relative path with no '..' components. Got: '$TP'"
+              exit 1
+            fi
+            SUBMODULE_SRC="project/${TP}"
+            if [ ! -d "$SUBMODULE_SRC" ]; then
+              echo "::error::toolkit-path submodule not found at '${SUBMODULE_SRC}'."
+              echo "::error::Ensure '${TP}' is initialized: git submodule update --init '${TP}'"
+              exit 1
+            fi
+            mkdir -p .ci
+            ln -sf "$(realpath "${SUBMODULE_SRC}")" .ci/unity-build-workflows
+            echo "[toolkit] Linked submodule: ${SUBMODULE_SRC} → .ci/unity-build-workflows"
+            SHA=$(git -C "${SUBMODULE_SRC}" rev-parse HEAD 2>/dev/null || echo "unknown")
+            echo "[toolkit] Submodule commit: ${SHA}"
+          else
+            # remote mode — require explicit repo + ref
+            if [ -z "$WORKFLOW_REPO" ]; then
+              echo "::error::workflow-repository input is required (integration-mode: remote)."
+              echo "::error::Add to your caller workflow's 'with:' block:"
+              echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+              exit 1
+            fi
+            if [ -z "$WORKFLOW_REF" ]; then
+              echo "::error::workflow-ref input is required (integration-mode: remote)."
+              echo "::error::Add to your caller workflow's 'with:' block:"
+              echo "::error::  workflow-ref: <REF>"
+              exit 1
+            fi
+            echo "repo=${WORKFLOW_REPO}" >> "$GITHUB_OUTPUT"
+            echo "ref=${WORKFLOW_REF}"   >> "$GITHUB_OUTPUT"
           fi
-          if [ -z "$REF" ]; then
-            echo "::error::workflow-ref input is required."
-            echo "::error::In your caller workflow 'with:' block add:"
-            echo "::error::  workflow-ref: <REF>"
-            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
-            exit 1
-          fi
-          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
-          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
-      - name: Checkout toolkit (unity-build-workflows)
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "TOOLKIT_PATH=.ci/unity-build-workflows" >> "$GITHUB_ENV"
+
+      - name: Checkout toolkit (remote mode)
+        if: steps.toolkit.outputs.mode == 'remote'
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.toolkit.outputs.repo }}
           ref: ${{ steps.toolkit.outputs.ref }}
           path: .ci/unity-build-workflows
           persist-credentials: false
+
+      - name: Report toolkit version
+        shell: bash
+        run: |
+          git -C .ci/unity-build-workflows log -1 --format="Toolkit: %H (%s)" 2>/dev/null \
+            || echo "Toolkit version: unknown" 
 
       # ── 3. Compute effective project path ───────────────────────────────────
       - name: Compute effective project path
@@ -238,15 +284,15 @@ jobs:
           # build will be dispatched to ios-runner-label by the build-ios job.
           # Docker platforms (Android, WebGL, Linux64, LinuxServer) must not dispatch
           # to the macOS runner.
-          if [[ -f ".ci/unity-build-workflows/scripts/common/resolve_platform_executor.py" ]]; then
+          if [[ -f "${TOOLKIT_PATH}/scripts/common/resolve_platform_executor.py" ]]; then
             if [[ "${TARGET_PLATFORM}" == "iOS" ]]; then
-              EXECUTOR=$(python3 .ci/unity-build-workflows/scripts/common/resolve_platform_executor.py \
+              EXECUTOR=$(python3 "${TOOLKIT_PATH}/scripts/common/resolve_platform_executor.py" \
                 --target-platform iOS \
                 --runner-os macOS)
               echo "executor=${EXECUTOR}"
               echo "::notice::iOS will be dispatched to ${EXECUTOR} runner"
             else
-              EXECUTOR=$(python3 .ci/unity-build-workflows/scripts/common/resolve_platform_executor.py \
+              EXECUTOR=$(python3 "${TOOLKIT_PATH}/scripts/common/resolve_platform_executor.py" \
                 --target-platform "${TARGET_PLATFORM}" \
                 --runner-os "${RUNNER_OS_VAL}")
               echo "executor=${EXECUTOR}"
@@ -295,7 +341,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           GIT_REF: ${{ github.ref }}
         run: |
-          VERSION=$(python3 .ci/unity-build-workflows/scripts/common/resolve_project_version.py \
+          VERSION=$(python3 "${TOOLKIT_PATH}/scripts/common/resolve_project_version.py" \
             --project-path  "$PROJECT_ROOT" \
             --config-path   "$PROJECT_ROOT/$BUILD_CONFIG_PATH" \
             --environment   "$ENVIRONMENT" \
@@ -324,6 +370,8 @@ jobs:
       release-mode: ${{ inputs.release-mode }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -350,6 +398,8 @@ jobs:
       image-digest: ${{ inputs.image-digest }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -385,6 +435,8 @@ jobs:
       image-digest: ${{ inputs.image-digest }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets: inherit
 
   build-webgl:
@@ -416,6 +468,8 @@ jobs:
       image-digest: ${{ inputs.image-digest }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets: inherit
 
   build-linux:
@@ -447,6 +501,8 @@ jobs:
       image-digest: ${{ inputs.image-digest }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets: inherit
 
   build-ios:
@@ -476,6 +532,8 @@ jobs:
       ios-runner-label: ${{ inputs.ios-runner-label }}
       workflow-repository: ${{ inputs.workflow-repository }}
       workflow-ref: ${{ inputs.workflow-ref }}
+      integration-mode: ${{ inputs.integration-mode }}
+      toolkit-path: ${{ inputs.toolkit-path }}
     secrets: inherit
 
   # ─── 5. REPORT ─────────────────────────────────────────────────────────────────
@@ -496,40 +554,70 @@ jobs:
         with:
           path: project
 
-      # ── 2. Toolkit checkout ───────────────────────────────────────────────
-      - name: Resolve toolkit ref
+      # ── 2. Toolkit setup ───────────────────────────────────────────────────
+      - name: Setup toolkit
         id: toolkit
         shell: bash
+        env:
+          INTEGRATION_MODE: ${{ inputs.integration-mode }}
+          TOOLKIT_PATH_INPUT: ${{ inputs.toolkit-path }}
+          WORKFLOW_REPO: ${{ inputs.workflow-repository }}
+          WORKFLOW_REF: ${{ inputs.workflow-ref }}
         run: |
-          REPO="${{ inputs.workflow-repository }}"
-          REF="${{ inputs.workflow-ref }}"
-          # github.workflow_ref/_sha resolve to the TOP-LEVEL caller workflow (the
-          # consumer), NOT this reusable workflow's repo — they cannot self-identify
-          # the toolkit in cross-repo use. Auto-derive only when the caller IS this
-          # repo (same-repo CI); otherwise require explicit inputs and fail fast.
-          if [ -z "$REPO" ]; then
-            echo "::error::workflow-repository input is required."
-            echo "::error::In your caller workflow 'with:' block add:"
-            echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
-            echo "::error::Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'."
-            exit 1
+          MODE="${INTEGRATION_MODE:-remote}"
+
+          if [ "$MODE" = "submodule" ]; then
+            TP="${TOOLKIT_PATH_INPUT:-tools/unity-build-workflows}"
+            # Reject path traversal and absolute paths
+            if [[ "$TP" == /* ]] || [[ "$TP" == *..* ]]; then
+              echo "::error::toolkit-path must be a relative path with no '..' components. Got: '$TP'"
+              exit 1
+            fi
+            SUBMODULE_SRC="project/${TP}"
+            if [ ! -d "$SUBMODULE_SRC" ]; then
+              echo "::error::toolkit-path submodule not found at '${SUBMODULE_SRC}'."
+              echo "::error::Ensure '${TP}' is initialized: git submodule update --init '${TP}'"
+              exit 1
+            fi
+            mkdir -p .ci
+            ln -sf "$(realpath "${SUBMODULE_SRC}")" .ci/unity-build-workflows
+            echo "[toolkit] Linked submodule: ${SUBMODULE_SRC} → .ci/unity-build-workflows"
+            SHA=$(git -C "${SUBMODULE_SRC}" rev-parse HEAD 2>/dev/null || echo "unknown")
+            echo "[toolkit] Submodule commit: ${SHA}"
+          else
+            # remote mode — require explicit repo + ref
+            if [ -z "$WORKFLOW_REPO" ]; then
+              echo "::error::workflow-repository input is required (integration-mode: remote)."
+              echo "::error::Add to your caller workflow's 'with:' block:"
+              echo "::error::  workflow-repository: <OWNER>/unity-build-workflows"
+              exit 1
+            fi
+            if [ -z "$WORKFLOW_REF" ]; then
+              echo "::error::workflow-ref input is required (integration-mode: remote)."
+              echo "::error::Add to your caller workflow's 'with:' block:"
+              echo "::error::  workflow-ref: <REF>"
+              exit 1
+            fi
+            echo "repo=${WORKFLOW_REPO}" >> "$GITHUB_OUTPUT"
+            echo "ref=${WORKFLOW_REF}"   >> "$GITHUB_OUTPUT"
           fi
-          if [ -z "$REF" ]; then
-            echo "::error::workflow-ref input is required."
-            echo "::error::In your caller workflow 'with:' block add:"
-            echo "::error::  workflow-ref: <REF>"
-            echo "::error::Must match @<REF> in 'uses: .../unity-build-workflows/...@<REF>'."
-            exit 1
-          fi
-          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
-          echo "ref=${REF}"   >> "$GITHUB_OUTPUT"
-      - name: Checkout toolkit (unity-build-workflows)
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "TOOLKIT_PATH=.ci/unity-build-workflows" >> "$GITHUB_ENV"
+
+      - name: Checkout toolkit (remote mode)
+        if: steps.toolkit.outputs.mode == 'remote'
         uses: actions/checkout@v4
         with:
           repository: ${{ steps.toolkit.outputs.repo }}
           ref: ${{ steps.toolkit.outputs.ref }}
           path: .ci/unity-build-workflows
           persist-credentials: false
+
+      - name: Report toolkit version
+        shell: bash
+        run: |
+          git -C .ci/unity-build-workflows log -1 --format="Toolkit: %H (%s)" 2>/dev/null \
+            || echo "Toolkit version: unknown" 
 
       - name: Determine build result
         id: build-result

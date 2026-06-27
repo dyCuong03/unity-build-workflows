@@ -8,7 +8,7 @@
 # Optional env vars:
 #   SCHEME              — Xcode scheme (default: Unity-iPhone)
 #   CONFIGURATION       — Xcode configuration (default: Release)
-#   ARCHIVE_PATH        — output .xcarchive path (default: Builds/iOS/Archive/Game.xcarchive)
+#   ARCHIVE_PATH        — output .xcarchive path (default: Builds/iOS/Archive/Unity.xcarchive)
 #   LOG_PATH            — log file path (default: Logs/iOS/xcode-archive.log)
 set -euo pipefail
 
@@ -17,7 +17,7 @@ DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:?DEVELOPMENT_TEAM is required}"
 KEYCHAIN_PATH="${KEYCHAIN_PATH:?KEYCHAIN_PATH is required}"
 SCHEME="${SCHEME:-Unity-iPhone}"
 CONFIGURATION="${CONFIGURATION:-Release}"
-ARCHIVE_PATH="${ARCHIVE_PATH:-Builds/iOS/Archive/Game.xcarchive}"
+ARCHIVE_PATH="${ARCHIVE_PATH:-Builds/iOS/Archive/Unity.xcarchive}"
 LOG_PATH="${LOG_PATH:-Logs/iOS/xcode-archive.log}"
 
 mkdir -p "$(dirname "${ARCHIVE_PATH}")"

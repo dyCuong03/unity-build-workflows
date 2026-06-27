@@ -34,7 +34,7 @@ set -Eeuo pipefail
 # ---------------------------------------------------------------------------
 readonly SCRIPT_NAME="$(basename "$0")"
 readonly DEFAULT_PROJECT_PATH="/workspace"
-readonly DEFAULT_BUILD_METHOD="Company.BuildPipeline.BuildCommand.Execute"
+readonly DEFAULT_BUILD_METHOD="Company.BuildPipeline.Editor.BuildCommand.Execute"
 readonly DEFAULT_ENVIRONMENT="development"
 readonly UNITY_EDITOR="${UNITY_EDITOR:-/usr/bin/unity-editor}"
 readonly UNITY_LOG_FILE="${UNITY_LOG_FILE:-/tmp/unity-home/Editor.log}"

@@ -1377,6 +1377,32 @@ class TestEndToEndConsumerFixtureContract:
             f"got: {resolved}"
         )
 
+    def test_output_path_not_relative_to_toolkit(self, consumer_workspace):
+        """
+        Cross-path assertion: build output MUST be inside project/ and
+        MUST NOT be inside .ci/unity-build-workflows/.
+
+        Catches the class of bugs where output_dir is resolved relative to
+        the toolkit root instead of the consumer project root.
+        """
+        project = consumer_workspace["project"]
+        toolkit = consumer_workspace["toolkit"]
+        base = _load_json(project / "BuildConfig" / "base.json")
+        output_dir = base.get("outputDirectory", "Builds")
+
+        # Resolve relative to project root (the correct anchor)
+        output_path = project / output_dir
+
+        # Must be inside the consumer project
+        assert output_path.is_relative_to(project), (
+            f"Output path {output_path} must be relative to consumer project root {project}"
+        )
+        # Must NOT be inside the toolkit checkout tree
+        assert not output_path.is_relative_to(toolkit), (
+            f"Output path {output_path} must NOT be inside toolkit tree {toolkit}. "
+            "Toolkit is at .ci/unity-build-workflows/ and must never receive build output."
+        )
+
     def test_toolkit_scripts_not_in_consumer_project(self, consumer_workspace):
         """
         Toolkit scripts must live in .ci/unity-build-workflows/scripts/,

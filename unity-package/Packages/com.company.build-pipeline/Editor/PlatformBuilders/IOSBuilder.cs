@@ -117,8 +117,9 @@ namespace Company.BuildPipeline.Editor
 
             // ── 11. Signing ───────────────────────────────────────────────────
             // Team ID is set for both automatic and manual signing modes.
-            var teamId = (iosCfg != null && !string.IsNullOrWhiteSpace(iosCfg.DevelopmentTeamId))
-                ? iosCfg.DevelopmentTeamId
+            // EffectiveTeamId prefers developmentTeamId, falls back to legacy developmentTeam alias.
+            var teamId = (iosCfg != null && !string.IsNullOrWhiteSpace(iosCfg.EffectiveTeamId))
+                ? iosCfg.EffectiveTeamId
                 : cfg.SigningConfig?.TeamId ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(teamId))
                 PlayerSettings.iOS.appleDeveloperTeamID = teamId;
