@@ -104,6 +104,12 @@ jobs:
       test-report-artifact: ${{ steps.set-artifact-name.outputs.artifact-name }}
 
     steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+
       # ── 1. Consumer repo checkout ─────────────────────────────────────────────
       - name: Checkout consumer repo
         uses: actions/checkout@v4
