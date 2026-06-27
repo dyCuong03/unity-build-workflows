@@ -105,15 +105,14 @@ jobs:
         id: build
         uses: docker/build-push-action@v5
         with:
-          context: docker/unity
-          file: docker/unity/Dockerfile.${{ matrix.variant }}
+          context: .
+          file: docker/variants/${{ matrix.variant }}.Dockerfile
           push: false
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             UNITY_VERSION=${{ steps.unity-version.outputs.unity-version }}
-            VARIANT=${{ matrix.variant }}
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 
@@ -181,14 +180,13 @@ jobs:
         if: inputs.push-image != false
         uses: docker/build-push-action@v5
         with:
-          context: docker/unity
-          file: docker/unity/Dockerfile.${{ matrix.variant }}
+          context: .
+          file: docker/variants/${{ matrix.variant }}.Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             UNITY_VERSION=${{ steps.unity-version.outputs.unity-version }}
-            VARIANT=${{ matrix.variant }}
           cache-from: type=gha,scope=${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
 

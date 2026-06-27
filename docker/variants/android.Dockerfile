@@ -23,6 +23,7 @@ ARG UNITY_CHANGESET=a5cf46f7893b
 ARG TOOLING_VERSION=1.0.0
 ARG BUILD_TIMESTAMP
 ARG SOURCE_COMMIT
+ARG CONTRACT_VERSION=1
 # VENDOR: configurable image vendor label. Override with --build-arg VENDOR="My Org".
 ARG VENDOR="Unity Build Toolkit"
 
@@ -36,7 +37,8 @@ LABEL org.opencontainers.image.title="Unity Build Image (android)" \
       org.unity.build.changeset="${UNITY_CHANGESET}" \
       org.unity.build.variant="android" \
       org.unity.build.modules="android,android-sdk-ndk-tools" \
-      org.unity.build.tooling-version="${TOOLING_VERSION}"
+      org.unity.build.tooling-version="${TOOLING_VERSION}" \
+      org.unity.build.contract-version="${CONTRACT_VERSION}"
 
 # ---------------------------------------------------------------------------
 # Extra system deps (beyond what GameCI android image provides)
