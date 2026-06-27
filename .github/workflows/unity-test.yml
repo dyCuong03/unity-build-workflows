@@ -323,6 +323,7 @@ jobs:
 
       - name: Publish Test Report
         if: always()
+        continue-on-error: true  # reporter may lack checks:write — never fail the job
         uses: dorny/test-reporter@v1
         with:
           name: Unity Tests (${{ inputs.test-level }})
