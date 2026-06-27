@@ -1,0 +1,844 @@
+name: Unity Build (Multi-Platform)
+
+# Simplified multi-platform orchestrator.
+#
+# Graph:
+#   detect (once) → validate (once) → test (once)
+#     → build-docker-platforms (matrix: Android/WebGL/Linux64/LinuxServer, fail-fast: false)
+#     → build-ios (macOS native, separate)
+#     → final-report (if: always)
+#
+# Supported platforms: Android, WebGL, Linux64, LinuxServer, iOS, All
+#
+# Vs. unity-build.yml: this workflow accepts a single `platform` input covering
+# all supported targets. detect/validate/test run ONCE regardless of how many
+# platforms are selected. Docker platforms share a matrix job. iOS stays separate
+# because it requires a macOS runner with Unity + Xcode.
+
+on:
+  workflow_call:
+    inputs:
+      # ── Platform selection ────────────────────────────────────────────────────
+      platform:
+        description: >
+          Target platform(s) to build.
+          All         → Android + WebGL + Linux64 + iOS (all supported targets)
+          Android     → Android only (Docker, ubuntu-latest)
+          WebGL       → WebGL only (Docker, ubuntu-latest)
+          Linux64     → Linux64 standalone (Docker, ubuntu-latest)
+          LinuxServer → Linux dedicated server (Docker, ubuntu-latest)
+          iOS         → iOS Xcode project (macOS native runner)
+        type: string
+        required: false
+        default: All
+
+      # ── Project ───────────────────────────────────────────────────────────────
+      project-path:
+        description: Path to the Unity project root relative to consumer repo root
+        type: string
+        required: false
+        default: '.'
+      unity-version:
+        description: Unity editor version (e.g., 6000.0.26f1)
+        type: string
+        required: true
+      environment:
+        description: Build environment (development, staging, production)
+        type: string
+        required: false
+        default: development
+      build-config-path:
+        description: Path to BuildConfig directory (relative to project-path)
+        type: string
+        required: false
+        default: BuildConfig
+
+      # ── Build behaviour ───────────────────────────────────────────────────────
+      test-level:
+        description: Tests to run (none, editmode, playmode, full). Runs once for all platforms.
+        type: string
+        required: false
+        default: editmode
+      cache-mode:
+        description: Library cache strategy (off, safe, aggressive)
+        type: string
+        required: false
+        default: safe
+      build-addressables:
+        description: Build Addressables content before player build
+        type: boolean
+        required: false
+        default: false
+      clean-build:
+        description: Delete Library/ before building (force full reimport)
+        type: boolean
+        required: false
+        default: false
+      upload-artifact:
+        description: Upload build artifacts after successful build
+        type: boolean
+        required: false
+        default: true
+      artifact-retention-days:
+        description: Days to retain build artifacts
+        type: number
+        required: false
+        default: 14
+      release-mode:
+        description: Enable release gates (digest-pinned image, no dev flags, fail-on-warnings)
+        type: boolean
+        required: false
+        default: false
+      deploy-target:
+        description: >
+          Deployment target (none, google-play, cloudflare).
+          google-play applies to Android only; cloudflare applies to WebGL only.
+        type: string
+        required: false
+        default: none
+
+      # ── Docker image ──────────────────────────────────────────────────────────
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-namespace:
+        description: Image repository namespace (e.g. myorg/unity-images)
+        type: string
+        required: false
+        default: ''
+      image-name:
+        description: Image name override (e.g. unity-editor)
+        type: string
+        required: false
+        default: ''
+      image-digest:
+        description: Pinned image digest (required when release-mode=true)
+        type: string
+        required: false
+        default: ''
+
+      # ── iOS ───────────────────────────────────────────────────────────────────
+      ios-runner-label:
+        description: >
+          Self-hosted runner label for macOS Unity+Xcode builds (iOS only).
+          Must be a macOS runner with Unity iOS Build Support installed.
+          GitHub-hosted macos-latest is NOT supported.
+        type: string
+        required: false
+        default: macos-unity-xcode
+
+      # ── Toolkit wiring (required for cross-repo reuse) ───────────────────────
+      workflow-repository:
+        description: >
+          Repository that owns this workflow (owner/repo).
+          Must match the repo in 'uses: <OWNER>/unity-build-workflows/...@<REF>'.
+        type: string
+        required: false
+        default: ''
+      workflow-ref:
+        description: >
+          Git ref of the toolkit repository to checkout.
+          Must match the @<ref> in the caller's 'uses:' directive.
+        type: string
+        required: false
+        default: ''
+      integration-mode:
+        description: >
+          'remote' (default) — checkout toolkit from workflow-repository@workflow-ref.
+          'submodule'        — symlink from consumer repo submodule at toolkit-path.
+        type: string
+        required: false
+        default: remote
+      toolkit-path:
+        description: >
+          Submodule path within the consumer repo (submodule mode only).
+          Must be a relative path with no '..' components. Default matches
+          unity-build-workflows submodule convention.
+        type: string
+        required: false
+        default: unity-build-workflows
+
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      # Android signing / deployment
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASS:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASS:
+        required: false
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
+        required: false
+      # WebGL deployment
+      CLOUDFLARE_API_TOKEN:
+        required: false
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      # iOS signing / TestFlight
+      IOS_DISTRIBUTION_CERTIFICATE_BASE64:
+        required: false
+      IOS_DISTRIBUTION_CERTIFICATE_PASSWORD:
+        required: false
+      IOS_PROVISIONING_PROFILE_BASE64:
+        required: false
+      APP_STORE_CONNECT_KEY_ID:
+        required: false
+      APP_STORE_CONNECT_ISSUER_ID:
+        required: false
+      APP_STORE_CONNECT_PRIVATE_KEY:
+        required: false
+      # Notifications
+      DISCORD_WEBHOOK_URL:
+        required: false
+
+    outputs:
+      build-version:
+        description: Resolved build version string
+        value: ${{ jobs.detect.outputs.build-version }}
+      docker-platforms:
+        description: JSON array of Docker platforms that were (or would be) built
+        value: ${{ jobs.detect.outputs.docker-platforms }}
+      validation-passed:
+        description: Whether the common validation step passed
+        value: ${{ jobs.validate.outputs.validation-passed }}
+      tests-passed:
+        description: Whether the common test step passed
+        value: ${{ jobs.test.outputs.tests-passed }}
+
+# ── REUSABLE STEP TEMPLATES ────────────────────────────────────────────────────
+# Shared toolkit-setup logic is inlined into each job (GitHub Actions does not
+# support YAML anchors in workflow files). Keep in sync across jobs.
+
+jobs:
+  # ─── 1. DETECT ────────────────────────────────────────────────────────────────
+  # Runs ONCE. Resolves: platform matrix, build version, should-build flag.
+  detect:
+    name: Detect & Platform Select
+    runs-on: ubuntu-latest
+    outputs:
+      should-build:      ${{ steps.changes.outputs.should-build }}
+      docker-platforms:  ${{ steps.matrix.outputs.docker-platforms }}
+      run-ios:           ${{ steps.matrix.outputs.run-ios }}
+      build-version:     ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@v4
+        with:
+          path: project
+          fetch-depth: 2
+
+      - name: Setup toolkit
+        id: toolkit
+        shell: bash
+        env:
+          INTEGRATION_MODE: ${{ inputs.integration-mode }}
+          TOOLKIT_PATH_INPUT: ${{ inputs.toolkit-path }}
+          WORKFLOW_REPO: ${{ inputs.workflow-repository }}
+          WORKFLOW_REF: ${{ inputs.workflow-ref }}
+        run: |
+          MODE="${INTEGRATION_MODE:-remote}"
+          if [ "$MODE" = "submodule" ]; then
+            TP="${TOOLKIT_PATH_INPUT:-unity-build-workflows}"
+            if [[ "$TP" == /* ]] || [[ "$TP" == *..* ]]; then
+              echo "::error::toolkit-path must be relative with no '..' components. Got: '$TP'"
+              exit 1
+            fi
+            SUBMODULE_SRC="project/${TP}"
+            if [ ! -d "$SUBMODULE_SRC" ]; then
+              echo "::error::toolkit-path submodule not found at '${SUBMODULE_SRC}'."
+              echo "::error::Run: git submodule update --init '${TP}'"
+              exit 1
+            fi
+            mkdir -p .ci
+            ln -sf "$(realpath "${SUBMODULE_SRC}")" .ci/unity-build-workflows
+            SHA=$(git -C "${SUBMODULE_SRC}" rev-parse HEAD 2>/dev/null || echo "unknown")
+            echo "[toolkit] Linked submodule: ${SUBMODULE_SRC} → .ci/unity-build-workflows (${SHA})"
+          else
+            if [ -z "$WORKFLOW_REPO" ]; then
+              echo "::error::workflow-repository input is required (integration-mode: remote)."
+              exit 1
+            fi
+            if [ -z "$WORKFLOW_REF" ]; then
+              echo "::error::workflow-ref input is required (integration-mode: remote)."
+              exit 1
+            fi
+            echo "repo=${WORKFLOW_REPO}" >> "$GITHUB_OUTPUT"
+            echo "ref=${WORKFLOW_REF}"   >> "$GITHUB_OUTPUT"
+          fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "TOOLKIT_PATH=.ci/unity-build-workflows" >> "$GITHUB_ENV"
+
+      - name: Checkout toolkit (remote mode)
+        if: steps.toolkit.outputs.mode == 'remote'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      - name: Resolve platform matrix
+        id: matrix
+        shell: bash
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          python3 "${TOOLKIT_PATH}/scripts/common/resolve_platform_matrix.py" \
+            --platform "$PLATFORM" \
+            --output-format github-actions
+
+      - name: Detect changed paths
+        id: changes
+        shell: bash
+        working-directory: project
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null \
+                    || git diff --name-only HEAD 2>/dev/null \
+                    || echo "")
+          NON_DOC=$(echo "$CHANGED" | grep -vE "^(docs/|.*\.md$|README)" || true)
+          if [ -z "$NON_DOC" ] && [ -n "$CHANGED" ]; then
+            echo "Only documentation changed — skipping build."
+            echo "should-build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve build version
+        id: version
+        shell: bash
+        env:
+          PROJECT_ROOT: project
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          GIT_REF: ${{ github.ref }}
+        run: |
+          VERSION=$(python3 "${TOOLKIT_PATH}/scripts/common/resolve_project_version.py" \
+            --project-path  "$PROJECT_ROOT" \
+            --config-path   "$PROJECT_ROOT/$BUILD_CONFIG_PATH" \
+            --environment   "$ENVIRONMENT" \
+            --ref           "$GIT_REF")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved build version: ${VERSION}"
+
+  # ─── 2. VALIDATE (common — runs once for all Docker platforms) ────────────────
+  # Skipped when only iOS is selected (iOS has no Docker image for validation).
+  # Uses Linux64 image variant — validation scripts are Python-only, not platform-specific.
+  validate:
+    name: Validate (Common)
+    needs: detect
+    if: |
+      needs.detect.outputs.should-build == 'true' &&
+      needs.detect.outputs.docker-platforms != '[]'
+    uses: ./.github/workflows/unity-validate.yml
+    with:
+      project-path:      ${{ inputs.project-path }}
+      unity-version:     ${{ inputs.unity-version }}
+      target-platform:   Linux64
+      environment:       ${{ inputs.environment }}
+      build-config-path: ${{ inputs.build-config-path }}
+      image-registry:    ${{ inputs.image-registry }}
+      image-namespace:   ${{ inputs.image-namespace }}
+      image-name:        ${{ inputs.image-name }}
+      image-digest:      ${{ inputs.image-digest }}
+      release-mode:      ${{ inputs.release-mode }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref:        ${{ inputs.workflow-ref }}
+      integration-mode:    ${{ inputs.integration-mode }}
+      toolkit-path:        ${{ inputs.toolkit-path }}
+    secrets:
+      UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ─── 3. TEST (common — runs once for all Docker platforms) ────────────────────
+  # Uses Linux64 image (tests are EditMode/PlayMode CPU tests — not platform-specific).
+  # Skipped when test-level=none, or when only iOS is selected (no Docker image).
+  test:
+    name: Test (Common)
+    needs: [detect, validate]
+    if: |
+      always() &&
+      needs.detect.outputs.should-build == 'true' &&
+      inputs.test-level != 'none' &&
+      needs.detect.outputs.docker-platforms != '[]' &&
+      (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    uses: ./.github/workflows/unity-test.yml
+    with:
+      project-path:      ${{ inputs.project-path }}
+      unity-version:     ${{ inputs.unity-version }}
+      target-platform:   Linux64
+      test-level:        ${{ inputs.test-level }}
+      cache-mode:        ${{ inputs.cache-mode }}
+      image-registry:    ${{ inputs.image-registry }}
+      image-namespace:   ${{ inputs.image-namespace }}
+      image-name:        ${{ inputs.image-name }}
+      image-digest:      ${{ inputs.image-digest }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref:        ${{ inputs.workflow-ref }}
+      integration-mode:    ${{ inputs.integration-mode }}
+      toolkit-path:        ${{ inputs.toolkit-path }}
+    secrets:
+      UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ─── 4. BUILD — DOCKER PLATFORMS (matrix) ─────────────────────────────────────
+  # Android, WebGL, Linux64, LinuxServer share one job definition.
+  # Platform-specific steps (Android signing, WebGL compression, deployment)
+  # are gated with if: matrix.platform == '...' conditions.
+  # fail-fast: false ensures one platform failure does not cancel others.
+  build-docker-platforms:
+    name: Build ${{ matrix.platform }}
+    needs: [detect, validate, test]
+    if: |
+      always() &&
+      needs.detect.outputs.should-build == 'true' &&
+      needs.detect.outputs.docker-platforms != '[]' &&
+      (needs.validate.result == 'success' || needs.validate.result == 'skipped') &&
+      (inputs.test-level == 'none' || needs.test.result == 'skipped' || needs.test.outputs.tests-passed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJson(needs.detect.outputs.docker-platforms) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      UNITY_LICENSE:                  ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL:                    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD:                 ${{ secrets.UNITY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64:        ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASS:          ${{ secrets.ANDROID_KEYSTORE_PASS }}
+      ANDROID_KEY_ALIAS:              ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASS:               ${{ secrets.ANDROID_KEY_PASS }}
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      CLOUDFLARE_API_TOKEN:           ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID:          ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout consumer repo
+        uses: actions/checkout@v4
+        with:
+          path: project
+          lfs: true
+
+      - name: Setup toolkit
+        id: toolkit
+        shell: bash
+        env:
+          INTEGRATION_MODE:  ${{ inputs.integration-mode }}
+          TOOLKIT_PATH_INPUT: ${{ inputs.toolkit-path }}
+          WORKFLOW_REPO:     ${{ inputs.workflow-repository }}
+          WORKFLOW_REF:      ${{ inputs.workflow-ref }}
+        run: |
+          MODE="${INTEGRATION_MODE:-remote}"
+          if [ "$MODE" = "submodule" ]; then
+            TP="${TOOLKIT_PATH_INPUT:-unity-build-workflows}"
+            if [[ "$TP" == /* ]] || [[ "$TP" == *..* ]]; then
+              echo "::error::toolkit-path must be relative with no '..' components. Got: '$TP'"
+              exit 1
+            fi
+            SUBMODULE_SRC="project/${TP}"
+            if [ ! -d "$SUBMODULE_SRC" ]; then
+              echo "::error::Submodule not found at '${SUBMODULE_SRC}'."
+              exit 1
+            fi
+            mkdir -p .ci
+            ln -sf "$(realpath "${SUBMODULE_SRC}")" .ci/unity-build-workflows
+          else
+            if [ -z "$WORKFLOW_REPO" ] || [ -z "$WORKFLOW_REF" ]; then
+              echo "::error::workflow-repository and workflow-ref are required (integration-mode: remote)."
+              exit 1
+            fi
+            echo "repo=${WORKFLOW_REPO}" >> "$GITHUB_OUTPUT"
+            echo "ref=${WORKFLOW_REF}"   >> "$GITHUB_OUTPUT"
+          fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "TOOLKIT_PATH=.ci/unity-build-workflows" >> "$GITHUB_ENV"
+
+      - name: Checkout toolkit (remote mode)
+        if: steps.toolkit.outputs.mode == 'remote'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      - name: Compute effective project path
+        id: paths
+        shell: bash
+        run: |
+          PP="${{ inputs.project-path }}"
+          if [ "$PP" = "." ] || [ -z "$PP" ]; then
+            echo "project-root=project" >> "$GITHUB_OUTPUT"
+          else
+            echo "project-root=project/${PP}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Android: pre-build signing setup ──────────────────────────────────────
+      - name: Setup Android signing (pre-container)
+        id: android-signing
+        if: |
+          matrix.platform == 'Android' &&
+          (inputs.release-mode == true || inputs.environment != 'development')
+        shell: bash
+        env:
+          ENVIRONMENT:  ${{ inputs.environment }}
+          BUILD_VERSION: ${{ needs.detect.outputs.build-version }}
+          PROJECT_ROOT: ${{ steps.paths.outputs.project-root }}
+          BUILD_CONFIG_PATH: ${{ inputs.build-config-path }}
+        run: |
+          python3 "${TOOLKIT_PATH}/scripts/android/prepare_android_build.py" \
+            --environment "$ENVIRONMENT" \
+            --version     "$BUILD_VERSION" \
+            --config-path "$PROJECT_ROOT/$BUILD_CONFIG_PATH"
+
+      # ── Generate build metadata ───────────────────────────────────────────────
+      - name: Generate build metadata
+        shell: bash
+        env:
+          PROJECT_ROOT:  ${{ steps.paths.outputs.project-root }}
+          BUILD_VERSION: ${{ needs.detect.outputs.build-version }}
+          ENVIRONMENT:   ${{ inputs.environment }}
+          PLATFORM:      ${{ matrix.platform }}
+        run: |
+          python3 "${TOOLKIT_PATH}/scripts/common/generate_build_metadata.py" \
+            --project-path "$PROJECT_ROOT" \
+            --platform     "$PLATFORM" \
+            --version      "$BUILD_VERSION" \
+            --environment  "$ENVIRONMENT" \
+            --build-number "${{ github.run_number }}" \
+            --commit       "${{ github.sha }}"
+
+      # ── Build Addressables (optional, before player build) ───────────────────
+      - name: Build Addressables
+        id: build-addressables
+        if: inputs.build-addressables == true
+        uses: ./.ci/unity-build-workflows/.github/actions/build-unity
+        with:
+          project-path:    ${{ steps.paths.outputs.project-root }}
+          unity-version:   ${{ inputs.unity-version }}
+          target-platform: ${{ matrix.platform }}
+          environment:     ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-registry:  ${{ inputs.image-registry }}
+          image-namespace: ${{ inputs.image-namespace }}
+          image-name:      ${{ inputs.image-name }}
+          image-digest:    ${{ inputs.image-digest }}
+          release-mode:    ${{ inputs.release-mode }}
+          cache-mode:      ${{ inputs.cache-mode }}
+          command:         build-addressables
+
+      # ── Build Unity (Docker) ─────────────────────────────────────────────────
+      - name: Build Unity (${{ matrix.platform }})
+        id: build
+        uses: ./.ci/unity-build-workflows/.github/actions/build-unity
+        with:
+          project-path:    ${{ steps.paths.outputs.project-root }}
+          unity-version:   ${{ inputs.unity-version }}
+          target-platform: ${{ matrix.platform }}
+          environment:     ${{ inputs.environment }}
+          build-config-path: ${{ inputs.build-config-path }}
+          image-registry:  ${{ inputs.image-registry }}
+          image-namespace: ${{ inputs.image-namespace }}
+          image-name:      ${{ inputs.image-name }}
+          image-digest:    ${{ inputs.image-digest }}
+          release-mode:    ${{ inputs.release-mode }}
+          cache-mode:      ${{ inputs.cache-mode }}
+          clean-build:     ${{ inputs.clean-build }}
+          command:         build
+          output-path:     Builds/${{ matrix.platform }}
+
+      # ── Android: post-build signing ───────────────────────────────────────────
+      - name: Sign Android build (post-container)
+        if: |
+          matrix.platform == 'Android' &&
+          (inputs.release-mode == true || inputs.environment != 'development')
+        shell: bash
+        env:
+          BUILD_PATH:          Builds/Android
+          ENVIRONMENT:         ${{ inputs.environment }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS:   ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS:    ${{ secrets.ANDROID_KEY_PASS }}
+        run: |
+          bash "${TOOLKIT_PATH}/scripts/android/sign_android_build.sh" \
+            "$BUILD_PATH" "$ENVIRONMENT"
+
+      # ── WebGL: post-build compression ─────────────────────────────────────────
+      - name: Compress WebGL output
+        if: matrix.platform == 'WebGL'
+        shell: bash
+        env:
+          BUILD_PATH: Builds/WebGL
+        run: |
+          bash "${TOOLKIT_PATH}/scripts/webgl/compress_webgl.sh" "$BUILD_PATH" || true
+
+      # ── Build size comparison ─────────────────────────────────────────────────
+      - name: Compare build size
+        if: always()
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 "${TOOLKIT_PATH}/scripts/common/compare_build_size.py" \
+            --build-path "Builds/$PLATFORM" \
+            --platform   "$PLATFORM" \
+            --version    "${{ needs.detect.outputs.build-version }}" || true
+
+      # ── Upload artifact ───────────────────────────────────────────────────────
+      - name: Upload build artifact
+        id: upload
+        if: always() && inputs.upload-artifact == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: >-
+            unity-${{ matrix.platform }}-build-${{ inputs.environment }}-${{ github.sha }}-${{ github.run_number }}
+          path: Builds/${{ matrix.platform }}/
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: warn
+
+      # ── Deploy (platform-specific, optional) ─────────────────────────────────
+      - name: Deploy to Google Play
+        if: matrix.platform == 'Android' && inputs.deploy-target == 'google-play'
+        shell: bash
+        env:
+          BUILD_PATH:   Builds/Android
+          ENVIRONMENT:  ${{ inputs.environment }}
+          BUILD_VERSION: ${{ needs.detect.outputs.build-version }}
+        run: |
+          python3 "${TOOLKIT_PATH}/scripts/android/upload_google_play.py" \
+            --build-path  "$BUILD_PATH" \
+            --environment "$ENVIRONMENT" \
+            --version     "$BUILD_VERSION"
+
+      - name: Deploy to Cloudflare Pages
+        if: matrix.platform == 'WebGL' && inputs.deploy-target == 'cloudflare'
+        shell: bash
+        env:
+          BUILD_PATH:            Builds/WebGL
+          ENVIRONMENT:           ${{ inputs.environment }}
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          bash "${TOOLKIT_PATH}/scripts/webgl/deploy_cloudflare_pages.sh" \
+            "$BUILD_PATH" "$ENVIRONMENT"
+
+      # ── Collect container output / logs ───────────────────────────────────────
+      - name: Collect build output
+        if: always()
+        uses: ./.ci/unity-build-workflows/.github/actions/collect-container-output
+        with:
+          target-platform:      ${{ matrix.platform }}
+          build-version:        ${{ needs.detect.outputs.build-version }}
+          environment:          ${{ inputs.environment }}
+          command:              build
+          container-exit-code:  ${{ steps.build.outputs.exit-code }}
+          log-path:             ${{ steps.build.outputs.log-path }}
+          report-path:          ${{ steps.build.outputs.report-path }}
+
+      # ── Android: cleanup signing artifacts ────────────────────────────────────
+      - name: Cleanup signing artifacts
+        if: always() && matrix.platform == 'Android'
+        shell: bash
+        run: |
+          rm -f /tmp/android-keystore.jks /tmp/signing-config.json
+
+  # ─── 5. BUILD — iOS (macOS native) ───────────────────────────────────────────
+  # Separate job: requires macOS runner with Unity iOS Build Support + Xcode.
+  # GitHub-hosted macos-latest is NOT supported — must be a self-hosted runner
+  # registered with the label specified in ios-runner-label.
+  # validate and test are skipped for iOS (they use Docker Linux containers).
+  build-ios:
+    name: Build iOS
+    needs: [detect, validate, test]
+    if: |
+      always() &&
+      needs.detect.outputs.run-ios == 'true' &&
+      needs.detect.outputs.should-build == 'true' &&
+      (needs.validate.result == 'success' || needs.validate.result == 'skipped') &&
+      (inputs.test-level == 'none' || needs.test.result == 'skipped' || needs.test.outputs.tests-passed == 'true')
+    uses: ./.github/workflows/unity-build-ios.yml
+    with:
+      project-path:        ${{ inputs.project-path }}
+      unity-version:       ${{ inputs.unity-version }}
+      environment:         ${{ inputs.environment }}
+      build-config-path:   ${{ inputs.build-config-path }}
+      cache-mode:          ${{ inputs.cache-mode }}
+      build-addressables:  ${{ inputs.build-addressables }}
+      upload-artifact:     ${{ inputs.upload-artifact }}
+      clean-build:         ${{ inputs.clean-build }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+      build-version:       ${{ needs.detect.outputs.build-version }}
+      ios-runner-label:    ${{ inputs.ios-runner-label }}
+      workflow-repository: ${{ inputs.workflow-repository }}
+      workflow-ref:        ${{ inputs.workflow-ref }}
+      integration-mode:    ${{ inputs.integration-mode }}
+      toolkit-path:        ${{ inputs.toolkit-path }}
+    secrets: inherit
+
+  # ─── 6. FINAL REPORT (if: always) ────────────────────────────────────────────
+  # Runs even when individual build jobs fail. Summarises all selected platforms.
+  final-report:
+    name: Final Report
+    needs: [detect, validate, test, build-docker-platforms, build-ios]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@v4
+        with:
+          path: project
+
+      - name: Setup toolkit
+        id: toolkit
+        shell: bash
+        env:
+          INTEGRATION_MODE:  ${{ inputs.integration-mode }}
+          TOOLKIT_PATH_INPUT: ${{ inputs.toolkit-path }}
+          WORKFLOW_REPO:     ${{ inputs.workflow-repository }}
+          WORKFLOW_REF:      ${{ inputs.workflow-ref }}
+        run: |
+          MODE="${INTEGRATION_MODE:-remote}"
+          if [ "$MODE" = "submodule" ]; then
+            TP="${TOOLKIT_PATH_INPUT:-unity-build-workflows}"
+            if [[ "$TP" == /* ]] || [[ "$TP" == *..* ]]; then
+              echo "::error::toolkit-path must be relative with no '..' components."
+              exit 1
+            fi
+            SUBMODULE_SRC="project/${TP}"
+            if [ ! -d "$SUBMODULE_SRC" ]; then
+              echo "::error::Submodule not found at '${SUBMODULE_SRC}'."
+              exit 1
+            fi
+            mkdir -p .ci
+            ln -sf "$(realpath "${SUBMODULE_SRC}")" .ci/unity-build-workflows
+          else
+            if [ -z "$WORKFLOW_REPO" ] || [ -z "$WORKFLOW_REF" ]; then
+              echo "::error::workflow-repository and workflow-ref are required."
+              exit 1
+            fi
+            echo "repo=${WORKFLOW_REPO}" >> "$GITHUB_OUTPUT"
+            echo "ref=${WORKFLOW_REF}"   >> "$GITHUB_OUTPUT"
+          fi
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "TOOLKIT_PATH=.ci/unity-build-workflows" >> "$GITHUB_ENV"
+
+      - name: Checkout toolkit (remote mode)
+        if: steps.toolkit.outputs.mode == 'remote'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.toolkit.outputs.repo }}
+          ref: ${{ steps.toolkit.outputs.ref }}
+          path: .ci/unity-build-workflows
+          persist-credentials: false
+
+      - name: Build platform summary
+        id: summary
+        shell: bash
+        env:
+          PLATFORM_INPUT:       ${{ inputs.platform }}
+          DOCKER_PLATFORMS:     ${{ needs.detect.outputs.docker-platforms }}
+          RUN_IOS:              ${{ needs.detect.outputs.run-ios }}
+          DETECT_RESULT:        ${{ needs.detect.result }}
+          VALIDATE_RESULT:      ${{ needs.validate.result }}
+          TEST_RESULT:          ${{ needs.test.result }}
+          DOCKER_BUILD_RESULT:  ${{ needs.build-docker-platforms.result }}
+          IOS_BUILD_RESULT:     ${{ needs.build-ios.result }}
+          ENVIRONMENT:          ${{ inputs.environment }}
+          BUILD_VERSION:        ${{ needs.detect.outputs.build-version }}
+          RUN_ID:               ${{ github.run_id }}
+          RUN_URL:              ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHOULD_BUILD:         ${{ needs.detect.outputs.should-build }}
+          VALIDATION_PASSED:    ${{ needs.validate.outputs.validation-passed }}
+          TESTS_PASSED:         ${{ needs.test.outputs.tests-passed }}
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════════╗"
+          echo "║              UNITY BUILD — FINAL REPORT                         ║"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║  Platform input : $PLATFORM_INPUT"
+          echo "║  Environment    : $ENVIRONMENT"
+          echo "║  Build version  : $BUILD_VERSION"
+          echo "║  Run            : $RUN_URL"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║  PHASE RESULTS                                                   ║"
+          echo "║  Detect         : $DETECT_RESULT"
+          echo "║  Should build   : $SHOULD_BUILD"
+          echo "║  Validate       : $VALIDATE_RESULT (passed=$VALIDATION_PASSED)"
+          echo "║  Test           : $TEST_RESULT (passed=$TESTS_PASSED)"
+          echo "╠══════════════════════════════════════════════════════════════════╣"
+          echo "║  BUILD RESULTS                                                   ║"
+
+          # Docker platforms
+          if [ "$DOCKER_PLATFORMS" = "[]" ] || [ -z "$DOCKER_PLATFORMS" ]; then
+            echo "║  Docker builds  : SKIPPED (no Docker platforms selected)"
+          else
+            echo "║  Docker builds  : $DOCKER_BUILD_RESULT"
+            echo "║  Platforms      : $DOCKER_PLATFORMS"
+          fi
+
+          # iOS
+          if [ "$RUN_IOS" = "true" ]; then
+            echo "║  iOS build      : $IOS_BUILD_RESULT"
+          else
+            echo "║  iOS build      : SKIPPED (not selected)"
+          fi
+
+          echo "╚══════════════════════════════════════════════════════════════════╝"
+          echo ""
+
+          # Set overall result
+          OVERALL="success"
+          if [ "$DOCKER_BUILD_RESULT" = "failure" ] || [ "$IOS_BUILD_RESULT" = "failure" ]; then
+            OVERALL="failure"
+          elif [ "$VALIDATE_RESULT" = "failure" ]; then
+            OVERALL="failure"
+          elif [ "$TEST_RESULT" = "failure" ]; then
+            OVERALL="failure"
+          fi
+          echo "overall-result=${OVERALL}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build report
+        id: upload-report
+        uses: ./.ci/unity-build-workflows/.github/actions/upload-build-report
+        with:
+          build-version:      ${{ needs.detect.outputs.build-version }}
+          target-platform:    ${{ inputs.platform }}
+          environment:        ${{ inputs.environment }}
+          validation-passed:  ${{ needs.validate.outputs.validation-passed || 'false' }}
+          tests-passed:       ${{ needs.test.outputs.tests-passed || 'skipped' }}
+          build-result:       ${{ steps.summary.outputs.overall-result }}
+          retention-days:     ${{ inputs.artifact-retention-days }}
+
+      - name: Discord notification
+        if: always()
+        uses: ./.ci/unity-build-workflows/.github/actions/discord-notify
+        with:
+          status:        ${{ steps.summary.outputs.overall-result }}
+          platform:      ${{ inputs.platform }}
+          environment:   ${{ inputs.environment }}
+          build-version: ${{ needs.detect.outputs.build-version }}
+          run-url:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          artifact-name: ${{ steps.upload-report.outputs.artifact-name }}
