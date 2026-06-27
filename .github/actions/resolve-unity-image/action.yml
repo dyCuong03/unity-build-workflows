@@ -73,16 +73,19 @@ runs:
         # NOTE: arg names --image-registry / --image-namespace / --image-name are the expected
         # final CLI shape after unity-package-engineer updates resolve_image_reference.py.
         # Until that script change lands, IMAGE_NAMESPACE / IMAGE_NAME are consumed as env vars.
-        python3 "${{ github.action_path }}/../../../scripts/docker/resolve_image_reference.py" \
-          --unity-version    "$UNITY_VERSION" \
-          --target-platform  "$TARGET_PLATFORM" \
-          --image-registry   "$IMAGE_REGISTRY" \
-          --image-namespace  "$IMAGE_NAMESPACE" \
-          --image-name       "$IMAGE_NAME" \
-          --variant          "$IMAGE_VARIANT" \
-          --digest           "$IMAGE_DIGEST" \
-          --release-mode     "$RELEASE_MODE" \
-          --output-format    github-actions
+        # Build command with conditional args — omit flags when values are empty
+        CMD=(python3 "${{ github.action_path }}/../../../scripts/docker/resolve_image_reference.py"
+          --unity-version    "$UNITY_VERSION"
+          --target-platform  "$TARGET_PLATFORM"
+          --image-registry   "$IMAGE_REGISTRY"
+          --image-namespace  "$IMAGE_NAMESPACE"
+        )
+        [ -n "$IMAGE_NAME" ]    && CMD+=(--image-name    "$IMAGE_NAME")
+        [ -n "$IMAGE_VARIANT" ] && CMD+=(--image-variant "$IMAGE_VARIANT")
+        [ -n "$IMAGE_DIGEST" ]  && CMD+=(--image-digest  "$IMAGE_DIGEST")
+        [ "$RELEASE_MODE" = "true" ] && CMD+=(--release-mode)
+        CMD+=(--output-format github-actions)
+        "${CMD[@]}"
 
     - name: Validate image manifest
       id: validate-manifest
