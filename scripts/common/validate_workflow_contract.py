@@ -43,11 +43,11 @@ PLATFORM_CONTRACTS: dict[str, dict] = {
             "ANDROID_KEY_PASS",
         ],
         "required_config_fields": [
-            "version",
-            "package_name",
-            "min_sdk_version",
-            "target_sdk_version",
+            "bundleVersion",
         ],
+        "required_nested_fields": {
+            "android": ["applicationId", "minSdkVersion", "targetSdkVersion"],
+        },
     },
     "iOS": {
         "required_secrets_hint": [
@@ -60,15 +60,28 @@ PLATFORM_CONTRACTS: dict[str, dict] = {
         ],
         # Top-level fields required in the merged config
         "required_config_fields": [],
+        "required_nested_fields": {},
         # The 'ios' block is validated separately by _validate_ios_block()
     },
     "Windows64": {
         "required_secrets_hint": [],
-        "required_config_fields": ["version", "product_name"],
+        "required_config_fields": ["bundleVersion", "productName"],
+        "required_nested_fields": {},
     },
     "WebGL": {
         "required_secrets_hint": [],
-        "required_config_fields": ["version", "product_name"],
+        "required_config_fields": ["bundleVersion", "productName"],
+        "required_nested_fields": {},
+    },
+    "Linux64": {
+        "required_secrets_hint": [],
+        "required_config_fields": ["bundleVersion"],
+        "required_nested_fields": {},
+    },
+    "LinuxServer": {
+        "required_secrets_hint": [],
+        "required_config_fields": ["bundleVersion"],
+        "required_nested_fields": {},
     },
 }
 
@@ -245,10 +258,20 @@ def validate_contract(
         warnings.append(f"Unknown platform '{platform}' — no contract defined")
         return errors, warnings
 
-    # Check required config fields
+    # Check required top-level config fields
     for field in contract["required_config_fields"]:
         if field not in config:
             errors.append(f"Workflow contract violation: missing required config field '{field}' for {platform}")
+
+    # Check required nested config fields (e.g. android.applicationId)
+    for block_key, fields in contract.get("required_nested_fields", {}).items():
+        block = config.get(block_key, {})
+        if not isinstance(block, dict):
+            errors.append(f"Workflow contract violation: '{block_key}' must be an object in BuildConfig for {platform}")
+            continue
+        for field in fields:
+            if field not in block:
+                errors.append(f"Workflow contract violation: missing required config field '{block_key}.{field}' for {platform}")
 
     # Warn about required secrets (cannot verify at config-read time)
     if contract["required_secrets_hint"]:
@@ -297,19 +320,39 @@ def validate_contract(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate Unity workflow contract")
-    parser.add_argument("--config-path", required=True, help="BuildConfig directory or file")
-    parser.add_argument("--platform", required=True, help="Target platform")
+    parser.add_argument("--config-path", default=None, help="BuildConfig directory or file")
+    parser.add_argument("--platform", default=None, help="Target platform")
+    # Args passed by the validate workflow (alternative naming)
+    parser.add_argument("--project-path", default=None, help="Unity project root path")
+    parser.add_argument("--build-config-path", default=None, help="BuildConfig path relative to project-path")
+    parser.add_argument("--target-platform", default=None, help="Target platform (alias for --platform)")
+    parser.add_argument("--environment", default=None, help="Build environment (informational)")
     parser.add_argument("--output", default="", help="Write warnings to this file")
     args = parser.parse_args()
 
-    config_path = Path(args.config_path)
+    # Resolve platform from either --platform or --target-platform
+    platform = args.platform or args.target_platform
+    if not platform:
+        print("ERROR: --platform or --target-platform is required", file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve config path: --config-path takes precedence, else project-path/build-config-path
+    if args.config_path:
+        config_path = Path(args.config_path)
+    elif args.project_path and args.build_config_path:
+        config_path = Path(args.project_path) / args.build_config_path
+    elif args.project_path:
+        config_path = Path(args.project_path) / "BuildConfig"
+    else:
+        print("ERROR: --config-path or --project-path is required", file=sys.stderr)
+        sys.exit(1)
     try:
         config = load_configs(config_path)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"ERROR: Could not load config: {e}", file=sys.stderr)
         sys.exit(1)
 
-    errors, warnings = validate_contract(config, args.platform)
+    errors, warnings = validate_contract(config, platform)
 
     output_lines = []
     if errors:
@@ -324,7 +367,7 @@ def main() -> None:
             output_lines.append(line)
 
     if not errors and not warnings:
-        print(f"OK: Workflow contract satisfied for {args.platform}")
+        print(f"OK: Workflow contract satisfied for {platform}")
 
     if args.output and output_lines:
         Path(args.output).write_text("\n".join(output_lines) + "\n")
