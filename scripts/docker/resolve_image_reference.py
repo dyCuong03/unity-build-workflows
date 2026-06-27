@@ -34,6 +34,7 @@ default ghcr.io) over the legacy --registry combined-prefix arg.
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -345,14 +346,27 @@ def main() -> None:
                         ))
     parser.add_argument("--image-variant",
                         help="Force a specific image variant (base/android/webgl/linux)")
+    # --variant is a short alias used by resolve-unity-image action
+    parser.add_argument("--variant", dest="image_variant",
+                        help="Alias for --image-variant")
     parser.add_argument("--image-digest",
                         help="Expected sha256 digest for pinning (e.g. sha256:abc123…)")
+    # --digest is a short alias used by resolve-unity-image action
+    parser.add_argument("--digest", dest="image_digest",
+                        help="Alias for --image-digest")
     parser.add_argument("--manifest-path",
                         help="Path to image manifest JSON file")
-    parser.add_argument("--release-mode", action="store_true",
-                        help="Enforce immutable digest references (required for releases)")
+    # --release-mode accepts an optional boolean string value ("true"/"false") or acts
+    # as a store_true flag when called without a value.  The action passes the value as
+    # a string (e.g. --release-mode false) so we use nargs='?' to handle both forms.
+    parser.add_argument("--release-mode", nargs="?", const="true", default="false",
+                        help="Enforce immutable digest references ('true'/'false', default false)")
     parser.add_argument("--output-json", action="store_true",
                         help="Output result as JSON (machine-readable)")
+    # --output-format github-actions writes outputs to $GITHUB_OUTPUT
+    parser.add_argument("--output-format", choices=["github-actions", "json", "text"],
+                        default=None,
+                        help="Output format: github-actions (writes $GITHUB_OUTPUT), json, or text")
     args = parser.parse_args()
 
     # Build the combined registry prefix.
@@ -370,25 +384,54 @@ def main() -> None:
 
     manifest_path = Path(args.manifest_path) if args.manifest_path else None
 
+    # Normalise --release-mode: accept "true"/"false" string or bare flag
+    release_mode_val = args.release_mode
+    if isinstance(release_mode_val, str):
+        release_mode = release_mode_val.lower() in ("true", "1", "yes")
+    else:
+        release_mode = bool(release_mode_val)
+
+    # Normalise --image-name: treat empty string as absent (fall back to default)
+    image_name = args.image_name if args.image_name else "unity-build"
+
+    use_github_output = args.output_format == "github-actions"
+    use_json = args.output_json or args.output_format == "json"
+
     try:
         result = resolve(
             target_platform=args.target_platform,
             unity_version=args.unity_version,
             registry=registry,
-            image_name=args.image_name,
+            image_name=image_name,
             image_variant=args.image_variant,
             image_digest=args.image_digest,
             manifest_path=manifest_path,
-            release_mode=args.release_mode,
+            release_mode=release_mode,
         )
     except (ValueError, FileNotFoundError) as exc:
-        if args.output_json:
+        if use_json:
             print(json.dumps({"error": str(exc)}))
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    if args.output_json:
+    if use_github_output:
+        # Write outputs to $GITHUB_OUTPUT for use in subsequent action steps
+        github_output_path = os.environ.get("GITHUB_OUTPUT", "")
+        supported = ",".join(result["supported_targets"])
+        if github_output_path:
+            with open(github_output_path, "a") as f:
+                f.write(f"image-reference={result['image_ref']}\n")
+                f.write(f"image-digest={result['digest']}\n")
+                f.write(f"image-variant={result['variant']}\n")
+                f.write(f"supported-targets={supported}\n")
+        # Also print to stdout for visibility in logs
+        print(f"[resolve_image_reference] image-reference={result['image_ref']}")
+        print(f"[resolve_image_reference] image-variant={result['variant']}")
+        print(f"[resolve_image_reference] supported-targets={supported}")
+        if result["digest"]:
+            print(f"[resolve_image_reference] image-digest={result['digest']}")
+    elif use_json:
         print(json.dumps(result, indent=2))
     else:
         print(f"[resolve_image_reference] Resolved:")
