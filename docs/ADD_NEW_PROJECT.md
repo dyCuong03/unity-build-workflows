@@ -26,19 +26,37 @@ The toolkit repo (`<WORKFLOW_OWNER>/unity-build-workflows`) owns all shared logi
 
 ## Step 1: Add the UPM Package Dependency
 
-In your Unity project's `Packages/manifest.json`, add the build-pipeline package:
+This package provides the `BuildCommand.Execute` C# entry point that the reusable workflows invoke via Unity's `-executeMethod` flag. Your project does not need to implement build logic.
+
+**Option A — Git URL (recommended for most projects):**
+
+In your Unity project's `Packages/manifest.json`:
 
 ```json
 {
   "dependencies": {
-    "com.company.build-pipeline": "https://github.com/<WORKFLOW_OWNER>/unity-build-workflows.git?path=/unity-package/Packages/com.company.build-pipeline#<WORKFLOW_REF>"
+    "com.company.build-pipeline": "https://github.com/<WORKFLOW_OWNER>/unity-build-workflows.git?path=/unity-package/Packages/com.company.build-pipeline#<WORKFLOW_REF>",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
   }
 }
 ```
 
-> **Note:** The exact Git URL and package name are provided by the toolkit maintainer. Replace `<WORKFLOW_OWNER>` with the actual GitHub organization or user that hosts this toolkit. Ask your platform team for the canonical URL.
+Replace `<WORKFLOW_OWNER>` with the GitHub organization or user that hosts the toolkit, and `<WORKFLOW_REF>` with a release tag (e.g. `v1.0.0`) or commit SHA. Avoid using `main` in production.
 
-This package provides the `BuildCommand.Execute` C# entry point that the reusable workflows invoke via Unity's `-executeMethod` flag. Your project does not need to implement build logic.
+**Option B — Local file path (for submodule consumers):**
+
+If you have added `unity-build-workflows` as a git submodule at `tools/unity-build-workflows/`:
+
+```json
+{
+  "dependencies": {
+    "com.company.build-pipeline": "file:../tools/unity-build-workflows/unity-package/Packages/com.company.build-pipeline",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  }
+}
+```
+
+The `file:` path is relative to `Packages/manifest.json`. See [SUBMODULE_INTEGRATION.md](SUBMODULE_INTEGRATION.md) for the full submodule setup guide.
 
 ---
 
