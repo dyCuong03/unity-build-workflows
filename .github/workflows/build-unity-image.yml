@@ -141,15 +141,15 @@ jobs:
           case "$VARIANT" in
             android)
               docker run --rm --entrypoint /bin/bash "$IMAGE_TAG" \
-                -c "ls \${ANDROID_HOME:-/opt/android-sdk-linux}/platforms/ && echo 'Android SDK OK.'"
+                -c "unity-editor -quit -batchmode -nographics -buildTarget Android -version 2>/dev/null && echo 'Android target OK.'"
               ;;
             webgl)
               docker run --rm --entrypoint /bin/bash "$IMAGE_TAG" \
-                -c "which emcc && echo 'Emscripten OK.'"
+                -c "unity-editor -quit -batchmode -nographics -buildTarget WebGL -version 2>/dev/null && echo 'WebGL target OK.'"
               ;;
             linux)
               docker run --rm --entrypoint /bin/bash "$IMAGE_TAG" \
-                -c "unity-editor -buildTarget Linux64 -version && echo 'Linux target OK.'"
+                -c "unity-editor -quit -batchmode -nographics -buildTarget Linux64 -version 2>/dev/null && echo 'Linux target OK.'"
               ;;
           esac
 
