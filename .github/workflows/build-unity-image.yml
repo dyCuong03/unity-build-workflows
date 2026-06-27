@@ -141,7 +141,7 @@ jobs:
           case "$VARIANT" in
             android)
               docker run --rm --entrypoint /bin/bash "$IMAGE_TAG" \
-                -c "ls /opt/android-sdk/platforms/ && echo 'Android SDK OK.'"
+                -c "ls \${ANDROID_HOME:-/opt/android-sdk-linux}/platforms/ && echo 'Android SDK OK.'"
               ;;
             webgl)
               docker run --rm --entrypoint /bin/bash "$IMAGE_TAG" \
