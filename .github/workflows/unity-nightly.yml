@@ -79,6 +79,8 @@ jobs:
       target-platform: Linux64
       test-level: ${{ inputs.test-level || 'full' }}
       cache-mode: safe
+      workflow-repository: ${{ github.repository }}
+      workflow-ref: ${{ github.sha }}
     secrets:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -108,6 +110,8 @@ jobs:
       clean-build: false
       artifact-retention-days: 3
       release-mode: false
+      workflow-repository: ${{ github.repository }}
+      workflow-ref: ${{ github.sha }}
     secrets: inherit
 
   # ─── NIGHTLY SUMMARY ───────────────────────────────────────────────────────────

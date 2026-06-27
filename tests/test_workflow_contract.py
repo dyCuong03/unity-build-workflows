@@ -253,10 +253,16 @@ class TestAlwaysConditionOnUploadSteps:
     def _is_upload_step(self, step: dict) -> bool:
         uses = step.get("uses", "") or ""
         name = (step.get("name", "") or "").lower()
+        # "report" alone is too broad — "Report toolkit version" is a logging step,
+        # not an artifact upload. Require "report" to co-occur with upload/test/build/artifact
+        # to avoid false positives on diagnostic steps added by toolkit setup.
+        is_report_upload = "report" in name and any(
+            k in name for k in ("upload", "test", "build", "artifact", "result")
+        )
         return (
             any(kw in uses for kw in self.UPLOAD_STEP_KEYWORDS)
             or "upload" in name
-            or "report" in name
+            or is_report_upload
         )
 
     def _job_has_always(self, job_def: dict) -> bool:
