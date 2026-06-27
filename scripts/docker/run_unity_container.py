@@ -333,6 +333,21 @@ def _build_docker_command(
     # ── Image ─────────────────────────────────────────────────────────────
     cmd += [image_ref]
 
+    # ── Entrypoint command + arguments ────────────────────────────────────
+    # The container ENTRYPOINT is entrypoint.sh; the first positional arg is
+    # the command (build, build-addressables, validate, test-editmode, etc.).
+    # Without this, the container falls back to CMD ["inspect"] and produces
+    # no build output.
+    cmd += [args.command]
+    if args.target_platform:
+        cmd += ["--target-platform", args.target_platform]
+    if args.build_config_path:
+        cmd += ["--build-config", args.build_config_path]
+    if args.environment:
+        cmd += ["--environment", args.environment]
+    cmd += ["--output-path", "/workspace/Builds"]
+    cmd += ["--log-dir", "/workspace/Logs"]
+
     return cmd
 
 
