@@ -79,11 +79,19 @@ jobs:
           echo "unity-version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Resolved Unity version: ${VERSION}"
 
+      - name: Compute lowercase image repo
+        id: image-ref
+        shell: bash
+        run: |
+          # Docker registry references must be lowercase — lowercase the owner component
+          LOWER_REPO=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo=${LOWER_REPO}" >> "$GITHUB_OUTPUT"
+
       - name: Generate image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}
+          images: ${{ steps.image-ref.outputs.repo }}
           tags: |
             type=raw,value=${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
             type=raw,value=${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}-${{ github.run_number }}
@@ -113,7 +121,7 @@ jobs:
         id: validate
         shell: bash
         env:
-          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
+          IMAGE_TAG: ${{ steps.image-ref.outputs.repo }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
           UNITY_VERSION: ${{ steps.unity-version.outputs.unity-version }}
           VARIANT: ${{ matrix.variant }}
         run: |
@@ -149,7 +157,7 @@ jobs:
         if: inputs.run-vulnerability-scan != false
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
+          image-ref: ${{ steps.image-ref.outputs.repo }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
           format: sarif
           output: trivy-results-${{ matrix.variant }}.sarif
           severity: CRITICAL,HIGH
@@ -165,7 +173,7 @@ jobs:
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
+          image: ${{ steps.image-ref.outputs.repo }}:${{ steps.unity-version.outputs.unity-version }}-${{ matrix.variant }}
           artifact-name: sbom-${{ matrix.variant }}-${{ steps.unity-version.outputs.unity-version }}.spdx.json
           output-file: sbom-${{ matrix.variant }}.spdx.json
 
@@ -188,8 +196,7 @@ jobs:
         if: inputs.push-image != false
         shell: bash
         env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_REPO: ${{ env.IMAGE_REPO }}
+          IMAGE_REPO_LOWER: ${{ steps.image-ref.outputs.repo }}
           UNITY_VERSION: ${{ steps.unity-version.outputs.unity-version }}
           VARIANT: ${{ matrix.variant }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
@@ -199,11 +206,11 @@ jobs:
           {
             "unity_version": "${UNITY_VERSION}",
             "variant": "${VARIANT}",
-            "registry": "${REGISTRY}",
-            "repository": "${IMAGE_REPO}",
+            "registry": "ghcr.io",
+            "repository": "${IMAGE_REPO_LOWER}",
             "tag": "${UNITY_VERSION}-${VARIANT}",
             "digest": "${IMAGE_DIGEST}",
-            "pinned_reference": "${REGISTRY}/${IMAGE_REPO}:${UNITY_VERSION}-${VARIANT}@${IMAGE_DIGEST}",
+            "pinned_reference": "${IMAGE_REPO_LOWER}:${UNITY_VERSION}-${VARIANT}@${IMAGE_DIGEST}",
             "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "run_id": "${{ github.run_id }}",
             "run_number": ${{ github.run_number }},
