@@ -9,7 +9,7 @@
 #   LOG_PATH             — log file path (default: Logs/iOS/xcode-export.log)
 set -euo pipefail
 
-ARCHIVE_PATH="${ARCHIVE_PATH:-Builds/iOS/Archive/Game.xcarchive}"
+ARCHIVE_PATH="${ARCHIVE_PATH:-Builds/iOS/Archive/Unity.xcarchive}"
 EXPORT_OPTIONS_PATH="${EXPORT_OPTIONS_PATH:?EXPORT_OPTIONS_PATH is required}"
 EXPORT_PATH="${EXPORT_PATH:-Builds/iOS/Export}"
 LOG_PATH="${LOG_PATH:-Logs/iOS/xcode-export.log}"
@@ -45,14 +45,16 @@ if [[ "${EXPORT_EXIT}" -ne 0 ]]; then
   exit "${EXPORT_EXIT}"
 fi
 
-# Locate IPA and rename to canonical name
+# Locate IPA and normalise its name to match the archive basename.
+# e.g. Unity.xcarchive → Unity.ipa, MyGame.xcarchive → MyGame.ipa
 IPA_PATH=$(find "${EXPORT_PATH}" -maxdepth 1 -name "*.ipa" | head -1 || true)
 if [[ -z "${IPA_PATH}" ]]; then
   echo "::error::No .ipa found in export directory: ${EXPORT_PATH}" >&2
   exit 1
 fi
 
-CANONICAL_IPA="${EXPORT_PATH}/Game.ipa"
+ARCHIVE_STEM="$(basename "${ARCHIVE_PATH%.xcarchive}")"
+CANONICAL_IPA="${EXPORT_PATH}/${ARCHIVE_STEM}.ipa"
 if [[ "${IPA_PATH}" != "${CANONICAL_IPA}" ]]; then
   mv "${IPA_PATH}" "${CANONICAL_IPA}"
   IPA_PATH="${CANONICAL_IPA}"

@@ -5,11 +5,16 @@ namespace Company.BuildPipeline.Editor
 {
     /// <summary>
     /// Represents the full merged build configuration loaded from layered JSON files and CLI overrides.
-    /// Field names match the JSON schema keys exactly.
+    /// Field JSON property names match unity-build-config.schema.json keys exactly.
+    /// C# property names are kept stable for intra-package usage.
     /// </summary>
     public class BuildConfiguration
     {
-        // ── Identity ──────────────────────────────────────────────────────────
+        // ── Project identity ──────────────────────────────────────────────────
+
+        /// <summary>Internal project identifier used in artifact names and job names.</summary>
+        [JsonProperty("projectName")]
+        public string ProjectName { get; set; } = string.Empty;
 
         [JsonProperty("productName")]
         public string ProductName { get; set; } = string.Empty;
@@ -20,6 +25,11 @@ namespace Company.BuildPipeline.Editor
         [JsonProperty("bundleVersion")]
         public string BundleVersion { get; set; } = "0.0.1";
 
+        /// <summary>
+        /// Legacy flat app identifier (reverse-DNS bundle ID).
+        /// Prefer platform-specific blocks: <see cref="Android"/>.<see cref="AndroidBuildConfig.ApplicationId"/>
+        /// or <see cref="iOS"/>.<see cref="IosBuildConfig.BundleIdentifier"/> for new configs.
+        /// </summary>
         [JsonProperty("appIdentifier")]
         public string AppIdentifier { get; set; } = string.Empty;
 
@@ -32,23 +42,60 @@ namespace Company.BuildPipeline.Editor
         [JsonProperty("targetPlatform")]
         public string TargetPlatform { get; set; } = string.Empty;
 
-        [JsonProperty("outputPath")]
+        /// <summary>
+        /// Output directory for build artifacts (relative to project root).
+        /// JSON key: "outputDirectory" — matches schema canonical name.
+        /// </summary>
+        [JsonProperty("outputDirectory")]
         public string OutputPath { get; set; } = "Builds/output";
 
-        /// <summary>Root workspace directory used for path containment checks.</summary>
+        /// <summary>Root workspace directory used for path containment checks (BUILD007).</summary>
         [JsonProperty("workspace")]
         public string Workspace { get; set; } = string.Empty;
 
+        // ── Build number strategy ─────────────────────────────────────────────
+
+        /// <summary>github_run_number | timestamp | manual</summary>
+        [JsonProperty("buildNumberStrategy")]
+        public string BuildNumberStrategy { get; set; } = "github_run_number";
+
         // ── Build flags ───────────────────────────────────────────────────────
 
-        [JsonProperty("isDevelopmentBuild")]
+        /// <summary>
+        /// Enable Unity development build flag.
+        /// JSON key: "developmentBuild" — matches schema canonical name.
+        /// </summary>
+        [JsonProperty("developmentBuild")]
         public bool IsDevelopmentBuild { get; set; } = false;
 
-        [JsonProperty("isDebuggingEnabled")]
+        /// <summary>
+        /// Attach script debugger. Only valid when <see cref="IsDevelopmentBuild"/> is true.
+        /// JSON key: "allowDebugging" — matches schema canonical name.
+        /// </summary>
+        [JsonProperty("allowDebugging")]
         public bool IsDebuggingEnabled { get; set; } = false;
 
+        [JsonProperty("connectProfiler")]
+        public bool ConnectProfiler { get; set; } = false;
+
+        [JsonProperty("deepProfiling")]
+        public bool DeepProfiling { get; set; } = false;
+
+        /// <summary>Delete Unity Library/ cache before building. Slower but avoids stale-cache issues.</summary>
+        [JsonProperty("cleanBuildCache")]
+        public bool CleanBuildCache { get; set; } = false;
+
+        /// <summary>Whether to run Unity Test Runner before the build step.</summary>
+        [JsonProperty("runTests")]
+        public bool RunTests { get; set; } = true;
+
+        /// <summary>IL2CPP | Mono</summary>
         [JsonProperty("scriptingBackend")]
-        public string ScriptingBackend { get; set; } = "Mono2x";
+        public string ScriptingBackend { get; set; } = "IL2CPP";
+
+        /// <summary>NET_Standard_2_0 | NET_4_6 | NET_Standard_2_1</summary>
+        [JsonProperty("apiCompatibilityLevel")]
+        public string ApiCompatibilityLevel { get; set; } = "NET_Standard_2_1";
 
         // ── Scenes ────────────────────────────────────────────────────────────
 
@@ -56,12 +103,23 @@ namespace Company.BuildPipeline.Editor
         [JsonProperty("scenes")]
         public List<string> Scenes { get; set; } = new List<string>();
 
-        /// <summary>Scene that must be the first (index 0) entry.</summary>
+        /// <summary>Scene that must be the first (index 0) entry in <see cref="Scenes"/>.</summary>
         [JsonProperty("bootstrapScene")]
         public string BootstrapScene { get; set; } = string.Empty;
 
         // ── Addressables ──────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Addressables configuration block (JSON key "addressables").
+        /// Takes precedence over <see cref="AddressablesProfile"/> for new configs.
+        /// </summary>
+        [JsonProperty("addressables")]
+        public AddressablesConfig Addressables { get; set; } = null;
+
+        /// <summary>
+        /// Legacy flat Addressables profile name.
+        /// Prefer <see cref="Addressables"/>.<see cref="AddressablesConfig.Profile"/> for new configs.
+        /// </summary>
         [JsonProperty("addressablesProfile")]
         public string AddressablesProfile { get; set; } = string.Empty;
 
@@ -70,16 +128,20 @@ namespace Company.BuildPipeline.Editor
         [JsonProperty("releaseTag")]
         public string ReleaseTag { get; set; } = string.Empty;
 
-        // ── iOS platform block ────────────────────────────────────────────────
+        // ── Platform blocks ───────────────────────────────────────────────────
+
+        /// <summary>Android-specific settings block (JSON key "android").</summary>
+        [JsonProperty("android")]
+        public AndroidBuildConfig Android { get; set; } = null;
 
         /// <summary>
         /// iOS-specific settings block (JSON key "iOS").
-        /// When present, takes precedence over the shared <see cref="SigningConfig"/> for iOS signing fields.
+        /// Takes precedence over <see cref="SigningConfig"/> for iOS signing fields when present.
         /// </summary>
-        [JsonProperty("ios")]
+        [JsonProperty("iOS")]
         public IosBuildConfig iOS { get; set; } = null;
 
-        // ── Signing (Android / iOS) ───────────────────────────────────────────
+        // ── Signing (Android / iOS legacy) ────────────────────────────────────
 
         [JsonProperty("signingConfig")]
         public SigningConfiguration SigningConfig { get; set; } = null;
@@ -111,6 +173,54 @@ namespace Company.BuildPipeline.Editor
         public string SchemaVersion { get; set; } = string.Empty;
     }
 
+    // ── Addressables config ───────────────────────────────────────────────────
+
+    public class AddressablesConfig
+    {
+        [JsonProperty("enabled")]
+        public bool Enabled { get; set; } = false;
+
+        /// <summary>Addressables build profile name (must match a profile in AddressableAssetSettings).</summary>
+        [JsonProperty("profile")]
+        public string Profile { get; set; } = string.Empty;
+
+        [JsonProperty("buildRemoteCatalog")]
+        public bool BuildRemoteCatalog { get; set; } = false;
+    }
+
+    // ── Android config ────────────────────────────────────────────────────────
+
+    public class AndroidBuildConfig
+    {
+        /// <summary>Android application ID (package name), e.g. com.company.game.</summary>
+        [JsonProperty("applicationId")]
+        public string ApplicationId { get; set; } = string.Empty;
+
+        /// <summary>Build .aab instead of .apk. Required for Play Store distribution.</summary>
+        [JsonProperty("buildAppBundle")]
+        public bool BuildAppBundle { get; set; } = true;
+
+        [JsonProperty("minSdkVersion")]
+        public int MinSdkVersion { get; set; } = 22;
+
+        [JsonProperty("targetSdkVersion")]
+        public int TargetSdkVersion { get; set; } = 34;
+
+        /// <summary>ARM64 | ARMv7 | x86_64 | All</summary>
+        [JsonProperty("architecture")]
+        public string Architecture { get; set; } = "ARM64";
+
+        /// <summary>debug | custom</summary>
+        [JsonProperty("keystoreMode")]
+        public string KeystoreMode { get; set; } = "custom";
+
+        /// <summary>none | public | debugging</summary>
+        [JsonProperty("symbolExport")]
+        public string SymbolExport { get; set; } = "none";
+    }
+
+    // ── Signing config ────────────────────────────────────────────────────────
+
     public class SigningConfiguration
     {
         [JsonProperty("keystorePath")]
@@ -137,10 +247,12 @@ namespace Company.BuildPipeline.Editor
         public string CodeSignIdentity { get; set; } = string.Empty;
     }
 
+    // ── iOS config ────────────────────────────────────────────────────────────
+
     /// <summary>
     /// iOS-specific build configuration block.
     /// JSON key: "iOS" (case-sensitive — matches the CI contract).
-    /// Fields map directly to PlayerSettings.iOS and are consumed by IOSBuilder + IOSPostProcessBuild.
+    /// Fields map directly to PlayerSettings.iOS and are consumed by IOSBuilder + IOSXcodePostProcessor.
     /// </summary>
     public class IosBuildConfig
     {
@@ -174,27 +286,34 @@ namespace Company.BuildPipeline.Editor
 
         /// <summary>
         /// Informational: Xcode version expected by the CI runner.
-        /// C# does not configure the Xcode version; this value is consumed by the xcodebuild shell step.
+        /// C# does not configure Xcode version; this value is consumed by the xcodebuild shell step.
         /// </summary>
         [JsonProperty("xcodeVersion")]
         public string XcodeVersion { get; set; } = string.Empty;
 
         // ── Signing ───────────────────────────────────────────────────────────
 
-        /// <summary>Apple Developer Team ID (10-character alphanumeric string).</summary>
+        /// <summary>Apple Developer Team ID (10-character uppercase alphanumeric).</summary>
         [JsonProperty("developmentTeamId")]
         public string DevelopmentTeamId { get; set; } = string.Empty;
 
-        /// <summary>automatic | manual. Certificate material never appears in C#.</summary>
+        /// <summary>
+        /// Legacy alias for <see cref="DevelopmentTeamId"/>.
+        /// Accepted for backward compatibility; prefer developmentTeamId in new configs.
+        /// </summary>
+        [JsonProperty("developmentTeam")]
+        public string DevelopmentTeam { get; set; } = string.Empty;
+
+        /// <summary>manual | automatic. Certificate material never appears in C#.</summary>
         [JsonProperty("signingStyle")]
         public string SigningStyle { get; set; } = "manual";
 
-        /// <summary>Provisioning profile UUID or specifier name. Used when signingStyle=manual.</summary>
+        /// <summary>Provisioning profile UUID or specifier name. Required when signingStyle=manual.</summary>
         [JsonProperty("provisioningProfileSpecifier")]
         public string ProvisioningProfileSpecifier { get; set; } = string.Empty;
 
         /// <summary>
-        /// Code signing identity string, e.g. "iPhone Distribution".
+        /// Code signing identity, e.g. "iPhone Distribution".
         /// Stored in metadata for the xcodebuild step; C# does not apply it directly.
         /// </summary>
         [JsonProperty("codeSignIdentity")]
@@ -202,49 +321,58 @@ namespace Company.BuildPipeline.Editor
 
         // ── Export / distribution ─────────────────────────────────────────────
 
-        /// <summary>app-store | ad-hoc | enterprise | development</summary>
+        /// <summary>app-store | app-store-connect | ad-hoc | enterprise | development</summary>
         [JsonProperty("exportMethod")]
         public string ExportMethod { get; set; } = "app-store";
 
-        /// <summary>Whether to enable bitcode. Must be false for Xcode 14+ / Unity 2022+.</summary>
+        /// <summary>Enable Bitcode. Must be false for Xcode 14+ / Unity 2022+.</summary>
         [JsonProperty("enableBitcode")]
         public bool EnableBitcode { get; set; } = false;
 
-        /// <summary>Whether the xcodebuild step should export dSYM symbol packages.</summary>
+        /// <summary>Export dSYM symbol packages alongside the IPA.</summary>
         [JsonProperty("generateSymbols")]
         public bool GenerateSymbols { get; set; } = false;
 
-        /// <summary>Whether the xcodebuild step should upload symbols to Apple.</summary>
+        /// <summary>Upload dSYM files to App Store Connect.</summary>
         [JsonProperty("uploadSymbols")]
         public bool UploadSymbols { get; set; } = false;
 
-        /// <summary>Whether the altool / xcrun step should submit the IPA to TestFlight.</summary>
+        /// <summary>Submit IPA to TestFlight (gated by workflow deploy step).</summary>
         [JsonProperty("uploadToTestFlight")]
         public bool UploadToTestFlight { get; set; } = false;
 
-        // ── Xcode post-process (IOSPostProcessBuild) ──────────────────────────
+        /// <summary>Stop after Xcode project generation without building IPA.</summary>
+        [JsonProperty("generateXcodeProjectOnly")]
+        public bool GenerateXcodeProjectOnly { get; set; } = false;
+
+        // ── Xcode post-process (IOSXcodePostProcessor) ────────────────────────
 
         /// <summary>
-        /// Associated domain identifiers to register in the app entitlements,
-        /// e.g. ["applinks:example.com", "webcredentials:example.com"].
+        /// Associated domain identifiers, e.g. ["applinks:example.com"].
         /// </summary>
         [JsonProperty("associatedDomains")]
         public List<string> AssociatedDomains { get; set; } = new List<string>();
 
         /// <summary>
         /// Additional Apple system framework bundle names to link, e.g. ["StoreKit.framework"].
-        /// These are added to the main target via PBXProject — not required for frameworks
-        /// that Unity links automatically.
         /// </summary>
         [JsonProperty("additionalFrameworks")]
         public List<string> AdditionalFrameworks { get; set; } = new List<string>();
 
         /// <summary>
         /// Info.plist NSUsageDescription key overrides.
-        /// Key = plist key (e.g. "NSCameraUsageDescription"), Value = user-facing string.
-        /// When a key is absent the post-process hook applies a safe default.
+        /// Key = plist key, Value = user-facing string.
         /// </summary>
         [JsonProperty("usageDescriptions")]
         public Dictionary<string, string> UsageDescriptions { get; set; } = new Dictionary<string, string>();
+
+        // ── Helpers ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the effective Apple Developer Team ID.
+        /// Prefers <see cref="DevelopmentTeamId"/> over legacy <see cref="DevelopmentTeam"/>.
+        /// </summary>
+        public string EffectiveTeamId =>
+            !string.IsNullOrWhiteSpace(DevelopmentTeamId) ? DevelopmentTeamId : DevelopmentTeam;
     }
 }

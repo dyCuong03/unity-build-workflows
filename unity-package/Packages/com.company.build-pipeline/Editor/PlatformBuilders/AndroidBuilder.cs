@@ -14,12 +14,18 @@ namespace Company.BuildPipeline.Editor
 
         public void Configure(BuildContext context)
         {
-            var cfg = context.Configuration;
+            var cfg     = context.Configuration;
+            var android = cfg.Android; // may be null for legacy configs
 
             PlayerSettings.productName = cfg.ProductName;
             PlayerSettings.companyName = cfg.CompanyName;
             PlayerSettings.bundleVersion = cfg.BundleVersion;
-            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, cfg.AppIdentifier);
+
+            // Application ID: android block takes precedence over legacy flat appIdentifier.
+            var appId = (android != null && !string.IsNullOrWhiteSpace(android.ApplicationId))
+                ? android.ApplicationId
+                : cfg.AppIdentifier;
+            PlayerSettings.SetApplicationIdentifier(BuildTargetGroup.Android, appId);
 
             var backend = cfg.ScriptingBackend?.Equals("il2cpp", StringComparison.OrdinalIgnoreCase) == true
                 ? ScriptingImplementation.IL2CPP
@@ -28,12 +34,22 @@ namespace Company.BuildPipeline.Editor
 
             if (backend == ScriptingImplementation.IL2CPP)
             {
-                PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64 | AndroidArchitecture.ARMv7;
+                // architecture from android block (default ARM64).
+                var arch = android?.Architecture ?? "ARM64";
+                PlayerSettings.Android.targetArchitectures =
+                    arch.Equals("All",   StringComparison.OrdinalIgnoreCase) ? AndroidArchitecture.All :
+                    arch.Equals("ARMv7", StringComparison.OrdinalIgnoreCase) ? AndroidArchitecture.ARMv7 :
+                    arch.Equals("x86_64",StringComparison.OrdinalIgnoreCase) ? AndroidArchitecture.X86_64 :
+                    /* default ARM64 */ AndroidArchitecture.ARM64;
             }
 
-            // Signing
+            // AAB mode: android block takes precedence.
+            EditorUserBuildSettings.buildAppBundle = android?.BuildAppBundle ?? false;
+
+            // Signing: use debug keystore when keystoreMode=debug; otherwise apply custom keystore.
+            bool useDebugKeystore = android?.KeystoreMode?.Equals("debug", StringComparison.OrdinalIgnoreCase) == true;
             var signing = cfg.SigningConfig;
-            if (signing != null && !string.IsNullOrWhiteSpace(signing.KeystorePath))
+            if (!useDebugKeystore && signing != null && !string.IsNullOrWhiteSpace(signing.KeystorePath))
             {
                 PlayerSettings.Android.useCustomKeystore = true;
                 PlayerSettings.Android.keystoreName = signing.KeystorePath;
@@ -50,8 +66,6 @@ namespace Company.BuildPipeline.Editor
             // Build number from bundle version (strip non-numeric segments).
             if (int.TryParse(cfg.BundleVersion.Split('.')[0], out int major))
                 PlayerSettings.Android.bundleVersionCode = major;
-
-            EditorUserBuildSettings.buildAppBundle = false; // AAB can be toggled via hook if needed
         }
 
         public BuildExecutionResult Build(BuildContext context)
@@ -59,7 +73,9 @@ namespace Company.BuildPipeline.Editor
             var cfg = context.Configuration;
             var outputDir = cfg.OutputPath;
             Directory.CreateDirectory(outputDir);
-            var outputPath = Path.Combine(outputDir, $"{cfg.ProductName}.apk");
+            // Output extension: .aab for App Bundle, .apk otherwise.
+            var ext = (cfg.Android?.BuildAppBundle ?? false) ? ".aab" : ".apk";
+            var outputPath = Path.Combine(outputDir, $"{cfg.ProductName}{ext}");
 
             var options = new BuildPlayerOptions
             {
