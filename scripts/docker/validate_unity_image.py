@@ -147,19 +147,51 @@ def check_required_modules(
 
     failures = []
     if target_platform == "Android":
-        # Check Android SDK
-        rc, out, _ = _run_in_image(docker, image_ref, ["ls /opt/android-sdk/platforms/ 2>/dev/null | head -5"])
-        if rc != 0 or not out:
-            failures.append("Android SDK platforms directory not found at /opt/android-sdk/platforms/")
+        # Detect Android SDK root from ANDROID_HOME env var (set in unityci/editor images)
+        # Fall back to common paths if ANDROID_HOME is not set.
+        rc, sdk_root, _ = _run_in_image(
+            docker, image_ref,
+            ["echo \"${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}\""]
+        )
+        sdk_root = sdk_root.strip() or "/opt/android-sdk"
 
-        # Check NDK
-        rc, out, _ = _run_in_image(docker, image_ref, ["ls /opt/android-sdk/ndk/ 2>/dev/null | head -5"])
+        # Check Android SDK platforms directory
+        rc, out, _ = _run_in_image(
+            docker, image_ref,
+            [f"ls \"{sdk_root}/platforms/\" 2>/dev/null | head -5 || "
+             f"ls \"/opt/android-sdk-linux/platforms/\" 2>/dev/null | head -5 || "
+             f"ls \"/opt/unity/Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platforms/\" 2>/dev/null | head -5"]
+        )
         if rc != 0 or not out:
-            failures.append("Android NDK not found at /opt/android-sdk/ndk/")
+            failures.append(
+                f"Android SDK platforms directory not found. "
+                f"Checked: {sdk_root}/platforms/, /opt/android-sdk-linux/platforms/, "
+                f"and Unity-managed SDK path."
+            )
 
-        # Check adb
-        rc, _, _ = _run_in_image(docker, image_ref, ["which adb 2>/dev/null"])
-        if rc != 0:
+        # Check NDK — Unity images may use $ANDROID_NDK_ROOT or ndk/ subdir
+        rc, out, _ = _run_in_image(
+            docker, image_ref,
+            [f"ls \"{sdk_root}/ndk/\" 2>/dev/null | head -5 || "
+             f"ls \"/opt/android-sdk-linux/ndk/\" 2>/dev/null | head -5 || "
+             f"ls \"${'{'}ANDROID_NDK_ROOT:-/dev/null{'}'}\" 2>/dev/null | head -5 || "
+             f"ls \"/opt/unity/Editor/Data/PlaybackEngines/AndroidPlayer/NDK/\" 2>/dev/null | head -5"]
+        )
+        if rc != 0 or not out:
+            failures.append(
+                f"Android NDK not found. "
+                f"Checked: {sdk_root}/ndk/, /opt/android-sdk-linux/ndk/, "
+                f"$ANDROID_NDK_ROOT, and Unity-managed NDK path."
+            )
+
+        # Check adb — may be in PATH via SDK platform-tools
+        rc, adb_path, _ = _run_in_image(
+            docker, image_ref,
+            [f"which adb 2>/dev/null || "
+             f"test -x \"{sdk_root}/platform-tools/adb\" && echo \"{sdk_root}/platform-tools/adb\" || "
+             f"test -x /opt/android-sdk-linux/platform-tools/adb && echo found || true"]
+        )
+        if rc != 0 or not adb_path:
             failures.append("adb not found in PATH — Android SDK tools may not be installed")
 
     elif target_platform == "WebGL":
@@ -179,10 +211,18 @@ def check_android_sdk_ndk_versions(
     """Validate Android SDK API level and NDK version meet minimums."""
     issues = []
 
-    # Check SDK API level
+    # Detect SDK root dynamically
+    _, sdk_root, _ = _run_in_image(
+        docker, image_ref,
+        ["echo \"${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}\""]
+    )
+    sdk_root = sdk_root.strip() or "/opt/android-sdk"
+
+    # Check SDK API level — try multiple known paths
     rc, out, _ = _run_in_image(
         docker, image_ref,
-        [f"ls /opt/android-sdk/platforms/ 2>/dev/null | sort -V | tail -1"],
+        [f"(ls \"{sdk_root}/platforms/\" 2>/dev/null || "
+         f"ls /opt/android-sdk-linux/platforms/ 2>/dev/null) | sort -V | tail -1"],
     )
     if rc == 0 and out:
         # Format: android-XX
@@ -195,10 +235,13 @@ def check_android_sdk_ndk_versions(
                     "Rebuild the image with a newer Android SDK."
                 )
 
-    # Check NDK version
+    # Check NDK version — try multiple known paths
     rc, out, _ = _run_in_image(
         docker, image_ref,
-        ["cat /opt/android-sdk/ndk/*/source.properties 2>/dev/null | grep Revision | head -1"],
+        [f"cat \"{sdk_root}/ndk/\"*/source.properties 2>/dev/null "
+         f"|| cat /opt/android-sdk-linux/ndk/*/source.properties 2>/dev/null "
+         f"|| cat \"${{ANDROID_NDK_ROOT:-/dev/null}}/source.properties\" 2>/dev/null "
+         f"| grep Revision | head -1"],
     )
     if rc == 0 and out:
         match = re.search(r"Revision\s*=\s*(\d+)", out)
@@ -207,7 +250,7 @@ def check_android_sdk_ndk_versions(
             if ndk_major < MIN_ANDROID_NDK_VERSION:
                 issues.append(
                     f"Android NDK r{ndk_major} is below minimum r{MIN_ANDROID_NDK_VERSION}. "
-                    "Rebuild the image with NDK r{MIN_ANDROID_NDK_VERSION} or newer."
+                    f"Rebuild the image with NDK r{MIN_ANDROID_NDK_VERSION} or newer."
                 )
 
     return (len(issues) == 0), issues
