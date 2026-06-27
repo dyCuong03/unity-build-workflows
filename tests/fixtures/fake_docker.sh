@@ -34,7 +34,8 @@ SUBCOMMAND="${1:-run}"
 
 case "$SUBCOMMAND" in
   inspect)
-    echo '{"Id":"fake123","RepoTags":["fake/unity:test"]}'
+    # docker inspect returns a JSON array; must include required OCI labels
+    echo '[{"Id":"fake123","RepoTags":["fake/unity:test"],"Config":{"Labels":{"org.opencontainers.image.version":"2022.3.21f1","org.unity.build.unity-version":"2022.3.21f1","org.unity.build.variant":"android","org.unity.build.contract-version":"1"}}}]'
     exit 0
     ;;
   images)

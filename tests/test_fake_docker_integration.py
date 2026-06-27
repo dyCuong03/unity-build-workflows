@@ -83,6 +83,7 @@ def _run_container_script(*extra_args: str, mode: str = "success",
 
     project = work / "project"
     project.mkdir(exist_ok=True)
+    (project / "Assets").mkdir(exist_ok=True)  # run_unity_container.py validates Assets/ exists
     output = work / "output"
     output.mkdir(exist_ok=True)
     logs = work / "logs"
@@ -101,6 +102,7 @@ def _run_container_script(*extra_args: str, mode: str = "success",
         "--image", image,
         "--log-path", str(logs),
         "--report-path", str(work / "reports"),
+        "--skip-image-validation",  # fake docker cannot satisfy image health checks
         *extra_args,
     ]
     return subprocess.run(
