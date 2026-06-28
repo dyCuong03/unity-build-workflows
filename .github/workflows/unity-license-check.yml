@@ -1,0 +1,231 @@
+name: Unity License Check
+
+# Verify Unity license secrets are configured correctly.
+#
+# Supports all three GameCI activation methods:
+#   1. Personal License  — UNITY_LICENSE (.ulf content) + UNITY_EMAIL + UNITY_PASSWORD
+#   2. Professional License — UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD
+#   3. License Server — unity-licensing-server URL (no secrets needed)
+#
+# For Personal License setup:
+#   1. Open Unity Hub → Preferences → Licenses → "Get a free personal license"
+#   2. Find .ulf file:
+#      - Windows: C:\ProgramData\Unity\Unity_lic.ulf
+#      - Mac:     /Library/Application Support/Unity/Unity_lic.ulf
+#      - Linux:   ~/.local/share/unity3d/Unity/Unity_lic.ulf
+#   3. Set secrets:
+#      gh secret set UNITY_LICENSE < Unity_lic.ulf
+#      gh secret set UNITY_EMAIL
+#      gh secret set UNITY_PASSWORD
+#
+# For Professional License setup:
+#   1. Get serial from https://id.unity.com/en/subscriptions
+#   2. Set secrets:
+#      gh secret set UNITY_SERIAL
+#      gh secret set UNITY_EMAIL
+#      gh secret set UNITY_PASSWORD
+#
+# Usage from a consumer repo:
+#   jobs:
+#     license:
+#       uses: dyCuong03/unity-build-workflows/.github/workflows/unity-license-check.yml@main
+#       with:
+#         unity-version: '6000.0.26f1'
+#       secrets:
+#         UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+#         UNITY_EMAIL:   ${{ secrets.UNITY_EMAIL }}
+#         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+on:
+  workflow_call:
+    inputs:
+      unity-version:
+        description: Unity editor version (e.g., 6000.0.26f1)
+        type: string
+        required: true
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-namespace:
+        description: Docker image namespace
+        type: string
+        required: false
+        default: dycuong03
+      image-name:
+        description: Docker image name
+        type: string
+        required: false
+        default: unity-editor
+
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
+
+    outputs:
+      license-status:
+        description: '"active" if license is configured, "missing" if not'
+        value: ${{ jobs.check.outputs.status }}
+      license-method:
+        description: 'Detected method: personal, professional, or none'
+        value: ${{ jobs.check.outputs.method }}
+
+  workflow_dispatch:
+    inputs:
+      unity-version:
+        description: Unity editor version (e.g., 6000.0.26f1)
+        required: true
+        default: '6000.0.26f1'
+
+jobs:
+  check:
+    name: License Check
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      method: ${{ steps.result.outputs.method }}
+
+    steps:
+      # ── Detect which activation method is available ───────────────────────────
+      - name: Detect license method
+        id: detect
+        shell: bash
+        env:
+          HAS_LICENSE: ${{ secrets.UNITY_LICENSE != '' }}
+          HAS_EMAIL: ${{ secrets.UNITY_EMAIL != '' }}
+          HAS_PASSWORD: ${{ secrets.UNITY_PASSWORD != '' }}
+          HAS_SERIAL: ${{ secrets.UNITY_SERIAL != '' }}
+        run: |
+          echo "── Secret availability ──"
+          echo "UNITY_LICENSE:  ${HAS_LICENSE}"
+          echo "UNITY_EMAIL:    ${HAS_EMAIL}"
+          echo "UNITY_PASSWORD: ${HAS_PASSWORD}"
+          echo "UNITY_SERIAL:   ${HAS_SERIAL}"
+          echo ""
+
+          if [ "$HAS_SERIAL" = "true" ] && [ "$HAS_EMAIL" = "true" ] && [ "$HAS_PASSWORD" = "true" ]; then
+            echo "method=professional" >> "$GITHUB_OUTPUT"
+            echo "::notice::Professional license detected (UNITY_SERIAL + email/password)."
+          elif [ "$HAS_LICENSE" = "true" ]; then
+            echo "method=personal" >> "$GITHUB_OUTPUT"
+            if [ "$HAS_EMAIL" = "true" ] && [ "$HAS_PASSWORD" = "true" ]; then
+              echo "::notice::Personal license detected (UNITY_LICENSE + email/password)."
+            else
+              echo "::warning::UNITY_LICENSE is set but UNITY_EMAIL and/or UNITY_PASSWORD are missing."
+              echo "::warning::Some GameCI actions require all three secrets."
+            fi
+          elif [ "$HAS_EMAIL" = "true" ] && [ "$HAS_PASSWORD" = "true" ]; then
+            echo "method=personal" >> "$GITHUB_OUTPUT"
+            echo "::warning::Email/password set but UNITY_LICENSE (.ulf) is missing."
+            echo "::warning::You need the .ulf file for manual license activation."
+          else
+            echo "method=none" >> "$GITHUB_OUTPUT"
+            echo "::error::No Unity license secrets found."
+          fi
+
+      # ── Verify activation in container (when license available) ───────────────
+      - name: Verify license activation
+        id: verify
+        if: steps.detect.outputs.method != 'none'
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          IMAGE="${{ inputs.image-registry }}/${{ inputs.image-namespace }}/${{ inputs.image-name }}:${{ inputs.unity-version }}-linux"
+
+          echo "Pulling image: ${IMAGE}"
+          if ! docker pull "${IMAGE}" 2>&1; then
+            echo "::warning::Could not pull image ${IMAGE}."
+            echo "::warning::Skipping container verification — secrets appear configured."
+            echo "verified=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Only test file-based activation (UNITY_LICENSE)
+          if [ -z "${UNITY_LICENSE}" ]; then
+            echo "::notice::Serial-based license — cannot verify in container without running Unity."
+            echo "::notice::Secrets are configured. Activation will happen at build time."
+            echo "verified=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Write license to temp file (never logged)
+          TEMP_ULF="$(mktemp)"
+          chmod 600 "${TEMP_ULF}"
+          if echo "${UNITY_LICENSE}" | base64 -d > /dev/null 2>&1; then
+            echo "${UNITY_LICENSE}" | base64 -d > "${TEMP_ULF}"
+          else
+            printf '%s' "${UNITY_LICENSE}" > "${TEMP_ULF}"
+          fi
+
+          # Try activation inside container
+          if docker run --rm \
+            -v "${TEMP_ULF}:/tmp/license.ulf:ro" \
+            "${IMAGE}" \
+            /usr/bin/unity-editor \
+              -batchmode -nographics -quit \
+              -manualLicenseFile /tmp/license.ulf \
+              -logFile /dev/stdout 2>&1; then
+            echo "verified=ok" >> "$GITHUB_OUTPUT"
+            echo "::notice::License activation verified successfully in container."
+          else
+            echo "verified=failed" >> "$GITHUB_OUTPUT"
+            echo "::warning::License activation failed in container."
+          fi
+
+          rm -f "${TEMP_ULF}"
+
+      # ── Output result and guidance ────────────────────────────────────────────
+      - name: Set output status
+        id: result
+        shell: bash
+        run: |
+          METHOD="${{ steps.detect.outputs.method }}"
+          VERIFIED="${{ steps.verify.outputs.verified }}"
+
+          if [ "$METHOD" != "none" ] && [ "$VERIFIED" != "failed" ]; then
+            echo "status=active" >> "$GITHUB_OUTPUT"
+            echo "method=${METHOD}" >> "$GITHUB_OUTPUT"
+            echo ""
+            echo "✅ License status: CONFIGURED (${METHOD})"
+          else
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+            echo "method=${METHOD}" >> "$GITHUB_OUTPUT"
+            echo ""
+            echo "❌ License status: NOT CONFIGURED"
+            echo ""
+            echo "══════════════════════════════════════════════════════════════"
+            echo "  Setup instructions (follow https://game.ci/docs/github/activation)"
+            echo "══════════════════════════════════════════════════════════════"
+            echo ""
+            echo "  Option 1: Personal License (free)"
+            echo "  ─────────────────────────────────"
+            echo "  1. Open Unity Hub → Preferences → Licenses"
+            echo "  2. Click 'Get a free personal license' (or Add)"
+            echo "  3. Find the .ulf file:"
+            echo "     Windows: C:\\ProgramData\\Unity\\Unity_lic.ulf"
+            echo "     Mac:     /Library/Application Support/Unity/Unity_lic.ulf"
+            echo "     Linux:   ~/.local/share/unity3d/Unity/Unity_lic.ulf"
+            echo "  4. Set GitHub secrets:"
+            echo "     gh secret set UNITY_LICENSE < Unity_lic.ulf"
+            echo "     gh secret set UNITY_EMAIL"
+            echo "     gh secret set UNITY_PASSWORD"
+            echo ""
+            echo "  Option 2: Professional License (Plus/Pro)"
+            echo "  ──────────────────────────────────────────"
+            echo "  1. Get serial from https://id.unity.com/en/subscriptions"
+            echo "     Format: XX-XXXX-XXXX-XXXX-XXXX-XXXX"
+            echo "  2. Set GitHub secrets:"
+            echo "     gh secret set UNITY_SERIAL"
+            echo "     gh secret set UNITY_EMAIL"
+            echo "     gh secret set UNITY_PASSWORD"
+            echo ""
+            echo "══════════════════════════════════════════════════════════════"
+          fi
