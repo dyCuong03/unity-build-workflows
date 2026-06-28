@@ -1,0 +1,161 @@
+name: Generate Unity License
+
+# Generate a Docker-compatible .ulf license file.
+#
+# Unity 6 .ulf files are machine-bound. A .ulf generated on a local machine
+# will fail in Docker with "TimeStamp validation failed" because the Docker
+# container has different machine identifiers.
+#
+# This workflow generates a .ulf INSIDE the Docker image so it matches
+# the container's machine bindings, then saves it as a GitHub secret.
+#
+# Prerequisites:
+#   - UNITY_EMAIL and UNITY_PASSWORD secrets must be set
+#   - Docker image must exist for the specified unity-version
+#
+# After running:
+#   1. Download the 'unity-docker-license' artifact
+#   2. Set as secret: gh secret set UNITY_LICENSE < Unity_lic.ulf
+
+on:
+  workflow_call:
+    inputs:
+      unity-version:
+        description: Unity editor version
+        type: string
+        required: true
+      image-registry:
+        description: Docker image registry
+        type: string
+        required: false
+        default: ghcr.io
+      image-namespace:
+        description: Docker image namespace
+        type: string
+        required: false
+        default: dycuong03
+      image-name:
+        description: Docker image name
+        type: string
+        required: false
+        default: unity-editor
+    secrets:
+      UNITY_EMAIL:
+        required: true
+      UNITY_PASSWORD:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      unity-version:
+        description: Unity editor version
+        required: true
+        default: '6000.0.26f1'
+
+jobs:
+  generate:
+    name: Generate Docker License
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pull Unity Docker image
+        run: |
+          IMAGE="${{ inputs.image-registry }}/${{ inputs.image-namespace }}/${{ inputs.image-name }}:${{ inputs.unity-version }}-linux"
+          echo "Pulling: ${IMAGE}"
+          docker pull "${IMAGE}"
+          echo "IMAGE=${IMAGE}" >> "$GITHUB_ENV"
+
+      - name: Activate Unity inside container and extract .ulf
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          mkdir -p license-output
+
+          # Run activation inside the container
+          docker run --rm \
+            -e UNITY_EMAIL \
+            -e UNITY_PASSWORD \
+            -v "$(pwd)/license-output:/license-output" \
+            "${IMAGE}" \
+            bash -c '
+              set -e
+              echo "Attempting Unity activation with email/password..."
+
+              /usr/bin/unity-editor \
+                -batchmode \
+                -nographics \
+                -username "${UNITY_EMAIL}" \
+                -password "${UNITY_PASSWORD}" \
+                -logFile /dev/stdout \
+                -quit || true
+
+              echo ""
+              echo "Searching for generated license files..."
+
+              # Unity writes .ulf to various locations
+              for dir in \
+                "/tmp/unity-home/.local/share/unity3d/Unity" \
+                "/root/.local/share/unity3d/Unity" \
+                "${HOME}/.local/share/unity3d/Unity" \
+                "/tmp/.unity3d"; do
+                if [ -d "$dir" ]; then
+                  echo "Checking: $dir"
+                  ls -la "$dir/" 2>/dev/null || true
+                  find "$dir" -name "*.ulf" -exec cp {} /license-output/ \; 2>/dev/null || true
+                fi
+              done
+
+              # Also try the manual activation approach
+              if [ ! -f /license-output/*.ulf ] 2>/dev/null; then
+                echo "No .ulf from login activation, trying -createManualActivationFile..."
+                /usr/bin/unity-editor \
+                  -batchmode \
+                  -nographics \
+                  -createManualActivationFile \
+                  -logFile /dev/stdout \
+                  -quit || true
+
+                find / -name "*.alf" -exec cp {} /license-output/ \; 2>/dev/null || true
+              fi
+
+              echo ""
+              echo "License output directory:"
+              ls -la /license-output/ 2>/dev/null || echo "(empty)"
+            '
+
+          echo ""
+          echo "Host license-output directory:"
+          ls -la license-output/ 2>/dev/null || echo "(empty)"
+
+      - name: Upload license artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-docker-license
+          path: |
+            license-output/*.ulf
+            license-output/*.alf
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Report result
+        run: |
+          if ls license-output/*.ulf 2>/dev/null | head -1 > /dev/null; then
+            echo "SUCCESS: .ulf file generated"
+            echo "Download the 'unity-docker-license' artifact and run:"
+            echo "  gh secret set UNITY_LICENSE < Unity_lic.ulf"
+          elif ls license-output/*.alf 2>/dev/null | head -1 > /dev/null; then
+            echo "PARTIAL: .alf file generated (manual activation needed)"
+            echo "1. Download the 'unity-docker-license' artifact"
+            echo "2. Go to https://license.unity3d.com/manual"
+            echo "3. Upload the .alf file"
+            echo "4. Download the .ulf and set as secret:"
+            echo "   gh secret set UNITY_LICENSE < Unity_lic.ulf"
+          else
+            echo "FAILED: No license files generated"
+            echo "Unity 6 Personal may not support automated activation in Docker."
+            echo "Options:"
+            echo "  1. Use a self-hosted runner with Unity Hub pre-installed"
+            echo "  2. Upgrade to Unity Pro"
+            exit 1
+          fi
