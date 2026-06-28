@@ -71,13 +71,14 @@ jobs:
         run: |
           mkdir -p license-output
 
-          # Run activation inside the container
+          # Run activation inside the container (override entrypoint)
           docker run --rm \
+            --entrypoint bash \
             -e UNITY_EMAIL \
             -e UNITY_PASSWORD \
             -v "$(pwd)/license-output:/license-output" \
             "${IMAGE}" \
-            bash -c '
+            -c '
               set -e
               echo "Attempting Unity activation with email/password..."
 
