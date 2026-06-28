@@ -122,9 +122,10 @@ jobs:
               echo "::warning::Some GameCI actions require all three secrets."
             fi
           elif [ "$HAS_EMAIL" = "true" ] && [ "$HAS_PASSWORD" = "true" ]; then
-            echo "method=personal" >> "$GITHUB_OUTPUT"
+            echo "method=incomplete" >> "$GITHUB_OUTPUT"
             echo "::warning::Email/password set but UNITY_LICENSE (.ulf) is missing."
             echo "::warning::You need the .ulf file for manual license activation."
+            echo "::warning::See setup instructions in the output below."
           else
             echo "method=none" >> "$GITHUB_OUTPUT"
             echo "::error::No Unity license secrets found."
@@ -133,7 +134,7 @@ jobs:
       # ── Verify activation in container (when license available) ───────────────
       - name: Verify license activation
         id: verify
-        if: steps.detect.outputs.method != 'none'
+        if: steps.detect.outputs.method == 'personal' || steps.detect.outputs.method == 'professional'
         shell: bash
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -148,9 +149,9 @@ jobs:
             exit 0
           fi
 
-          # Only test file-based activation (UNITY_LICENSE)
+          # Professional (serial) license — cannot verify with -manualLicenseFile
           if [ -z "${UNITY_LICENSE}" ]; then
-            echo "::notice::Serial-based license — cannot verify in container without running Unity."
+            echo "::notice::Professional license (serial) — verification requires full Unity activation."
             echo "::notice::Secrets are configured. Activation will happen at build time."
             echo "verified=skipped" >> "$GITHUB_OUTPUT"
             exit 0
@@ -190,7 +191,7 @@ jobs:
           METHOD="${{ steps.detect.outputs.method }}"
           VERIFIED="${{ steps.verify.outputs.verified }}"
 
-          if [ "$METHOD" != "none" ] && [ "$VERIFIED" != "failed" ]; then
+          if { [ "$METHOD" = "personal" ] || [ "$METHOD" = "professional" ]; } && [ "$VERIFIED" != "failed" ]; then
             echo "status=active" >> "$GITHUB_OUTPUT"
             echo "method=${METHOD}" >> "$GITHUB_OUTPUT"
             echo ""
