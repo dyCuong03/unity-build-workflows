@@ -75,37 +75,112 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       status: ${{ steps.result.outputs.status }}
-      strategy: ${{ steps.resolve.outputs.activation-strategy }}
+      strategy: ${{ steps.resolve.outputs.strategy }}
 
     steps:
-      - name: Checkout toolkit
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: scripts/common/resolve_activation_strategy.sh
-          sparse-checkout-cone-mode: false
-
-      # ── Resolve activation strategy ───────────────────────────────────────
+      # ── Resolve activation strategy (inline — no checkout needed) ─────────
       - name: Resolve activation strategy
         id: resolve
         shell: bash
         env:
-          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
-          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-          UNITY_ACTIVATION_STRATEGY: ${{ inputs.unity-activation-strategy }}
+          HAS_LICENSE: ${{ secrets.UNITY_LICENSE != '' }}
+          HAS_SERIAL: ${{ secrets.UNITY_SERIAL != '' }}
+          HAS_EMAIL: ${{ secrets.UNITY_EMAIL != '' }}
+          HAS_PASSWORD: ${{ secrets.UNITY_PASSWORD != '' }}
+          FORCED_STRATEGY: ${{ inputs.unity-activation-strategy }}
         run: |
-          STRATEGY=$(bash scripts/common/resolve_activation_strategy.sh)
-          echo "strategy=${STRATEGY}" >> "$GITHUB_OUTPUT"
+          echo "Secret detection:"
+          echo "  UNITY_LICENSE:  ${HAS_LICENSE}"
+          echo "  UNITY_SERIAL:   ${HAS_SERIAL}"
+          echo "  UNITY_EMAIL:    ${HAS_EMAIL}"
+          echo "  UNITY_PASSWORD: ${HAS_PASSWORD}"
+          echo ""
+
+          echo "unity-license-present=${HAS_LICENSE}" >> "$GITHUB_OUTPUT"
+          echo "unity-serial-present=${HAS_SERIAL}"   >> "$GITHUB_OUTPUT"
+          echo "unity-email-present=${HAS_EMAIL}"      >> "$GITHUB_OUTPUT"
+          echo "unity-password-present=${HAS_PASSWORD}" >> "$GITHUB_OUTPUT"
+
+          # ── Forced strategy ──────────────────────────────────────────────
+          if [ "${FORCED_STRATEGY}" != "auto" ]; then
+            case "${FORCED_STRATEGY}" in
+              manual-ulf|manual-license)
+                if [ "${HAS_LICENSE}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'manual-ulf' but UNITY_LICENSE is not set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=manual-ulf" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              serial)
+                if [ "${HAS_SERIAL}" != "true" ] || [ "${HAS_EMAIL}" != "true" ] || [ "${HAS_PASSWORD}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'serial' but UNITY_SERIAL/UNITY_EMAIL/UNITY_PASSWORD not all set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=serial" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              account)
+                if [ "${HAS_EMAIL}" != "true" ] || [ "${HAS_PASSWORD}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'account' but UNITY_EMAIL/UNITY_PASSWORD not set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=account" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              preactivated)
+                echo "strategy=preactivated" >> "$GITHUB_OUTPUT"
+                ;;
+              none)
+                echo "strategy=none" >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                echo "blocked-reason=Unknown strategy: ${FORCED_STRATEGY}" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
+            exit 0
+          fi
+
+          # ── Auto resolution (priority order) ────────────────────────────
+          # 1. UNITY_LICENSE (valid .ulf)
+          if [ "${HAS_LICENSE}" = "true" ]; then
+            echo "strategy=manual-ulf" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: manual-ulf (UNITY_LICENSE is set)"
+            exit 0
+          fi
+
+          # 2. Serial (Pro/Plus/Enterprise)
+          if [ "${HAS_SERIAL}" = "true" ] && [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" = "true" ]; then
+            echo "strategy=serial" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: serial (UNITY_SERIAL + credentials)"
+            exit 0
+          fi
+
+          # 3. Account (Personal/free primary method)
+          if [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" = "true" ]; then
+            echo "strategy=account" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: account (UNITY_EMAIL + UNITY_PASSWORD — Personal/free primary method)"
+            exit 0
+          fi
+
+          # 4. Blocked
+          echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+          if [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" != "true" ]; then
+            echo "blocked-reason=UNITY_EMAIL is set but UNITY_PASSWORD is missing" >> "$GITHUB_OUTPUT"
+          elif [ "${HAS_PASSWORD}" = "true" ] && [ "${HAS_EMAIL}" != "true" ]; then
+            echo "blocked-reason=UNITY_PASSWORD is set but UNITY_EMAIL is missing" >> "$GITHUB_OUTPUT"
+          else
+            echo "blocked-reason=No Unity activation secrets found" >> "$GITHUB_OUTPUT"
+          fi
 
       # ── Set final status and guidance ─────────────────────────────────────
       - name: Set output status
         id: result
         shell: bash
         env:
-          STRATEGY: ${{ steps.resolve.outputs.activation-strategy }}
-          LICENSE_VALID: ${{ steps.resolve.outputs.unity-license-valid-ulf }}
-          BLOCKED_REASON: ${{ steps.resolve.outputs.activation-blocked-reason }}
+          STRATEGY: ${{ steps.resolve.outputs.strategy }}
+          BLOCKED_REASON: ${{ steps.resolve.outputs.blocked-reason }}
         run: |
           echo ""
           echo "════════════════════════════════════════════════════════════"
