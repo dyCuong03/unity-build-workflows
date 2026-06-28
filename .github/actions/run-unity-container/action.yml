@@ -107,6 +107,7 @@ runs:
         UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
         UNITY_EMAIL: ${{ env.UNITY_EMAIL }}
         UNITY_PASSWORD: ${{ env.UNITY_PASSWORD }}
+        UNITY_ACTIVATION_STRATEGY: ${{ env.UNITY_ACTIVATION_STRATEGY }}
         # Container parameters
         PROJECT_PATH: ${{ inputs.project-path }}
         UNITY_VERSION: ${{ inputs.unity-version }}

@@ -181,18 +181,22 @@ copy_editor_log() {
 }
 
 # ---------------------------------------------------------------------------
-# Activate Unity license if UNITY_LICENSE (or email/password) is set
+# Activate Unity license using strategy-based activation
+# UNITY_LICENSE is optional — other strategies (serial, account, preactivated)
+# are attempted automatically if UNITY_LICENSE is not set.
 # ---------------------------------------------------------------------------
 activate_license_if_needed() {
-    if [[ -z "${UNITY_LICENSE:-}" && -z "${UNITY_EMAIL:-}" ]]; then
+    if [[ -z "${UNITY_LICENSE:-}" && -z "${UNITY_EMAIL:-}" && -z "${UNITY_SERIAL:-}" ]]; then
         log_info "No license environment variables set – skipping activation"
-        log_info "If your Unity version requires a license, set UNITY_LICENSE or UNITY_EMAIL + UNITY_PASSWORD"
+        log_info "Set UNITY_EMAIL + UNITY_PASSWORD (Personal/free) or UNITY_LICENSE (.ulf) to activate"
         return 0
     fi
     log_info "License environment variable detected – running activate-license.sh"
     /usr/local/bin/activate-license.sh || {
-        log_error "License activation failed. Check UNITY_LICENSE / UNITY_EMAIL / UNITY_PASSWORD."
-        log_error "Editor.log may contain additional details."
+        log_error "License activation failed. See activation log for details."
+        log_error "Unity Personal/free: set UNITY_EMAIL + UNITY_PASSWORD"
+        log_error "Manual license: set UNITY_LICENSE with .ulf content"
+        log_error "Unity Pro/Plus: set UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD"
         copy_editor_log
         exit 1
     }

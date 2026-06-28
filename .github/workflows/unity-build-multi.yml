@@ -97,6 +97,18 @@ on:
         required: false
         default: none
 
+      # ── License activation ────────────────────────────────────────────────────
+      unity-activation-strategy:
+        description: >
+          License activation strategy: auto (default), manual-ulf, serial,
+          account, preactivated, none.
+          In auto mode, the toolkit detects available secrets and selects the
+          best strategy. UNITY_LICENSE is optional — Unity Personal/free can
+          use account activation (UNITY_EMAIL + UNITY_PASSWORD).
+        type: string
+        required: false
+        default: auto
+
       # ── Docker image ──────────────────────────────────────────────────────────
       image-registry:
         description: Docker image registry
@@ -416,6 +428,7 @@ jobs:
       UNITY_LICENSE:                  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:                    ${{ secrets.UNITY_EMAIL }}
       UNITY_PASSWORD:                 ${{ secrets.UNITY_PASSWORD }}
+      UNITY_ACTIVATION_STRATEGY:      ${{ inputs.unity-activation-strategy }}
       ANDROID_KEYSTORE_BASE64:        ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       ANDROID_KEYSTORE_PASS:          ${{ secrets.ANDROID_KEYSTORE_PASS }}
       ANDROID_KEY_ALIAS:              ${{ secrets.ANDROID_KEY_ALIAS }}

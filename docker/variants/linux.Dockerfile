@@ -86,12 +86,14 @@ COPY docker/unity/entrypoint.sh       /usr/local/bin/entrypoint.sh
 COPY docker/unity/healthcheck.sh      /usr/local/bin/healthcheck.sh
 COPY docker/unity/activate-license.sh /usr/local/bin/activate-license.sh
 COPY docker/unity/return-license.sh   /usr/local/bin/return-license.sh
+COPY scripts/common/resolve_activation_strategy.sh /usr/local/share/unity-build-workflows/scripts/common/resolve_activation_strategy.sh
 
 RUN chmod 755 \
         /usr/local/bin/entrypoint.sh \
         /usr/local/bin/healthcheck.sh \
         /usr/local/bin/activate-license.sh \
-        /usr/local/bin/return-license.sh
+        /usr/local/bin/return-license.sh \
+        /usr/local/share/unity-build-workflows/scripts/common/resolve_activation_strategy.sh
 
 # ---------------------------------------------------------------------------
 # Runtime defaults
