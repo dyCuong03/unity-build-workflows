@@ -37,6 +37,8 @@ REPO_ROOT = Path(__file__).parent.parent
 ALLOWED_PATH = "docker/unity/entrypoint.sh"  # kept for test backward-compat
 ALLOWED_PATHS = frozenset({
     "docker/unity/entrypoint.sh",
+    "docker/unity/activate-license.sh",                # License activation (runs inside Docker)
+    "scripts/common/resolve_activation_strategy.sh",   # Strategy resolver (references Unity paths for detection)
     ".github/workflows/unity-build-ios.yml",
     ".github/workflows/unity-test-ios.yml",
     ".github/workflows/unity-release-ios.yml",  # iOS release pipeline (tag-triggered)

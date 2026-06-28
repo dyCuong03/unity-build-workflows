@@ -308,6 +308,10 @@ def _build_docker_command(
             cmd += ["-e", secret_var]
         # else: Docker will not set the var (not fail)
 
+    # Activation strategy override (not a secret — safe to log)
+    if os.environ.get("UNITY_ACTIVATION_STRATEGY"):
+        cmd += ["-e", f"UNITY_ACTIVATION_STRATEGY={os.environ['UNITY_ACTIVATION_STRATEGY']}"]
+
     # Additional non-secret env pass-throughs provided by caller
     for key, value in env_vars.items():
         if key not in SECRET_ENV_VARS:
@@ -683,15 +687,22 @@ def main() -> None:
         _log("DRY RUN — not executing.")
         return
 
-    # ── Warn if credentials are absent ────────────────────────────────────
-    if not os.environ.get("UNITY_LICENSE") and not (
-        os.environ.get("UNITY_EMAIL") and os.environ.get("UNITY_PASSWORD")
-    ):
-        print(
-            "WARNING: Neither UNITY_LICENSE nor UNITY_EMAIL+UNITY_PASSWORD is set. "
-            "The container will likely fail to activate Unity.",
-            file=sys.stderr,
-        )
+    # ── Warn if no activation credentials are available ─────────────────
+    has_license = bool(os.environ.get("UNITY_LICENSE"))
+    has_serial = bool(os.environ.get("UNITY_SERIAL"))
+    has_email = bool(os.environ.get("UNITY_EMAIL"))
+    has_password = bool(os.environ.get("UNITY_PASSWORD"))
+    forced_strategy = os.environ.get("UNITY_ACTIVATION_STRATEGY", "auto")
+
+    if not has_license and not has_serial and not (has_email and has_password):
+        if forced_strategy not in ("preactivated", "none"):
+            print(
+                "WARNING: No Unity activation credentials found. "
+                "Set UNITY_EMAIL+UNITY_PASSWORD (Personal/free), "
+                "UNITY_LICENSE (.ulf), or UNITY_SERIAL+credentials (Pro/Plus). "
+                "See: https://game.ci/docs/github/activation",
+                file=sys.stderr,
+            )
 
     # ── Run the container ──────────────────────────────────────────────────
     _log(f"Starting container (timeout={args.container_timeout}s) …")

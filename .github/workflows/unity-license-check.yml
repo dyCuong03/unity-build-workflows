@@ -1,0 +1,230 @@
+name: Unity License Check
+
+# Pre-flight check for Unity license activation strategy.
+#
+# Detects available secrets and selects the best activation strategy:
+#   1. manual-ulf    — UNITY_LICENSE (.ulf file content)
+#   2. serial        — UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD (Pro/Plus)
+#   3. account       — UNITY_EMAIL + UNITY_PASSWORD (Personal/free)
+#   4. preactivated  — Unity already activated on runner
+#   5. blocked       — No valid strategy available
+#
+# UNITY_LICENSE is OPTIONAL. Unity Personal/free uses account activation
+# (UNITY_EMAIL + UNITY_PASSWORD) as the primary method.
+#
+# See: https://game.ci/docs/github/activation
+#
+# Usage from a consumer repo:
+#   jobs:
+#     license:
+#       uses: dyCuong03/unity-build-workflows/.github/workflows/unity-license-check.yml@main
+#       with:
+#         unity-version: '6000.0.26f1'
+#       secrets:
+#         UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+#         UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+#         UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+on:
+  workflow_call:
+    inputs:
+      unity-version:
+        description: Unity editor version (e.g., 6000.0.26f1)
+        type: string
+        required: true
+      unity-activation-strategy:
+        description: >
+          Force activation strategy: auto (default), manual-ulf, serial,
+          account, preactivated, none.
+        type: string
+        required: false
+        default: auto
+
+    secrets:
+      UNITY_LICENSE:
+        required: false
+      UNITY_EMAIL:
+        required: false
+      UNITY_PASSWORD:
+        required: false
+      UNITY_SERIAL:
+        required: false
+
+    outputs:
+      license-status:
+        description: '"active" if a valid strategy is available, "blocked" if not'
+        value: ${{ jobs.check.outputs.status }}
+      activation-strategy:
+        description: 'Selected strategy: manual-ulf, serial, account, preactivated, blocked, none'
+        value: ${{ jobs.check.outputs.strategy }}
+
+  workflow_dispatch:
+    inputs:
+      unity-version:
+        description: Unity editor version (e.g., 6000.0.26f1)
+        required: true
+        default: '6000.0.26f1'
+      unity-activation-strategy:
+        description: 'Force strategy: auto, manual-ulf, serial, account, preactivated, none'
+        required: false
+        default: auto
+
+jobs:
+  check:
+    name: License Check
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      strategy: ${{ steps.resolve.outputs.strategy }}
+
+    steps:
+      # ── Resolve activation strategy (inline — no checkout needed) ─────────
+      - name: Resolve activation strategy
+        id: resolve
+        shell: bash
+        env:
+          HAS_LICENSE: ${{ secrets.UNITY_LICENSE != '' }}
+          HAS_SERIAL: ${{ secrets.UNITY_SERIAL != '' }}
+          HAS_EMAIL: ${{ secrets.UNITY_EMAIL != '' }}
+          HAS_PASSWORD: ${{ secrets.UNITY_PASSWORD != '' }}
+          FORCED_STRATEGY: ${{ inputs.unity-activation-strategy }}
+        run: |
+          echo "Secret detection:"
+          echo "  UNITY_LICENSE:  ${HAS_LICENSE}"
+          echo "  UNITY_SERIAL:   ${HAS_SERIAL}"
+          echo "  UNITY_EMAIL:    ${HAS_EMAIL}"
+          echo "  UNITY_PASSWORD: ${HAS_PASSWORD}"
+          echo ""
+
+          echo "unity-license-present=${HAS_LICENSE}" >> "$GITHUB_OUTPUT"
+          echo "unity-serial-present=${HAS_SERIAL}"   >> "$GITHUB_OUTPUT"
+          echo "unity-email-present=${HAS_EMAIL}"      >> "$GITHUB_OUTPUT"
+          echo "unity-password-present=${HAS_PASSWORD}" >> "$GITHUB_OUTPUT"
+
+          # ── Forced strategy ──────────────────────────────────────────────
+          if [ "${FORCED_STRATEGY}" != "auto" ]; then
+            case "${FORCED_STRATEGY}" in
+              manual-ulf|manual-license)
+                if [ "${HAS_LICENSE}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'manual-ulf' but UNITY_LICENSE is not set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=manual-ulf" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              serial)
+                if [ "${HAS_SERIAL}" != "true" ] || [ "${HAS_EMAIL}" != "true" ] || [ "${HAS_PASSWORD}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'serial' but UNITY_SERIAL/UNITY_EMAIL/UNITY_PASSWORD not all set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=serial" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              account)
+                if [ "${HAS_EMAIL}" != "true" ] || [ "${HAS_PASSWORD}" != "true" ]; then
+                  echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                  echo "blocked-reason=Forced strategy 'account' but UNITY_EMAIL/UNITY_PASSWORD not set" >> "$GITHUB_OUTPUT"
+                else
+                  echo "strategy=account" >> "$GITHUB_OUTPUT"
+                fi
+                ;;
+              preactivated)
+                echo "strategy=preactivated" >> "$GITHUB_OUTPUT"
+                ;;
+              none)
+                echo "strategy=none" >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+                echo "blocked-reason=Unknown strategy: ${FORCED_STRATEGY}" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
+            exit 0
+          fi
+
+          # ── Auto resolution (priority order) ────────────────────────────
+          # 1. UNITY_LICENSE (valid .ulf)
+          if [ "${HAS_LICENSE}" = "true" ]; then
+            echo "strategy=manual-ulf" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: manual-ulf (UNITY_LICENSE is set)"
+            exit 0
+          fi
+
+          # 2. Serial (Pro/Plus/Enterprise)
+          if [ "${HAS_SERIAL}" = "true" ] && [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" = "true" ]; then
+            echo "strategy=serial" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: serial (UNITY_SERIAL + credentials)"
+            exit 0
+          fi
+
+          # 3. Account (Personal/free primary method)
+          if [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" = "true" ]; then
+            echo "strategy=account" >> "$GITHUB_OUTPUT"
+            echo "::notice::Strategy: account (UNITY_EMAIL + UNITY_PASSWORD — Personal/free primary method)"
+            exit 0
+          fi
+
+          # 4. Blocked
+          echo "strategy=blocked" >> "$GITHUB_OUTPUT"
+          if [ "${HAS_EMAIL}" = "true" ] && [ "${HAS_PASSWORD}" != "true" ]; then
+            echo "blocked-reason=UNITY_EMAIL is set but UNITY_PASSWORD is missing" >> "$GITHUB_OUTPUT"
+          elif [ "${HAS_PASSWORD}" = "true" ] && [ "${HAS_EMAIL}" != "true" ]; then
+            echo "blocked-reason=UNITY_PASSWORD is set but UNITY_EMAIL is missing" >> "$GITHUB_OUTPUT"
+          else
+            echo "blocked-reason=No Unity activation secrets found" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Set final status and guidance ─────────────────────────────────────
+      - name: Set output status
+        id: result
+        shell: bash
+        env:
+          STRATEGY: ${{ steps.resolve.outputs.strategy }}
+          BLOCKED_REASON: ${{ steps.resolve.outputs.blocked-reason }}
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+
+          case "${STRATEGY}" in
+            manual-ulf|serial|account|preactivated|none)
+              echo "status=active" >> "$GITHUB_OUTPUT"
+              echo "  License status: CONFIGURED"
+              echo "  Strategy:       ${STRATEGY}"
+              ;;
+
+            blocked)
+              echo "status=blocked" >> "$GITHUB_OUTPUT"
+              echo "  License status: BLOCKED"
+              echo "  Reason:         ${BLOCKED_REASON}"
+              echo ""
+              echo "  ── Setup for Unity Personal/free ──"
+              echo "  Primary: Set UNITY_EMAIL + UNITY_PASSWORD secrets"
+              echo "    gh secret set UNITY_EMAIL"
+              echo "    gh secret set UNITY_PASSWORD"
+              echo ""
+              echo "  Alternative: Set UNITY_LICENSE with .ulf content"
+              echo "    1. Unity Hub → Preferences → Licenses → Add"
+              echo "    2. Find .ulf file:"
+              echo "       Windows: C:\\ProgramData\\Unity\\Unity_lic.ulf"
+              echo "       macOS:   /Library/Application Support/Unity/Unity_lic.ulf"
+              echo "       Linux:   ~/.local/share/unity3d/Unity/Unity_lic.ulf"
+              echo "    3. gh secret set UNITY_LICENSE < Unity_lic.ulf"
+              echo ""
+              echo "  Self-hosted: Use a preactivated runner (no secrets needed)"
+              echo ""
+              echo "  ── Setup for Unity Pro/Plus/Enterprise ──"
+              echo "  Set UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD"
+              echo "    gh secret set UNITY_SERIAL"
+              echo "    gh secret set UNITY_EMAIL"
+              echo "    gh secret set UNITY_PASSWORD"
+              echo ""
+              echo "  See: https://game.ci/docs/github/activation"
+              ;;
+
+            *)
+              echo "status=blocked" >> "$GITHUB_OUTPUT"
+              echo "  License status: UNKNOWN (${STRATEGY})"
+              ;;
+          esac
+
+          echo "════════════════════════════════════════════════════════════"

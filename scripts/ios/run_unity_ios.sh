@@ -28,10 +28,12 @@
 #   LOG_PATH           — directory for Editor.log files (default: Logs/iOS)
 #   TEST_RESULTS_PATH  — directory for test result XML files (default: TestResults/iOS)
 #
-# License env vars (activate command):
+# License env vars (activate command — all optional):
 #   UNITY_LICENSE    — ULF file content (base64 or raw XML) — NEVER echoed
-#   UNITY_EMAIL      — for email/password activation
-#   UNITY_PASSWORD   — for email/password activation
+#   UNITY_SERIAL     — Pro/Plus/Enterprise serial key
+#   UNITY_EMAIL      — Unity account email
+#   UNITY_PASSWORD   — Unity account password
+#   UNITY_ACTIVATION_STRATEGY — Force strategy: auto|manual-ulf|serial|account|preactivated|none
 #
 # Security:
 #   - License content is NEVER printed to stdout/stderr
@@ -134,11 +136,37 @@ case "${COMMAND}" in
 
   # ── activate ──────────────────────────────────────────────────────────────
   activate)
-    if [[ -z "${UNITY_LICENSE:-}" && -z "${UNITY_EMAIL:-}" ]]; then
-      log_info "No license credentials set — skipping activation"
-      log_info "Unity may use a limited personal license"
-      exit 0
+    # Resolve activation strategy using the shared resolver
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    STRATEGY_SCRIPT=""
+    for candidate in \
+        "${SCRIPT_DIR}/../common/resolve_activation_strategy.sh" \
+        "${TOOLKIT_PATH:-}/scripts/common/resolve_activation_strategy.sh"; do
+      if [[ -f "${candidate}" ]]; then
+        STRATEGY_SCRIPT="$(cd "$(dirname "${candidate}")" && pwd)/$(basename "${candidate}")"
+        break
+      fi
+    done
+
+    if [[ -n "${STRATEGY_SCRIPT}" ]]; then
+      log_info "Using strategy resolver: ${STRATEGY_SCRIPT}"
+      STRATEGY=$(bash "${STRATEGY_SCRIPT}" 2>&2)
+    else
+      # Inline fallback
+      log_warn "Strategy resolver not found — using inline detection"
+      if [[ -n "${UNITY_LICENSE:-}" ]]; then
+        STRATEGY="manual-ulf"
+      elif [[ -n "${UNITY_SERIAL:-}" && -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
+        STRATEGY="serial"
+      elif [[ -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
+        STRATEGY="account"
+      else
+        log_info "No license credentials set — skipping activation"
+        exit 0
+      fi
     fi
+
+    log_info "Selected activation strategy: ${STRATEGY}"
 
     TEMP_LICENSE_FILE=""
     _cleanup_license() {
@@ -150,37 +178,73 @@ case "${COMMAND}" in
 
     ACTIVATION_LOG="${LOG_PATH}/Editor-activation.log"
 
-    if [[ -n "${UNITY_LICENSE:-}" ]]; then
-      log_info "Activating via UNITY_LICENSE (manualLicenseFile strategy)"
+    case "${STRATEGY}" in
+      manual-ulf)
+        log_info "Activating via UNITY_LICENSE (manualLicenseFile strategy)"
 
-      TEMP_LICENSE_FILE="$(mktemp /tmp/unity-license-XXXXXXXX.ulf)"
-      chmod 600 "${TEMP_LICENSE_FILE}"
+        TEMP_LICENSE_FILE="$(mktemp /tmp/unity-license-XXXXXXXX.ulf)"
+        chmod 600 "${TEMP_LICENSE_FILE}"
 
-      # Support both raw XML and base64-encoded ULF — never echoed
-      if echo "${UNITY_LICENSE}" | base64 -d > /dev/null 2>&1; then
-        echo "${UNITY_LICENSE}" | base64 -d > "${TEMP_LICENSE_FILE}"
-      else
-        printf '%s' "${UNITY_LICENSE}" > "${TEMP_LICENSE_FILE}"
-      fi
+        # Support both raw XML and base64-encoded ULF — never echoed
+        if echo "${UNITY_LICENSE}" | base64 -d > /dev/null 2>&1; then
+          echo "${UNITY_LICENSE}" | base64 -d > "${TEMP_LICENSE_FILE}"
+        else
+          printf '%s' "${UNITY_LICENSE}" > "${TEMP_LICENSE_FILE}"
+        fi
 
-      run_unity "${ACTIVATION_LOG}" \
-        -batchmode \
-        -nographics \
-        -manualLicenseFile "${TEMP_LICENSE_FILE}" \
-        -logFile "${ACTIVATION_LOG}" \
-        -quit || true
+        run_unity "${ACTIVATION_LOG}" \
+          -batchmode \
+          -nographics \
+          -manualLicenseFile "${TEMP_LICENSE_FILE}" \
+          -logFile "${ACTIVATION_LOG}" \
+          -quit || true
+        ;;
 
-    else
-      log_info "Activating via UNITY_EMAIL / UNITY_PASSWORD strategy"
+      serial)
+        log_info "Activating via UNITY_SERIAL + credentials (serial strategy)"
 
-      run_unity "${ACTIVATION_LOG}" \
-        -batchmode \
-        -nographics \
-        -username "${UNITY_EMAIL}" \
-        -password "${UNITY_PASSWORD}" \
-        -logFile  "${ACTIVATION_LOG}" \
-        -quit || true
-    fi
+        run_unity "${ACTIVATION_LOG}" \
+          -batchmode \
+          -nographics \
+          -username "${UNITY_EMAIL}" \
+          -password "${UNITY_PASSWORD}" \
+          -serial "${UNITY_SERIAL}" \
+          -logFile "${ACTIVATION_LOG}" \
+          -quit || true
+        ;;
+
+      account)
+        log_info "Activating via UNITY_EMAIL + UNITY_PASSWORD (account strategy)"
+        log_info "Primary method for Unity Personal/free licenses"
+
+        run_unity "${ACTIVATION_LOG}" \
+          -batchmode \
+          -nographics \
+          -username "${UNITY_EMAIL}" \
+          -password "${UNITY_PASSWORD}" \
+          -logFile  "${ACTIVATION_LOG}" \
+          -quit || true
+        ;;
+
+      preactivated)
+        log_info "Unity already activated on this runner — skipping"
+        ;;
+
+      none)
+        log_info "Activation explicitly disabled"
+        ;;
+
+      blocked)
+        log_error "BLOCKED: No valid Unity activation strategy available"
+        log_error "See: https://game.ci/docs/github/activation"
+        exit 1
+        ;;
+
+      *)
+        log_error "Unknown activation strategy: ${STRATEGY}"
+        exit 1
+        ;;
+    esac
 
     log_info "Activation step complete"
     ;;
