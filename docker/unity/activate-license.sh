@@ -88,6 +88,18 @@ classify_activation_failure() {
 }
 
 # ---------------------------------------------------------------------------
+# Check for pre-activated license (mounted from host)
+# ---------------------------------------------------------------------------
+# If license files are already present (e.g., mounted from host via
+# buildalon/activate-unity-license), skip activation entirely.
+UNITY_LICENSE_DIR="${HOME}/.local/share/unity3d/Unity"
+if ls "${UNITY_LICENSE_DIR}/"*.ulf 2>/dev/null | head -1 > /dev/null 2>&1; then
+    log_info "Pre-activated license found at ${UNITY_LICENSE_DIR} — skipping activation"
+    log_info "License files were likely mounted from the host runner"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Resolve activation strategy
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

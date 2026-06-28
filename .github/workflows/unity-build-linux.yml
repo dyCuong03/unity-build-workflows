@@ -252,6 +252,15 @@ jobs:
             --build-number "${{ github.run_number }}" \
             --commit       "${{ github.sha }}"
 
+      - name: Activate Unity license on host
+        uses: ./.ci/unity-build-workflows/.github/actions/activate-unity
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unity-version: ${{ inputs.unity-version }}
+
       - name: Build Addressables
         id: build-addressables
         if: inputs.build-addressables == true

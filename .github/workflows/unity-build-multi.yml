@@ -541,6 +541,12 @@ jobs:
             --build-number "${{ github.run_number }}" \
             --commit       "${{ github.sha }}"
 
+      # ── Activate Unity license on host (before container steps) ─────────────
+      - name: Activate Unity license on host
+        uses: ./.ci/unity-build-workflows/.github/actions/activate-unity
+        with:
+          unity-version: ${{ inputs.unity-version }}
+
       # ── Build Addressables (optional, before player build) ───────────────────
       - name: Build Addressables
         id: build-addressables

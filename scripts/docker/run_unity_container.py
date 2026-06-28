@@ -265,6 +265,15 @@ def _build_docker_command(
         "--mount", f"type=bind,source={logs_path},target=/workspace/Logs",
     ]
 
+    # ── Unity license directory (pre-activated on host) ───────────────
+    # Mount the host's Unity license directory so the container can use
+    # licenses activated by buildalon/activate-unity-license or similar.
+    unity_license_dir = os.path.expanduser("~/.local/share/unity3d")
+    if os.path.isdir(unity_license_dir):
+        cmd += [
+            "--mount", f"type=bind,source={unity_license_dir},target=/tmp/unity-home/.local/share/unity3d,readonly",
+        ]
+
     # ── Library cache volume ───────────────────────────────────────────────
     cache_mode = args.cache_mode.lower()
     if cache_mode != "off":

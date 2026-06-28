@@ -215,6 +215,15 @@ jobs:
           image-digest: ${{ inputs.image-digest }}
           release-mode: ${{ inputs.release-mode }}
 
+      - name: Activate Unity license on host
+        uses: ./.ci/unity-build-workflows/.github/actions/activate-unity
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unity-version: ${{ inputs.unity-version }}
+
       - name: Run BuildConfig validation in container
         id: validate-container
         uses: ./.ci/unity-build-workflows/.github/actions/run-unity-container
