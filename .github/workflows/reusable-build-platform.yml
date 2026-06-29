@@ -1,0 +1,530 @@
+name: Reusable — Build Platform
+
+# Reusable workflow: build a single Unity platform target.
+#
+# Supported lanes:
+#   docker            — game-ci/unity-builder@v4, ubuntu-latest (default)
+#   self-hosted-windows — local Unity installation, [self-hosted, Windows, unity]
+#   self-hosted-macos   — local Unity installation, [self-hosted, macOS, unity]; required for iOS
+#
+# Interface contract: docs/EXPLICIT_PLATFORM_FLOW_SPEC.md §2.1
+
+on:
+  workflow_call:
+
+    inputs:
+
+      # ── Required ─────────────────────────────────────────────────────────────
+      platform:
+        description: |
+          Target platform. One of:
+            Android | WebGL | Linux64 | LinuxServer | iOS | Addressables
+          "Addressables" is a pseudo-platform: runs the Addressable build pipeline only (no binary output).
+          "iOS" requires runner-mode=self-hosted-macos or the job exits 0 with result=blocked.
+        required: true
+        type: string
+
+      unity-version:
+        description: Unity version string (e.g. 6000.0.26f1). Must be resolved by caller from ProjectVersion.txt.
+        required: true
+        type: string
+
+      # ── Version & paths ───────────────────────────────────────────────────────
+      project-path:
+        description: Path to the Unity project root relative to the workspace root.
+        required: false
+        default: '.'
+        type: string
+
+      toolkit-ref:
+        description: Git ref of the toolkit repo (e.g. main, feature/explicit-platform-jobs).
+        required: false
+        default: 'main'
+        type: string
+
+      # ── Runtime behaviour ──────────────────────────────────────────────────────
+      runner-mode:
+        description: |
+          Execution lane:
+            docker              — game-ci/unity-builder on ubuntu-latest (default)
+            self-hosted-windows — local Unity on [self-hosted, Windows, unity]; no Docker, no license secrets
+            self-hosted-macos   — local Unity on [self-hosted, macOS, unity]; required for iOS builds
+            auto                — prefer docker; fall back not yet implemented (use explicit)
+        required: false
+        default: 'docker'
+        type: string
+
+      activation-strategy:
+        description: |
+          Unity license activation strategy (docker lane only; ignored for self-hosted lanes
+          where Unity Hub handles activation). Values: auto | manual-license | account | serial | preactivated | none
+        required: false
+        default: 'auto'
+        type: string
+
+      environment:
+        description: Build environment profile passed to Unity (production | staging | development).
+        required: false
+        default: 'production'
+        type: string
+
+      clean-build:
+        description: Delete the Library cache before building (full clean build — slow, use sparingly).
+        required: false
+        default: false
+        type: boolean
+
+      build-addressables:
+        description: |
+          Run Addressable build step before the platform binary build.
+          Set true when the platform build depends on pre-built Addressables.
+          Distinct from platform=Addressables, which is the dedicated Addressables-only job.
+        required: false
+        default: false
+        type: boolean
+
+      artifact-retention-days:
+        description: Days to retain uploaded build artifacts.
+        required: false
+        default: 14
+        type: number
+
+    secrets:
+      UNITY_LICENSE:
+        description: |
+          Raw .ulf file contents (personal-combined strategy).
+          Optional — required only for docker lane when activation-strategy != none/preactivated.
+        required: false
+      UNITY_EMAIL:
+        description: Unity account email. Required for docker lane activation.
+        required: false
+      UNITY_PASSWORD:
+        description: Unity account password. Required for docker lane activation.
+        required: false
+
+    outputs:
+      result:
+        description: |
+          Job result string: success | failure | skipped | blocked
+          "blocked" is used when iOS is requested on a non-macOS runner.
+        value: ${{ jobs.build.outputs.result }}
+
+      artifact-name:
+        description: |
+          Name of the uploaded build artifact, or empty string if nothing was uploaded.
+          Convention: unity-build-<Platform> (e.g. unity-build-Android).
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+      unity-version-used:
+        description: Exact Unity version string used for this build.
+        value: ${{ jobs.build.outputs.unity-version-used }}
+
+      build-duration-seconds:
+        description: Elapsed wall-clock seconds for the Unity build step.
+        value: ${{ jobs.build.outputs.build-duration-seconds }}
+
+jobs:
+  build:
+    name: Build ${{ inputs.platform }}
+    # ── Runner selection by lane ─────────────────────────────────────────────
+    # docker / auto → ubuntu-latest
+    # self-hosted-windows → [self-hosted, Windows, unity]
+    # self-hosted-macos   → [self-hosted, macOS, unity]
+    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON('["self-hosted","Windows","unity"]')) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON('["self-hosted","macOS","unity"]')) || 'ubuntu-latest' }}
+
+    outputs:
+      result:                 ${{ steps.set-outputs.outputs.result }}
+      artifact-name:          ${{ steps.set-outputs.outputs.artifact-name }}
+      unity-version-used:     ${{ steps.set-outputs.outputs.unity-version-used }}
+      build-duration-seconds: ${{ steps.set-outputs.outputs.build-duration-seconds }}
+
+    steps:
+
+      # ── Step 1: Guard — iOS requires macOS runner ──────────────────────────
+      # If platform=iOS and the runner is not macOS, set result=blocked and
+      # exit 0 so final-report can collect the status without a workflow failure.
+      - name: Guard — iOS requires macOS runner
+        id: ios-guard
+        if: ${{ inputs.platform == 'iOS' && runner.os != 'macOS' }}
+        shell: bash
+        run: |
+          echo "::error title=iOS Runner Mismatch::Platform iOS requires runner-mode=self-hosted-macos (runner.os must be macOS). Current runner.os=${{ runner.os }}. This build is marked 'blocked'."
+          echo "::warning::iOS build is BLOCKED (not a failure). Provision a self-hosted macOS runner and retry with runner-mode=self-hosted-macos."
+          echo "blocked=true" >> "$GITHUB_OUTPUT"
+
+      # ── Step 2: Free disk space (docker / ubuntu-latest only) ─────────────
+      - name: Free disk space
+        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc || true
+
+      # ── Step 3: Checkout ──────────────────────────────────────────────────
+      - name: Checkout
+        if: ${{ steps.ios-guard.outputs.blocked != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      # ── Step 4: Map platform → GameCI targetPlatform ──────────────────────
+      # Mapping per spec §2.1 table:
+      #   Android      → Android
+      #   WebGL        → WebGL
+      #   Linux64      → StandaloneLinux64
+      #   LinuxServer  → StandaloneLinux64 + -standaloneBuildSubtarget Server
+      #   iOS          → iOS  (macOS lane only)
+      #   Addressables → (no binary target; method-only build)
+      - name: Map platform to targetPlatform
+        id: platform-map
+        if: ${{ steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.platform }}" in
+            Android)      echo "target=Android"           >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
+            WebGL)        echo "target=WebGL"             >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
+            Linux64)      echo "target=StandaloneLinux64" >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
+            LinuxServer)  echo "target=StandaloneLinux64" >> "$GITHUB_OUTPUT"
+                          echo "params=-standaloneBuildSubtarget Server" >> "$GITHUB_OUTPUT" ;;
+            iOS)          echo "target=iOS"               >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
+            Addressables) echo "target="                  >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
+            *)            echo "::error::Unsupported platform: ${{ inputs.platform }}"; exit 1 ;;
+          esac
+
+      # ── Step 5: Resolve activation strategy (docker lane only) ────────────
+      # Self-hosted lanes are pre-activated via Unity Hub — no secrets needed.
+      - name: Resolve activation strategy
+        id: activation
+        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        env:
+          ACTIVATION_STRATEGY: ${{ inputs.activation-strategy }}
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          SCRIPT="scripts/common/resolve_activation_strategy.sh"
+          if [ -f "$SCRIPT" ]; then
+            bash "$SCRIPT"
+          else
+            echo "::notice::resolve_activation_strategy.sh not found in workspace; using strategy=${ACTIVATION_STRATEGY:-auto}"
+            echo "strategy=${ACTIVATION_STRATEGY:-auto}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Step 6: Cache Library ──────────────────────────────────────────────
+      # Skipped when clean-build=true to force a full rebuild.
+      - name: Cache Library
+        if: ${{ inputs.clean-build == false && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: Library-${{ inputs.platform }}-${{ hashFiles(format('{0}/ProjectSettings/ProjectVersion.txt', inputs.project-path), format('{0}/Packages/manifest.json', inputs.project-path)) }}
+          restore-keys: Library-${{ inputs.platform }}-
+
+      # ── Step 7a: Build Addressables pre-step (docker lane) ────────────────
+      # Runs when build-addressables=true AND this is NOT the Addressables platform job itself.
+      # Uses game-ci/unity-builder to spin up the Unity container and call the build method.
+      - name: Build Addressables pre-step (docker)
+        id: addressables-pre-docker
+        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ inputs.project-path }}
+          unityVersion: ${{ inputs.unity-version }}
+          targetPlatform: StandaloneLinux64
+          buildMethod: AddressableBuilder.Build
+          allowDirtyBuild: true
+
+      # ── Step 7b: Build Addressables pre-step (self-hosted lanes) ──────────
+      # Best-effort; uses bash (Git Bash on Windows, native on macOS).
+      - name: Build Addressables pre-step (self-hosted)
+        id: addressables-pre-selfhosted
+        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && (inputs.runner-mode == 'self-hosted-windows' || inputs.runner-mode == 'self-hosted-macos') && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNITY_VERSION="${{ inputs.unity-version }}"
+          PROJECT="${{ inputs.project-path }}"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            UNITY_BIN="C:/Program Files/Unity/Hub/Editor/${UNITY_VERSION}/Editor/Unity.exe"
+            if [ ! -f "$UNITY_BIN" ]; then
+              UNITY_BIN="C:/Program Files/Unity ${UNITY_VERSION}/Editor/Unity.exe"
+            fi
+          else
+            UNITY_BIN="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+            if [ ! -f "$UNITY_BIN" ]; then
+              UNITY_BIN="/Applications/Unity ${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+            fi
+          fi
+
+          if [ ! -f "$UNITY_BIN" ]; then
+            echo "::error::Unity not found for version ${UNITY_VERSION} on ${{ runner.os }}. Check Unity Hub installation."
+            exit 1
+          fi
+
+          echo "Addressables pre-step: ${UNITY_BIN}"
+          "$UNITY_BIN" \
+            -batchmode -nographics -quit \
+            -projectPath "${PROJECT}" \
+            -executeMethod AddressableBuilder.Build \
+            -logFile "Editor-addressables-pre.log"
+
+      # ── Step 8: Record build start time ───────────────────────────────────
+      - name: Record build start time
+        if: ${{ steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # ── Step 9a: Build with GameCI (docker lane, non-Addressables) ─────────
+      - name: Build with GameCI (docker)
+        id: build-docker
+        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ inputs.project-path }}
+          unityVersion: ${{ inputs.unity-version }}
+          targetPlatform: ${{ steps.platform-map.outputs.target }}
+          customParameters: ${{ steps.platform-map.outputs.params }}
+          allowDirtyBuild: true
+
+      # ── Step 9b: Build Addressables only (docker lane, platform=Addressables)
+      - name: Build Addressables only (docker)
+        id: build-addressables-docker
+        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ inputs.project-path }}
+          unityVersion: ${{ inputs.unity-version }}
+          targetPlatform: StandaloneLinux64
+          buildMethod: AddressableBuilder.Build
+          allowDirtyBuild: true
+
+      # ── Step 9c: Build with local Unity (self-hosted-windows lane) ─────────
+      # Uses cmd shell per spec. Locates Unity.exe from Unity Hub default paths.
+      # No Docker, no UNITY_LICENSE/SERIAL — Unity Hub handles activation.
+      - name: Build with local Unity (Windows)
+        id: build-windows
+        if: ${{ inputs.runner-mode == 'self-hosted-windows' && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: cmd
+        run: |
+          @echo off
+          setlocal EnableDelayedExpansion
+
+          set "UNITY_VERSION=${{ inputs.unity-version }}"
+          set "PROJECT=${{ inputs.project-path }}"
+
+          :: Locate Unity.exe via Unity Hub default install path
+          set "UNITY_EXE=C:\Program Files\Unity\Hub\Editor\!UNITY_VERSION!\Editor\Unity.exe"
+          if not exist "!UNITY_EXE!" (
+            set "UNITY_EXE=C:\Program Files\Unity !UNITY_VERSION!\Editor\Unity.exe"
+          )
+          if not exist "!UNITY_EXE!" (
+            echo ::error::Unity.exe not found for version !UNITY_VERSION!. Verify Unity Hub installation at default paths.
+            exit /b 1
+          )
+          echo Unity executable: !UNITY_EXE!
+
+          :: Addressables-only: execute build method and exit
+          if "${{ inputs.platform }}"=="Addressables" (
+            "!UNITY_EXE!" ^
+              -batchmode -nographics -quit ^
+              -projectPath "!PROJECT!" ^
+              -executeMethod AddressableBuilder.Build ^
+              -logFile "Editor.log"
+            exit /b !ERRORLEVEL!
+          )
+
+          :: iOS cannot be built on Windows
+          if "${{ inputs.platform }}"=="iOS" (
+            echo ::error::iOS builds require a macOS runner. Use runner-mode=self-hosted-macos.
+            exit /b 1
+          )
+
+          :: Map platform to -buildTarget
+          set "BUILD_TARGET="
+          set "EXTRA_PARAMS="
+          if "${{ inputs.platform }}"=="Android"     set "BUILD_TARGET=Android"
+          if "${{ inputs.platform }}"=="WebGL"       set "BUILD_TARGET=WebGL"
+          if "${{ inputs.platform }}"=="Linux64"     set "BUILD_TARGET=StandaloneLinux64"
+          if "${{ inputs.platform }}"=="LinuxServer" (
+            set "BUILD_TARGET=StandaloneLinux64"
+            set "EXTRA_PARAMS=-standaloneBuildSubtarget Server"
+          )
+
+          if "!BUILD_TARGET!"=="" (
+            echo ::error::Unsupported platform for Windows lane: ${{ inputs.platform }}
+            exit /b 1
+          )
+
+          "!UNITY_EXE!" ^
+            -batchmode -nographics -quit ^
+            -projectPath "!PROJECT!" ^
+            -buildTarget "!BUILD_TARGET!" ^
+            -logFile "Editor.log" ^
+            !EXTRA_PARAMS!
+          exit /b !ERRORLEVEL!
+
+      # ── Step 9d: Build with local Unity (self-hosted-macos lane) ──────────
+      # Primary lane for iOS. Also handles Android/WebGL/Addressables on macOS.
+      # No Docker, no UNITY_LICENSE — Unity Hub handles activation.
+      - name: Build with local Unity (macOS)
+        id: build-macos
+        if: ${{ inputs.runner-mode == 'self-hosted-macos' && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          UNITY_VERSION="${{ inputs.unity-version }}"
+          PROJECT="${{ inputs.project-path }}"
+
+          # Locate Unity binary via Unity Hub default install path
+          UNITY_BIN="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+          if [ ! -f "$UNITY_BIN" ]; then
+            UNITY_BIN="/Applications/Unity ${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+          fi
+          if [ ! -f "$UNITY_BIN" ]; then
+            echo "::error::Unity not found for version ${UNITY_VERSION}. Verify Unity Hub installation at default paths."
+            exit 1
+          fi
+          echo "Unity binary: ${UNITY_BIN}"
+
+          # Addressables-only: execute build method and exit
+          if [ "${{ inputs.platform }}" = "Addressables" ]; then
+            "$UNITY_BIN" \
+              -batchmode -nographics -quit \
+              -projectPath "${PROJECT}" \
+              -executeMethod AddressableBuilder.Build \
+              -logFile "Editor.log"
+            exit 0
+          fi
+
+          # Map platform to -buildTarget
+          case "${{ inputs.platform }}" in
+            iOS)     BUILD_TARGET="iOS";              EXTRA_PARAMS="" ;;
+            Android) BUILD_TARGET="Android";          EXTRA_PARAMS="" ;;
+            WebGL)   BUILD_TARGET="WebGL";            EXTRA_PARAMS="" ;;
+            *)       echo "::error::Unsupported platform for macOS lane: ${{ inputs.platform }}"; exit 1 ;;
+          esac
+
+          "$UNITY_BIN" \
+            -batchmode -nographics -quit \
+            -projectPath "${PROJECT}" \
+            -buildTarget "${BUILD_TARGET}" \
+            -logFile "Editor.log" \
+            ${EXTRA_PARAMS:+${EXTRA_PARAMS}}
+
+      # ── Step 10: Compute build duration ──────────────────────────────────
+      - name: Compute build duration
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -n "${BUILD_START:-}" ]; then
+            DURATION=$(( $(date +%s) - BUILD_START ))
+          else
+            DURATION=0
+          fi
+          echo "BUILD_DURATION=${DURATION}" >> "$GITHUB_ENV"
+
+      # ── Step 11a: Upload binary build artifact ────────────────────────────
+      # Skipped on blocked (iOS without macOS runner) and for Addressables platform.
+      # if-no-files-found: warn — missing binary is a build failure already caught by exit code.
+      - name: Upload build artifact
+        if: ${{ inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-build-${{ inputs.platform }}
+          path: build/
+          if-no-files-found: warn
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      # ── Step 11b: Upload Addressables artifact ────────────────────────────
+      # Artifacts: Addressable catalog + bundles (ServerData, StreamingAssets).
+      - name: Upload Addressables artifact
+        if: ${{ inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-build-Addressables
+          path: |
+            ${{ inputs.project-path }}/ServerData
+            ${{ inputs.project-path }}/Assets/AddressableAssetsData
+          if-no-files-found: warn
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      # ── Step 12: Upload logs artifact (always — diagnose failures) ─────────
+      # Collects Editor.log and any BuildReport files from common locations.
+      - name: Upload logs artifact
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-build-${{ inputs.platform }}-logs
+          path: |
+            ${{ inputs.project-path }}/Logs/
+            ${{ inputs.project-path }}/Library/Editor.log
+            Editor.log
+            Editor-addressables-pre.log
+          if-no-files-found: ignore
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      # ── Step 13: Set job outputs (always) ─────────────────────────────────
+      # Examines build step outcomes to produce a canonical result string:
+      #   success | failure | cancelled | blocked | skipped
+      - name: Set job outputs
+        id: set-outputs
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          BLOCKED="${{ steps.ios-guard.outputs.blocked }}"
+          DOCKER_OUT="${{ steps.build-docker.outcome }}"
+          ADDR_DOCKER_OUT="${{ steps.build-addressables-docker.outcome }}"
+          WINDOWS_OUT="${{ steps.build-windows.outcome }}"
+          MACOS_OUT="${{ steps.build-macos.outcome }}"
+
+          if [ "$BLOCKED" = "true" ]; then
+            RESULT="blocked"
+            ARTIFACT_NAME=""
+          else
+            # Find the outcome of whichever build step actually ran (non-skipped).
+            BUILD_OUTCOME=""
+            for OUT in "$DOCKER_OUT" "$ADDR_DOCKER_OUT" "$WINDOWS_OUT" "$MACOS_OUT"; do
+              if [ -n "$OUT" ] && [ "$OUT" != "skipped" ]; then
+                BUILD_OUTCOME="$OUT"
+                break
+              fi
+            done
+
+            if [ "$BUILD_OUTCOME" = "success" ]; then
+              RESULT="success"
+              ARTIFACT_NAME="unity-build-${{ inputs.platform }}"
+            elif [ -z "$BUILD_OUTCOME" ]; then
+              # No build step ran (e.g. all were skipped)
+              RESULT="skipped"
+              ARTIFACT_NAME=""
+            else
+              RESULT="$BUILD_OUTCOME"
+              ARTIFACT_NAME=""
+            fi
+          fi
+
+          echo "result=${RESULT}"                          >> "$GITHUB_OUTPUT"
+          echo "artifact-name=${ARTIFACT_NAME}"           >> "$GITHUB_OUTPUT"
+          echo "unity-version-used=${{ inputs.unity-version }}" >> "$GITHUB_OUTPUT"
+          echo "build-duration-seconds=${BUILD_DURATION:-0}"    >> "$GITHUB_OUTPUT"

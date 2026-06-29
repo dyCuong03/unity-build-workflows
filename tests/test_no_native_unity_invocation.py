@@ -52,6 +52,11 @@ ALLOWED_PATHS = frozenset({
     # (unity-editor -batchmode -buildTarget X -version). This verifies the
     # image, it is not a project build invocation.
     ".github/workflows/build-unity-image.yml",
+    # Explicit-platform-jobs reusable workflows: docker lane uses game-ci
+    # (approved Personal/free path); self-hosted lanes invoke the local Unity
+    # editor in batchmode by design.
+    ".github/workflows/reusable-build-platform.yml",
+    ".github/workflows/reusable-unity-tests.yml",
 })
 
 # ---------------------------------------------------------------------------
