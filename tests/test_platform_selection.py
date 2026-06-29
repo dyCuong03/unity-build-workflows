@@ -9,11 +9,24 @@ Strategy
 1. Parse the consumer YAML to extract each job's `if:` expression.
 2. Evaluate those expressions with mock inputs/needs via a tiny GHA-subset
    evaluator that handles the exact operators used in the workflow.
-3. Assert the rules from EXPLICIT_PLATFORM_FLOW_SPEC.md §6 + §3.3.
+3. Assert the rules from EXPLICIT_PLATFORM_FLOW_SPEC.md §6 + §3.3 and
+   BRANCH_FLOW_CONTRACT.md (outputs-based gating).
+
+Gating-form tolerance
+---------------------
+The consumer workflow is being migrated from `inputs.platform`-based gating
+to `needs.resolve-config.outputs.build-<platform>`-based gating.  Both forms
+are supported transparently:
+
+  Legacy:  inputs.platform == 'All' || inputs.platform == 'Android'
+  New:     needs.resolve-config.outputs.build-android == 'true'
+
+The evaluator handles both, and `_ctx()` injects both into the mock context so
+tests pass regardless of which form the consumer currently uses.
 
 Covered rules
 -------------
-R1  platform=All          → all 5 build-<platform> if: True
+R1  platform=All          → Android/WebGL/Linux64/LinuxServer True; iOS False
 R2  platform=Android      → only build-android True; others False
 R3  platform=WebGL        → only build-webgl True
 R4  platform=Linux64      → only build-linux64 True
@@ -85,9 +98,19 @@ def reusable_tests_wf():
 # ---------------------------------------------------------------------------
 
 class NeedsProxy(dict):
-    """Returns {'result': 'skipped'} for jobs not explicitly in the dict."""
+    """Returns a safe default for jobs not explicitly in the dict.
+
+    Default: {'result': 'skipped', 'outputs': {}}
+    This means a missing job is treated as skipped (not failure) and has no outputs.
+    """
     def __missing__(self, key):
-        return {"result": "skipped"}
+        return {"result": "skipped", "outputs": {}}
+
+
+class OutputsProxy(dict):
+    """Returns '' for missing output keys (avoids KeyError in expressions)."""
+    def __missing__(self, key):
+        return ""
 
 
 def eval_gha_expr(expr: Any, context: dict) -> bool:
@@ -95,18 +118,25 @@ def eval_gha_expr(expr: Any, context: dict) -> bool:
     Evaluate the GitHub Actions expression subset used in this workflow's if: fields.
 
     Supported:
-      - inputs.<name>                   (hyphenated names OK)
-      - needs.<job>.result              (hyphenated job names OK)
+      - inputs.<name>                        (hyphenated names OK)
+      - needs.<job>.result                   (hyphenated job names OK)
+      - needs.<job>.outputs.<name>           (resolve-config.outputs.build-android etc.)
       - 'string' / "string" literals
       - true / false
-      - always()                        → True
+      - always()                             → True
+      - cancelled()                          → False (non-cancelled context assumed)
+      - !cancelled()                         → True
       - ==, !=
-      - &&, ||
+      - &&, ||, !
       - (...)
 
     context = {
         'inputs': {'platform': 'All', 'run-tests': False, ...},
-        'needs':  {'validate-project': {'result': 'success'}, ...}
+        'needs':  {
+            'validate-project':  {'result': 'success'},
+            'resolve-config':    {'result': 'success', 'outputs': {'build-android': 'true', ...}},
+            'build-addressables': {'result': 'skipped'},
+        },
     }
     """
     if expr is None:
@@ -119,31 +149,44 @@ def eval_gha_expr(expr: Any, context: dict) -> bool:
     # Collapse folded-YAML newlines / extra whitespace
     s = " ".join(s.split())
 
-    # GHA status-check functions:
-    #   always()    → True  (always runs)
-    #   cancelled() → False (assume non-cancelled context in tests)
-    #   !cancelled() handled after operator rewrite below
+    # ── Protect string literals so 'true'/'false' inside them are not mangled ──
+    # Any single- or double-quoted string is replaced with a placeholder, then
+    # restored after all keyword substitutions.  This prevents 'true' → 'True'
+    # inside literals like == 'true' (used in outputs-based gating expressions).
+    _literals: list[str] = []
+
+    def _protect(m: re.Match) -> str:
+        _literals.append(m.group(0))
+        return f"__STR{len(_literals) - 1}__"
+
+    s = re.sub(r"'[^']*'|\"[^\"]*\"", _protect, s)
+
+    # GHA status-check functions — replace before keyword substitution
     s = re.sub(r"\balways\(\)", "__TRUE__", s)
     s = re.sub(r"\bcancelled\(\)", "__FALSE__", s)
 
-    # true / false literals (must come before the __PLACEHOLDER__ restore)
+    # true / false bare keywords (not inside string literals, which are protected)
     s = re.sub(r"\btrue\b", "True", s, flags=re.IGNORECASE)
     s = re.sub(r"\bfalse\b", "False", s, flags=re.IGNORECASE)
 
-    # Restore placeholders (after literal replacement so they're not matched above)
+    # Restore status-check placeholders
     s = s.replace("__TRUE__", "True").replace("__FALSE__", "False")
+
+    # Restore string literals
+    for idx, lit in enumerate(_literals):
+        s = s.replace(f"__STR{idx}__", lit)
 
     # && → and,  || → or
     s = s.replace("&&", " and ").replace("||", " or ")
 
-    # Logical NOT: !expr → not expr
-    # Replace '!' that is NOT part of '!=' with 'not '
+    # Logical NOT: ! not followed by = → not
     s = re.sub(r"!(?!=)", "not ", s)
 
-    # inputs.<name> → _inputs['<name>']  (names may contain hyphens)
+    # needs.<job>.outputs.<name> → _needs['<job>']['outputs']['<name>']
+    # Must come BEFORE needs.<job>.result to avoid partial overlap issues.
     s = re.sub(
-        r"\binputs\.([A-Za-z0-9_-]+)",
-        lambda m: f"_inputs['{m.group(1)}']",
+        r"\bneeds\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)\b",
+        lambda m: f"_needs['{m.group(1)}']['outputs']['{m.group(2)}']",
         s,
     )
 
@@ -154,8 +197,23 @@ def eval_gha_expr(expr: Any, context: dict) -> bool:
         s,
     )
 
+    # inputs.<name> → _inputs['<name>']  (names may contain hyphens)
+    s = re.sub(
+        r"\binputs\.([A-Za-z0-9_-]+)",
+        lambda m: f"_inputs['{m.group(1)}']",
+        s,
+    )
+
     _inputs = context.get("inputs", {})
-    _needs = NeedsProxy(context.get("needs", {}))
+    # Wrap each needs entry's outputs in OutputsProxy for safe key access
+    raw_needs = context.get("needs", {})
+    _needs = NeedsProxy({
+        job: {
+            "result": data.get("result", "skipped"),
+            "outputs": OutputsProxy(data.get("outputs", {})),
+        }
+        for job, data in raw_needs.items()
+    })
 
     try:
         result = eval(  # noqa: S307  (controlled expression from own YAML)
@@ -192,24 +250,67 @@ PLATFORM_BUILD_JOBS_FOR_ALL = [
     "build-linuxserver",
 ]
 
-# Baseline needs when validate-project succeeded + build-addressables skipped
-def _base_needs(validate="success", addressables="skipped"):
+# Baseline needs when validate-project succeeded + build-addressables skipped.
+# resolve-config always carries outputs so the new outputs-based gating form works too.
+def _base_needs(validate="success", addressables="skipped",
+                rc_outputs: dict | None = None):
     return {
-        "resolve-config":    {"result": "success"},
-        "validate-project":  {"result": validate},
+        "resolve-config": {
+            "result": "success",
+            "outputs": rc_outputs or {},
+        },
+        "validate-project":   {"result": validate},
         "build-addressables": {"result": addressables},
     }
 
 
 def _ctx(platform="All", run_tests=False, build_addressables_input=False,
          validate="success", addressables_result="skipped"):
+    """
+    Build a mock evaluation context that satisfies BOTH gating forms:
+
+      Legacy (inputs-based):
+        inputs.platform == 'All' || inputs.platform == 'Android'
+        inputs.run-tests == true
+        inputs.build-addressables == true
+
+      New (resolve-config outputs-based, per BRANCH_FLOW_CONTRACT.md):
+        needs.resolve-config.outputs.build-android == 'true'
+        needs.resolve-config.outputs.run-tests == 'true'
+        needs.resolve-config.outputs.build-addressables == 'true'
+
+    Both are provided so the test suite passes regardless of which gating
+    form is present in the consumer workflow at the time it runs.
+    """
+    # Mirror the resolve_build_flow.sh platform logic for 'All' and single platforms
+    build_android    = platform in ("All", "Android")
+    build_webgl      = platform in ("All", "WebGL")
+    build_linux64    = platform in ("All", "Linux64")
+    build_linuxserver = platform in ("All", "LinuxServer")
+    build_ios        = (platform == "iOS")  # never included in 'All'
+
+    rc_outputs = {
+        "build-android":    "true" if build_android    else "false",
+        "build-webgl":      "true" if build_webgl      else "false",
+        "build-linux64":    "true" if build_linux64    else "false",
+        "build-linuxserver": "true" if build_linuxserver else "false",
+        "build-ios":        "true" if build_ios        else "false",
+        "run-tests":        "true" if run_tests        else "false",
+        "build-addressables": "true" if build_addressables_input else "false",
+        "environment":      "development",
+    }
+
     return {
         "inputs": {
             "platform": platform,
             "run-tests": run_tests,
             "build-addressables": build_addressables_input,
         },
-        "needs": _base_needs(validate=validate, addressables=addressables_result),
+        "needs": _base_needs(
+            validate=validate,
+            addressables=addressables_result,
+            rc_outputs=rc_outputs,
+        ),
     }
 
 
