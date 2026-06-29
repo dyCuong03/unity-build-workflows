@@ -55,28 +55,11 @@ runs:
           exit 0
         fi
 
-        # No UNITY_LICENSE — will use buildalon action in next step
-        echo "activated=pending" >> "$GITHUB_OUTPUT"
-
-    - name: Activate via buildalon (Personal/Pro)
-      if: steps.activate.outputs.activated == 'pending'
-      uses: buildalon/activate-unity-license@v2
-      with:
-        license: ${{ inputs.license-type }}
-        username: ${{ env.UNITY_EMAIL }}
-        password: ${{ env.UNITY_PASSWORD }}
-        serial: ${{ env.UNITY_SERIAL }}
-
-    - name: Confirm activation
-      if: steps.activate.outputs.activated == 'pending'
-      id: confirm
-      shell: bash
-      run: |
-        LICENSE_DIR="${HOME}/.local/share/unity3d"
-        if [ -d "${LICENSE_DIR}/Unity" ] && ls "${LICENSE_DIR}/Unity/"*.ulf 2>/dev/null | head -1 > /dev/null; then
-          echo "activated=buildalon" >> "$GITHUB_OUTPUT"
-          echo "::notice::Unity license activated via buildalon"
-        else
-          echo "activated=failed" >> "$GITHUB_OUTPUT"
-          echo "::warning::Unity license activation may have failed — no .ulf found at ${LICENSE_DIR}/Unity/"
-        fi
+        # No UNITY_LICENSE — defer activation to the Docker container.
+        # buildalon/activate-unity-license requires Unity Hub on the runner
+        # host, which GitHub-hosted runners do not have. For Unity Personal
+        # the container's activate-license.sh performs online account
+        # activation (UNITY_EMAIL + UNITY_PASSWORD) at runtime, which is the
+        # supported path here. Nothing to do on the host.
+        echo "activated=container" >> "$GITHUB_OUTPUT"
+        echo "::notice::No UNITY_LICENSE — container will self-activate via UNITY_EMAIL/UNITY_PASSWORD (account strategy)."
