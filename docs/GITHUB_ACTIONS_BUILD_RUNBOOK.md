@@ -6,6 +6,7 @@ triggering builds, reading logs, downloading artifacts, and common fixes.
 Related docs:
 - [UNITY\_PERSONAL\_DOCKER\_LICENSE.md](UNITY_PERSONAL_DOCKER_LICENSE.md) — license setup and troubleshooting
 - [UNITY\_VERSION\_UPGRADE.md](UNITY_VERSION_UPGRADE.md) — upgrading Unity version
+- [EXPLICIT\_PLATFORM\_FLOW.md](EXPLICIT_PLATFORM_FLOW.md) — explicit-platform-jobs flow guide (inputs, activation, job graph)
 
 ---
 
@@ -132,6 +133,104 @@ gh workflow run build.yml \
 ```
 
 On `push` and `pull_request` events, `platform` defaults to `Android`.
+
+---
+
+## 2a. Explicit-Platform-Jobs Workflow (`unity-build.yml`)
+
+The `unity-build.yml` workflow (name: **Unity Build**) is the current primary build
+workflow. It uses the explicit-platform-jobs flow: each platform is a **separate
+named job** in the GitHub Actions UI, independently retryable.
+
+For a complete guide see [EXPLICIT\_PLATFORM\_FLOW.md](EXPLICIT_PLATFORM_FLOW.md).
+
+### Trigger a single platform
+
+```bash
+# Android
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=Android
+
+# WebGL
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=WebGL
+
+# Linux Standalone
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=Linux64
+
+# Linux Dedicated Server
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=LinuxServer
+
+# iOS (requires a registered [self-hosted, macOS, unity] runner — see Section 10)
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=iOS
+```
+
+### Trigger all platforms
+
+```bash
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=All
+```
+
+### All workflow_dispatch inputs
+
+| Input | Default | Allowed values | Description |
+|---|---|---|---|
+| `platform` | `All` | `All`, `Android`, `WebGL`, `Linux64`, `LinuxServer`, `iOS` | Platform(s) to build |
+| `run-tests` | `false` | `true` / `false` | Run Unity tests before builds |
+| `test-mode` | `All` | `EditMode`, `PlayMode`, `All` | Test suite (when `run-tests=true`) |
+| `build-addressables` | `false` | `true` / `false` | Build Addressables before platform builds |
+| `clean-build` | `false` | `true` / `false` | Force full `Library/` cache delete |
+| `environment` | `production` | `production`, `staging`, `development` | Build environment profile |
+| `activation-strategy` | `auto` | `auto`, `manual-license`, `account`, `preactivated`, `none` | Unity license strategy (docker lane only) |
+| `runner-mode` | `docker` | `docker`, `self-hosted-windows`, `auto` | Execution lane |
+| `unity-version` | *(blank)* | e.g. `6000.0.26f1` | Version override — leave blank in production |
+
+### Example with extra inputs
+
+```bash
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=Android \
+  -f environment=staging \
+  -f run-tests=true \
+  -f test-mode=EditMode \
+  -f build-addressables=true \
+  -f clean-build=false
+```
+
+### Per-platform job names in the UI
+
+When a run is open in the GitHub Actions UI, platform jobs appear as distinct nodes:
+
+| UI job name | Platform |
+|---|---|
+| `Build Android` | Android APK / AAB |
+| `Build WebGL` | WebGL bundle |
+| `Build Linux64` | Linux Standalone binary |
+| `Build LinuxServer` | Linux Dedicated Server binary |
+| `Build iOS` | iOS Xcode project |
+| `Unity Tests (All)` / `(EditMode)` / `(PlayMode)` | Tests |
+| `Build Addressables` | Addressables catalog |
+| `final-report` | Summary (always runs) |
+
+Each job can be **re-run individually** from the UI.
 
 ---
 

@@ -1,0 +1,343 @@
+name: Reusable Unity Tests
+
+# Runs Unity EditMode / PlayMode / All tests and uploads NUnit XML + Editor.log.
+# Supports three execution lanes: docker (game-ci), self-hosted-windows, self-hosted-macos.
+# Called by the consumer workflow's unity-tests job; skip logic lives in the consumer.
+
+on:
+  workflow_call:
+    inputs:
+      unity-version:
+        description: Unity version string (e.g. 6000.0.26f1). Must be resolved by caller.
+        required: true
+        type: string
+
+      test-mode:
+        description: Unity test runner mode — EditMode | PlayMode | All
+        required: false
+        default: 'All'
+        type: string
+
+      project-path:
+        description: Path to the Unity project root relative to the workspace root.
+        required: false
+        default: '.'
+        type: string
+
+      runner-mode:
+        description: |
+          Execution lane:
+            docker              — game-ci/unity-test-runner on ubuntu-latest (default)
+            self-hosted-windows — local Unity on [self-hosted, Windows, unity] runner
+            self-hosted-macos   — local Unity on [self-hosted, macOS, unity] runner
+        required: false
+        default: 'docker'
+        type: string
+
+      activation-strategy:
+        description: |
+          Unity license activation strategy (docker lane only; ignored for self-hosted lanes
+          where Unity is pre-activated).
+          Values: auto | manual-license | account | serial | preactivated | none
+        required: false
+        default: 'auto'
+        type: string
+
+      toolkit-ref:
+        description: Git ref of the toolkit repo (used when calling toolkit scripts).
+        required: false
+        default: 'main'
+        type: string
+
+      artifact-retention-days:
+        description: Days to retain uploaded test-result artifacts.
+        required: false
+        default: 14
+        type: number
+
+    secrets:
+      UNITY_LICENSE:
+        description: Raw .ulf file contents (personal-combined strategy). Optional.
+        required: false
+      UNITY_EMAIL:
+        description: Unity account email. Required for docker lane activation.
+        required: false
+      UNITY_PASSWORD:
+        description: Unity account password. Required for docker lane activation.
+        required: false
+
+    outputs:
+      result:
+        description: Job result — success | failure | skipped
+        value: ${{ jobs.test.outputs.result }}
+
+      tests-passed:
+        description: Count of passing tests (integer string).
+        value: ${{ jobs.test.outputs.tests-passed }}
+
+      tests-failed:
+        description: Count of failing tests (integer string).
+        value: ${{ jobs.test.outputs.tests-failed }}
+
+      artifact-name:
+        description: Name of the uploaded test-results artifact.
+        value: ${{ jobs.test.outputs.artifact-name }}
+
+jobs:
+  test:
+    name: Unity Tests (${{ inputs.test-mode }})
+    # Select runner based on lane. fromJson array form is required for label lists.
+    runs-on: >-
+      ${{
+        inputs.runner-mode == 'docker'              && 'ubuntu-latest'                             ||
+        inputs.runner-mode == 'self-hosted-windows' && fromJson('["self-hosted","Windows","unity"]') ||
+        fromJson('["self-hosted","macOS","unity"]')
+      }}
+
+    outputs:
+      result:        ${{ steps.set-result.outputs.result }}
+      tests-passed:  ${{ steps.parse-results.outputs.tests-passed }}
+      tests-failed:  ${{ steps.parse-results.outputs.tests-failed }}
+      artifact-name: ${{ steps.set-result.outputs.artifact-name }}
+
+    steps:
+      # ── 1. Free disk space (docker / ubuntu-latest only) ─────────────────────
+      - name: Free disk space
+        if: ${{ inputs.runner-mode == 'docker' }}
+        shell: bash
+        run: |
+          # Unity editor image is ~15GB; reclaim host space before pulling it.
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
+
+      # ── 2. Checkout ───────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      # ── 3. Cache Library ──────────────────────────────────────────────────────
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: ${{ inputs.project-path }}/Library
+          key: >-
+            Library-test-${{ inputs.test-mode }}-${{
+              hashFiles(
+                format('{0}/ProjectSettings/ProjectVersion.txt', inputs.project-path),
+                format('{0}/Packages/manifest.json', inputs.project-path)
+              )
+            }}
+          restore-keys: Library-test-${{ inputs.test-mode }}-
+
+      # ── 4a. Run tests — Docker lane (EditMode) ────────────────────────────────
+      # game-ci/unity-test-runner handles activation via UNITY_LICENSE+EMAIL+PASSWORD.
+      # Run EditMode first; PlayMode step uses if:always() so it still runs if EditMode fails.
+      - name: Run EditMode tests (Docker)
+        if: ${{ inputs.runner-mode == 'docker' && (inputs.test-mode == 'EditMode' || inputs.test-mode == 'All') }}
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath:   ${{ inputs.project-path }}
+          unityVersion:  ${{ inputs.unity-version }}
+          testMode:      EditMode
+          artifactsPath: test-results/EditMode
+          githubToken:   ${{ github.token }}
+
+      # ── 4b. Run tests — Docker lane (PlayMode) ────────────────────────────────
+      # always() ensures PlayMode still runs even if EditMode tests failed.
+      - name: Run PlayMode tests (Docker)
+        if: >-
+          ${{
+            always() &&
+            inputs.runner-mode == 'docker' &&
+            (inputs.test-mode == 'PlayMode' || inputs.test-mode == 'All')
+          }}
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath:   ${{ inputs.project-path }}
+          unityVersion:  ${{ inputs.unity-version }}
+          testMode:      PlayMode
+          artifactsPath: test-results/PlayMode
+          githubToken:   ${{ github.token }}
+
+      # ── 4c. Run tests — self-hosted-windows lane ──────────────────────────────
+      # Local Unity installation (no Docker, no license secrets).
+      # Runs EditMode and/or PlayMode sequentially; continues past EditMode failure for All.
+      - name: Run tests (Windows)
+        if: ${{ inputs.runner-mode == 'self-hosted-windows' }}
+        shell: pwsh
+        env:
+          TEST_MODE:     ${{ inputs.test-mode }}
+          PROJECT_PATH:  ${{ inputs.project-path }}
+          UNITY_VERSION: ${{ inputs.unity-version }}
+        run: |
+          $unityExe = "C:\Program Files\Unity\Hub\Editor\$env:UNITY_VERSION\Editor\Unity.exe"
+          if (-not (Test-Path $unityExe)) {
+            Write-Error "Unity executable not found: $unityExe"
+            exit 1
+          }
+
+          $resultsDir = Join-Path $PWD "test-results"
+          $exitCode = 0
+
+          function Run-UnityTests {
+            param([string]$Mode)
+            $outDir = Join-Path $resultsDir $Mode
+            New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+            $args = @(
+              "-batchmode", "-nographics",
+              "-projectPath", $env:PROJECT_PATH,
+              "-runTests",
+              "-testPlatform", $Mode,
+              "-testResults", (Join-Path $outDir "results.xml"),
+              "-logFile",     (Join-Path $outDir "Editor.log")
+            )
+            Write-Host "Running Unity $Mode tests..."
+            & $unityExe @args
+            return $LASTEXITCODE
+          }
+
+          if ($env:TEST_MODE -eq "EditMode" -or $env:TEST_MODE -eq "All") {
+            $rc = Run-UnityTests "EditMode"
+            if ($rc -ne 0) {
+              Write-Warning "EditMode tests exited with code $rc"
+              $exitCode = $rc
+            }
+          }
+
+          if ($env:TEST_MODE -eq "PlayMode" -or $env:TEST_MODE -eq "All") {
+            $rc = Run-UnityTests "PlayMode"
+            if ($rc -ne 0) {
+              Write-Warning "PlayMode tests exited with code $rc"
+              $exitCode = $rc
+            }
+          }
+
+          exit $exitCode
+
+      # ── 4d. Run tests — self-hosted-macOS lane ────────────────────────────────
+      # Local Unity installation on macOS (no Docker, no license secrets).
+      - name: Run tests (macOS)
+        if: ${{ inputs.runner-mode == 'self-hosted-macos' }}
+        shell: bash
+        env:
+          TEST_MODE:     ${{ inputs.test-mode }}
+          PROJECT_PATH:  ${{ inputs.project-path }}
+          UNITY_VERSION: ${{ inputs.unity-version }}
+        run: |
+          set -euo pipefail
+
+          UNITY_APP="/Applications/Unity/Hub/Editor/${UNITY_VERSION}/Unity.app/Contents/MacOS/Unity"
+          if [ ! -x "${UNITY_APP}" ]; then
+            echo "::error::Unity executable not found: ${UNITY_APP}"
+            exit 1
+          fi
+
+          RESULTS_DIR="${PWD}/test-results"
+          EXIT_CODE=0
+
+          run_unity_tests() {
+            local mode="$1"
+            local out_dir="${RESULTS_DIR}/${mode}"
+            mkdir -p "${out_dir}"
+            echo "Running Unity ${mode} tests..."
+            "${UNITY_APP}" \
+              -batchmode -nographics \
+              -projectPath "${PROJECT_PATH}" \
+              -runTests \
+              -testPlatform "${mode}" \
+              -testResults "${out_dir}/results.xml" \
+              -logFile "${out_dir}/Editor.log" \
+              || { echo "::warning::${mode} tests exited non-zero ($?)"; EXIT_CODE=$?; }
+          }
+
+          if [[ "${TEST_MODE}" == "EditMode" || "${TEST_MODE}" == "All" ]]; then
+            run_unity_tests "EditMode"
+          fi
+
+          if [[ "${TEST_MODE}" == "PlayMode" || "${TEST_MODE}" == "All" ]]; then
+            run_unity_tests "PlayMode"
+          fi
+
+          exit "${EXIT_CODE}"
+
+      # ── 5. Parse NUnit XML results ────────────────────────────────────────────
+      # Sums passed/failed counts across all result XML files produced above.
+      - name: Parse test results
+        id: parse-results
+        if: always()
+        shell: python3 {0}
+        run: |
+          import os, glob, xml.etree.ElementTree as ET
+
+          passed = 0
+          failed = 0
+
+          xml_files = glob.glob("test-results/**/*.xml", recursive=True)
+          if not xml_files:
+              print("::warning::No NUnit XML result files found in test-results/")
+          else:
+              for xml_file in xml_files:
+                  try:
+                      tree = ET.parse(xml_file)
+                      root = tree.getroot()
+                      # NUnit 3: root is <test-run>; NUnit 2: root may be <test-results>
+                      node = root if root.tag in ("test-run", "test-results") else None
+                      if node is None:
+                          node = root.find("test-run") or root.find("test-results")
+                      if node is not None:
+                          p = node.get("passed", node.get("total", "0"))
+                          f = node.get("failed", "0")
+                          passed += int(p) if str(p).isdigit() else 0
+                          failed += int(f) if str(f).isdigit() else 0
+                          print(f"{xml_file}: passed={p} failed={f}")
+                      else:
+                          print(f"::warning::Unrecognised NUnit root element in {xml_file}")
+                  except Exception as exc:
+                      print(f"::warning::Failed to parse {xml_file}: {exc}")
+
+          out_file = os.environ.get("GITHUB_OUTPUT", "/dev/null")
+          with open(out_file, "a") as fh:
+              fh.write(f"tests-passed={passed}\n")
+              fh.write(f"tests-failed={failed}\n")
+
+          print(f"\nTotal — passed: {passed}, failed: {failed}")
+
+      # ── 6. Upload test results artifact ───────────────────────────────────────
+      # Artifact name matches the convention in EXPLICIT_PLATFORM_FLOW_SPEC.md §4.
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-tests-${{ inputs.test-mode }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: ${{ inputs.artifact-retention-days }}
+
+      # ── 7. Set job-level result output ────────────────────────────────────────
+      - name: Set result output
+        id: set-result
+        if: always()
+        shell: bash
+        run: |
+          STATUS="${{ job.status }}"
+          if   [ "${STATUS}" = "success" ]; then RESULT="success"
+          elif [ "${STATUS}" = "failure" ]; then RESULT="failure"
+          else                                   RESULT="skipped"
+          fi
+          echo "result=${RESULT}"               >> "$GITHUB_OUTPUT"
+          echo "artifact-name=unity-tests-${{ inputs.test-mode }}" >> "$GITHUB_OUTPUT"
+          echo "Job result: ${RESULT}"

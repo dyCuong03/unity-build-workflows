@@ -1,0 +1,78 @@
+name: Toolkit CI
+
+# Validates the toolkit itself: Python test suite + shell syntax checks.
+# Runs on push/PR to the main development branches and on demand.
+
+on:
+  push:
+    branches: [main, develop, staging, 'release-*', 'feature/**']
+  pull_request:
+    branches: [main, develop, staging, 'release-*']
+  workflow_dispatch:
+
+concurrency:
+  group: toolkit-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Run pytest
+        run: |
+          cd tests
+          python -m pytest -q --junitxml=../pytest-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  shellcheck:
+    name: Shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: bash -n on all shell scripts
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r -d '' f; do
+            if ! bash -n "$f"; then echo "::error::syntax error in $f"; fail=1; fi
+          done < <(find scripts docker -name '*.sh' -type f -print0 2>/dev/null)
+          exit $fail
+
+  ci-report:
+    name: CI Report
+    needs: [tests, shellcheck]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize
+        run: |
+          {
+            echo "## Toolkit CI"
+            echo "- Tests:      ${{ needs.tests.result }}"
+            echo "- Shellcheck: ${{ needs.shellcheck.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "${{ needs.tests.result }}" = "success" ] && [ "${{ needs.shellcheck.result }}" = "success" ]
