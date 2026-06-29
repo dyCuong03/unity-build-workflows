@@ -157,7 +157,21 @@ jobs:
         if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc || true
+          # The Unity editor image (e.g. unityci/editor:ubuntu-<ver>-android-*) is
+          # ~15GB. GitHub-hosted runners have ~14GB free by default, so the pull
+          # can fail with "no space left on device". Aggressively reclaim space.
+          # The build runs INSIDE the container, so the host's Android SDK and the
+          # tool cache are not needed here and are safe to remove.
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache \
+            /usr/local/share/boost \
+            /usr/share/swift 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       # ── Step 3: Checkout ──────────────────────────────────────────────────
       - name: Checkout

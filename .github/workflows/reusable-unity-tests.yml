@@ -104,7 +104,15 @@ jobs:
       # ── 1. Free disk space (docker / ubuntu-latest only) ─────────────────────
       - name: Free disk space
         if: ${{ inputs.runner-mode == 'docker' }}
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/ghc || true
+        shell: bash
+        run: |
+          # Unity editor image is ~15GB; reclaim host space before pulling it.
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/share/swift 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       # ── 2. Checkout ───────────────────────────────────────────────────────────
       - name: Checkout
