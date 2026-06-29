@@ -71,9 +71,23 @@ jobs:
         run: |
           mkdir -p license-output
 
+          # Deterministic machine identity — MUST match run_unity_container.py
+          # (UNITY_CI_MACHINE_ID / UNITY_CI_HOSTNAME / UNITY_CI_MAC) so the
+          # license generated here binds to the same identity every build
+          # container presents, avoiding "TimeStamp validation failed".
+          MACHINE_ID="a1b2c3d4e5f64718293a4b5c6d7e8f90"
+          CI_HOSTNAME="unity-ci-builder"
+          CI_MAC="02:42:ac:11:00:42"
+          printf '%s\n' "${MACHINE_ID}" > machine-id
+          chmod 644 machine-id
+
           # Run activation inside the container (override entrypoint)
           docker run --rm \
             --entrypoint bash \
+            --hostname "${CI_HOSTNAME}" \
+            --mac-address "${CI_MAC}" \
+            -v "$(pwd)/machine-id:/etc/machine-id:ro" \
+            -v "$(pwd)/machine-id:/var/lib/dbus/machine-id:ro" \
             -e UNITY_EMAIL \
             -e UNITY_PASSWORD \
             -v "$(pwd)/license-output:/license-output" \
