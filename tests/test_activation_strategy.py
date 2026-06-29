@@ -271,9 +271,11 @@ class TestSecurityNoLeaks:
 # ── Priority order validation ───────────────────────────────────────────────
 
 class TestPriorityOrder:
-    """Verify correct priority: manual-ulf > serial > account."""
+    """Verify correct priority: personal-combined > manual-ulf > serial > account."""
 
-    def test_ulf_beats_serial(self):
+    def test_combined_beats_everything(self):
+        # Valid .ulf + account credentials → personal-combined (GameCI-style),
+        # even when a serial is also present.
         ulf = '<?xml version="1.0" encoding="UTF-8"?><root><License id="x">valid</License></root>'
         result = run_strategy({
             "UNITY_LICENSE": ulf,
@@ -281,6 +283,12 @@ class TestPriorityOrder:
             "UNITY_EMAIL": "test@example.com",
             "UNITY_PASSWORD": "secret",
         })
+        assert result.stdout.strip() == "personal-combined"
+
+    def test_ulf_only_is_manual_ulf(self):
+        # A valid .ulf WITHOUT account credentials stays manual-ulf.
+        ulf = '<?xml version="1.0" encoding="UTF-8"?><root><License id="x">valid</License></root>'
+        result = run_strategy({"UNITY_LICENSE": ulf})
         assert result.stdout.strip() == "manual-ulf"
 
     def test_serial_beats_account(self):
@@ -290,3 +298,60 @@ class TestPriorityOrder:
             "UNITY_PASSWORD": "secret",
         })
         assert result.stdout.strip() == "serial"
+
+
+# ── Combined Personal (GameCI-style) ────────────────────────────────────────
+
+class TestPersonalCombined:
+    """UNITY_LICENSE (.ulf) + UNITY_EMAIL + UNITY_PASSWORD → personal-combined.
+
+    Mirrors game-ci/unity-builder: the .ulf seeds the entitlement and the
+    online login binds a fresh access token. Verified to be the only reliable
+    Unity Personal/free activation path in ephemeral Docker.
+    """
+
+    VALID_ULF = '<?xml version="1.0" encoding="UTF-8"?><root><License id="x">valid</License></root>'
+
+    def test_auto_selects_combined(self):
+        result = run_strategy({
+            "UNITY_LICENSE": self.VALID_ULF,
+            "UNITY_EMAIL": "test@example.com",
+            "UNITY_PASSWORD": "secret123",
+        })
+        assert result.stdout.strip() == "personal-combined"
+
+    def test_forced_combined(self):
+        result = run_strategy({
+            "UNITY_ACTIVATION_STRATEGY": "personal-combined",
+            "UNITY_LICENSE": self.VALID_ULF,
+            "UNITY_EMAIL": "test@example.com",
+            "UNITY_PASSWORD": "secret123",
+        })
+        assert result.stdout.strip() == "personal-combined"
+
+    def test_forced_combined_missing_creds_blocked(self):
+        result = run_strategy({
+            "UNITY_ACTIVATION_STRATEGY": "personal-combined",
+            "UNITY_LICENSE": self.VALID_ULF,
+        })
+        assert result.stdout.strip() == "blocked"
+
+    def test_invalid_ulf_with_creds_is_account_not_combined(self):
+        # An invalid .ulf must NOT be promoted to personal-combined; it falls
+        # back to account activation.
+        bad = '<root><UnityEntitlementLicense>fake</UnityEntitlementLicense></root>'
+        result = run_strategy({
+            "UNITY_LICENSE": bad,
+            "UNITY_EMAIL": "test@example.com",
+            "UNITY_PASSWORD": "secret123",
+        })
+        assert result.stdout.strip() == "account"
+
+    def test_no_secret_values_leaked(self):
+        result = run_strategy({
+            "UNITY_LICENSE": self.VALID_ULF,
+            "UNITY_EMAIL": "leak-check@example.com",
+            "UNITY_PASSWORD": "SUPERSECRETVALUE",
+        })
+        assert "SUPERSECRETVALUE" not in result.stdout
+        assert "SUPERSECRETVALUE" not in result.stderr

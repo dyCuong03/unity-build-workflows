@@ -5,6 +5,9 @@
 # Detects available secrets and selects the best activation strategy.
 #
 # Strategy priority (auto mode):
+#   0. personal-combined — UNITY_LICENSE (.ulf) + UNITY_EMAIL + UNITY_PASSWORD
+#                          (GameCI-style; the only reliable Unity Personal path
+#                          in ephemeral Docker)
 #   1. manual-ulf    — UNITY_LICENSE contains a valid .ulf file
 #   2. serial        — UNITY_SERIAL + UNITY_EMAIL + UNITY_PASSWORD
 #   3. account       — UNITY_EMAIL + UNITY_PASSWORD (no serial)
@@ -245,6 +248,14 @@ resolve_strategy() {
                 fi
                 SELECTED_STRATEGY="account"
                 ;;
+            personal-combined)
+                if [[ "${HAS_LICENSE}" != "true" || "${HAS_EMAIL}" != "true" || "${HAS_PASSWORD}" != "true" ]]; then
+                    SELECTED_STRATEGY="blocked"
+                    BLOCKED_REASON="Forced strategy 'personal-combined' requires UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD"
+                    return
+                fi
+                SELECTED_STRATEGY="personal-combined"
+                ;;
             preactivated)
                 SELECTED_STRATEGY="preactivated"
                 ;;
@@ -261,6 +272,17 @@ resolve_strategy() {
     fi
 
     # ── Auto resolution (priority order) ─────────────────────────────────────
+
+    # 0. Combined Personal (GameCI-style): a valid .ulf AND account credentials.
+    #    The .ulf supplies the entitlement/serial; the online login supplies a
+    #    fresh machine-bound access token. This is the only reliable Unity
+    #    Personal/free path in ephemeral Docker, so it outranks manual-ulf.
+    if [[ "${HAS_LICENSE}" == "true" && "${LICENSE_VALID}" != "no" \
+          && "${HAS_EMAIL}" == "true" && "${HAS_PASSWORD}" == "true" ]]; then
+        SELECTED_STRATEGY="personal-combined"
+        log_info "Strategy 0: UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD → personal-combined (GameCI-style)"
+        return
+    fi
 
     # 1. UNITY_LICENSE with valid .ulf
     if [[ "${HAS_LICENSE}" == "true" && "${LICENSE_VALID}" == "yes" ]]; then

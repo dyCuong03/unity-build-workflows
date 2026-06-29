@@ -88,52 +88,65 @@ classify_activation_failure() {
 }
 
 # ---------------------------------------------------------------------------
-# Check for pre-activated license (mounted from host)
+# Preferred: GameCI-style combined Personal activation
 # ---------------------------------------------------------------------------
-# If license files are already present (e.g., mounted from host via
-# buildalon/activate-unity-license), skip activation entirely.
-UNITY_LICENSE_DIR="${HOME}/.local/share/unity3d/Unity"
-if ls "${UNITY_LICENSE_DIR}/"*.ulf 2>/dev/null | head -1 > /dev/null 2>&1; then
-    log_info "Pre-activated license found at ${UNITY_LICENSE_DIR} — skipping activation"
-    log_info "License files were likely mounted from the host runner"
-    exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Resolve activation strategy
-# ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Strategy resolver can be in several locations depending on context
-STRATEGY_SCRIPT=""
-for candidate in \
-    "${SCRIPT_DIR}/../../scripts/common/resolve_activation_strategy.sh" \
-    "/usr/local/share/unity-build-workflows/scripts/common/resolve_activation_strategy.sh" \
-    "${TOOLKIT_PATH:-}/scripts/common/resolve_activation_strategy.sh"; do
-    if [[ -f "${candidate}" ]]; then
-        STRATEGY_SCRIPT="$(realpath "${candidate}")"
-        break
-    fi
-done
-
-if [[ -n "${STRATEGY_SCRIPT}" ]]; then
-    log_info "Using strategy resolver: ${STRATEGY_SCRIPT}"
-    STRATEGY=$(bash "${STRATEGY_SCRIPT}" 2>&2)
+# When a .ulf (UNITY_LICENSE) AND account credentials (UNITY_EMAIL +
+# UNITY_PASSWORD) are BOTH provided, activate ONLINE with the .ulf in place.
+# This mirrors game-ci/unity-builder and is the only reliable path for Unity
+# Personal/free in ephemeral Docker:
+#   - .ulf alone        → "TimeStamp validation failed" (machine-bound)
+#   - email/pw alone     → "0 entitlements" (no seat without the .ulf)
+#   - both together      → "Activation successful"
+# UNITY_LICENSE is treated as RAW .ulf XML by default; base64 is auto-detected
+# and decoded (set UNITY_LICENSE_ENCODING=raw to force raw, =base64 to force
+# decode).
+if [[ -n "${UNITY_LICENSE:-}" && -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
+    STRATEGY="personal-combined"
 else
-    # Inline fallback if resolver not found (backwards compat)
-    log_warn "Strategy resolver not found — using inline detection"
-    if [[ -n "${UNITY_LICENSE:-}" ]]; then
-        STRATEGY="manual-ulf"
-    elif [[ -n "${UNITY_SERIAL:-}" && -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
-        STRATEGY="serial"
-    elif [[ -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
-        STRATEGY="account"
-    elif [[ -z "${UNITY_LICENSE:-}" && -z "${UNITY_EMAIL:-}" ]]; then
-        log_info "No license credentials found — continuing without activation"
-        log_info "Unity may run with a limited personal license"
+    # ── Check for pre-activated license (mounted from host) ────────────────
+    # If license files are already present and no account credentials were
+    # supplied to (re)activate online, trust the mounted license.
+    UNITY_LICENSE_DIR="${HOME}/.local/share/unity3d/Unity"
+    if ls "${UNITY_LICENSE_DIR}/"*.ulf 2>/dev/null | head -1 > /dev/null 2>&1; then
+        log_info "Pre-activated license found at ${UNITY_LICENSE_DIR} — skipping activation"
+        log_info "License files were likely mounted from the host runner"
         exit 0
+    fi
+
+    # ── Resolve activation strategy ────────────────────────────────────────
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Strategy resolver can be in several locations depending on context
+    STRATEGY_SCRIPT=""
+    for candidate in \
+        "${SCRIPT_DIR}/../../scripts/common/resolve_activation_strategy.sh" \
+        "/usr/local/share/unity-build-workflows/scripts/common/resolve_activation_strategy.sh" \
+        "${TOOLKIT_PATH:-}/scripts/common/resolve_activation_strategy.sh"; do
+        if [[ -f "${candidate}" ]]; then
+            STRATEGY_SCRIPT="$(realpath "${candidate}")"
+            break
+        fi
+    done
+
+    if [[ -n "${STRATEGY_SCRIPT}" ]]; then
+        log_info "Using strategy resolver: ${STRATEGY_SCRIPT}"
+        STRATEGY=$(bash "${STRATEGY_SCRIPT}" 2>&2)
     else
-        STRATEGY="blocked"
+        # Inline fallback if resolver not found (backwards compat)
+        log_warn "Strategy resolver not found — using inline detection"
+        if [[ -n "${UNITY_LICENSE:-}" ]]; then
+            STRATEGY="manual-ulf"
+        elif [[ -n "${UNITY_SERIAL:-}" && -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
+            STRATEGY="serial"
+        elif [[ -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
+            STRATEGY="account"
+        elif [[ -z "${UNITY_LICENSE:-}" && -z "${UNITY_EMAIL:-}" ]]; then
+            log_info "No license credentials found — continuing without activation"
+            log_info "Unity may run with a limited personal license"
+            exit 0
+        else
+            STRATEGY="blocked"
+        fi
     fi
 fi
 
@@ -143,6 +156,59 @@ log_info "Selected activation strategy: ${STRATEGY}"
 # Execute activation strategy
 # ---------------------------------------------------------------------------
 case "${STRATEGY}" in
+
+    # ── Strategy 0: Combined Personal (GameCI-style) ────────────────────────
+    personal-combined)
+        log_info "Activating via UNITY_LICENSE (.ulf) + UNITY_EMAIL/UNITY_PASSWORD (combined)"
+
+        # Ensure a .ulf is present in the license dir for the licensing client.
+        # If the dir is a read-only host mount that already holds one, reuse it;
+        # otherwise materialise UNITY_LICENSE (raw by default, base64 honoured).
+        ULF_DIR="${HOME}/.local/share/unity3d/Unity"
+        if ls "${ULF_DIR}/"*.ulf >/dev/null 2>&1; then
+            log_info "Reusing .ulf already present in license dir"
+        elif mkdir -p "${ULF_DIR}" 2>/dev/null; then
+            ULF_DEST="${ULF_DIR}/Unity_lic.ulf"
+            case "${UNITY_LICENSE_ENCODING:-auto}" in
+                base64) echo "${UNITY_LICENSE}" | base64 -d > "${ULF_DEST}" 2>/dev/null || true ;;
+                raw)    printf '%s' "${UNITY_LICENSE}" > "${ULF_DEST}" 2>/dev/null || true ;;
+                *)      if echo "${UNITY_LICENSE}" | base64 -d >/dev/null 2>&1; then
+                            echo "${UNITY_LICENSE}" | base64 -d > "${ULF_DEST}" 2>/dev/null || true
+                        else
+                            printf '%s' "${UNITY_LICENSE}" > "${ULF_DEST}" 2>/dev/null || true
+                        fi ;;
+            esac
+            [[ -f "${ULF_DEST}" ]] && chmod 600 "${ULF_DEST}" 2>/dev/null || true
+            log_info "Placed .ulf in license dir (content redacted)"
+        else
+            log_warn "License dir not writable; relying on online activation only"
+        fi
+
+        if "${UNITY_EDITOR}" \
+                -batchmode \
+                -nographics \
+                -username "${UNITY_EMAIL}" \
+                -password "${UNITY_PASSWORD}" \
+                -logFile "${UNITY_LOG_FILE}" \
+                -quit 2>&1; then
+            log_info "License activation succeeded (personal-combined)"
+            exit 0
+        else
+            unity_exit=$?
+            FAILURE_CLASS=$(classify_activation_failure "${UNITY_LOG_FILE}" "${unity_exit}")
+            log_error "License activation failed (personal-combined): ${FAILURE_CLASS}"
+            log_error "Unity exit code: ${unity_exit}"
+            preserve_log_on_failure
+            # Last-resort fallbacks (do not give up while another path exists)
+            if [[ -n "${UNITY_SERIAL:-}" ]]; then
+                log_info "Falling back to serial activation"
+                STRATEGY="serial"
+            else
+                log_info "Falling back to manual-ulf activation"
+                STRATEGY="manual-ulf"
+            fi
+        fi
+        ;;&  # Fall through to re-match the updated STRATEGY
 
     # ── Strategy 1: Manual ULF ──────────────────────────────────────────────
     manual-ulf)
