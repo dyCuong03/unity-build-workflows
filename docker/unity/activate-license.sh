@@ -155,6 +155,10 @@ log_info "Selected activation strategy: ${STRATEGY}"
 # ---------------------------------------------------------------------------
 # Execute activation strategy
 # ---------------------------------------------------------------------------
+# Use a loop so that fallback strategy reassignments are re-dispatched.
+# Each strategy either exits 0 (success), exits 1 (fatal), or updates
+# STRATEGY and continues the loop for the next attempt.
+while true; do
 case "${STRATEGY}" in
 
     # ── Strategy 0: Combined Personal (GameCI-style) ────────────────────────
@@ -203,12 +207,14 @@ case "${STRATEGY}" in
             if [[ -n "${UNITY_SERIAL:-}" ]]; then
                 log_info "Falling back to serial activation"
                 STRATEGY="serial"
+                continue  # Re-dispatch with updated STRATEGY
             else
                 log_info "Falling back to manual-ulf activation"
                 STRATEGY="manual-ulf"
+                continue  # Re-dispatch with updated STRATEGY
             fi
         fi
-        ;;&  # Fall through to re-match the updated STRATEGY
+        ;;
 
     # ── Strategy 1: Manual ULF ──────────────────────────────────────────────
     manual-ulf)
@@ -249,11 +255,11 @@ case "${STRATEGY}" in
                 if [[ -n "${UNITY_SERIAL:-}" && -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
                     log_info "Falling back to serial activation"
                     STRATEGY="serial"
-                    # Fall through to serial case below
+                    continue  # Re-dispatch with updated STRATEGY
                 elif [[ -n "${UNITY_EMAIL:-}" && -n "${UNITY_PASSWORD:-}" ]]; then
                     log_info "Falling back to account activation"
                     STRATEGY="account"
-                    # Fall through to account case below
+                    continue  # Re-dispatch with updated STRATEGY
                 else
                     exit 1
                 fi
@@ -261,7 +267,7 @@ case "${STRATEGY}" in
                 exit 1
             fi
         fi
-        ;;&  # Fall through to check if STRATEGY was updated
+        ;;
 
     # ── Strategy 2: Serial activation (Pro/Plus/Enterprise) ─────────────────
     serial)
@@ -367,3 +373,4 @@ case "${STRATEGY}" in
         exit 1
         ;;
 esac
+done  # end strategy dispatch loop
