@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       unity-version:
-        description: Unity editor version to bake into the image (e.g., 6000.0.23f1)
-        required: true
+        description: "Unity editor version to bake into the image (e.g., 6000.0.23f1). If omitted, falls back to config/unity-build-defaults.json."
+        required: false
         type: string
       image-variant:
         description: Image variant to build
@@ -67,13 +67,14 @@ jobs:
         id: unity-version
         shell: bash
         run: |
-          VERSION="${{ inputs.unity-version }}"
+          # Precedence:
+          #   (a) workflow_dispatch input unity-version if non-empty
+          #   (b) .unityVersion from config/unity-build-defaults.json
+          #   (c) fail with a clear message naming the config path
+          export UNITY_VERSION_INPUT="${{ inputs.unity-version }}"
+          VERSION="$(bash scripts/common/resolve_unity_version.sh)"
           if [ -z "$VERSION" ]; then
-            # Read from project BuildConfig if available
-            VERSION=$(python3 scripts/common/resolve_project_version.py --format plain 2>/dev/null || echo "")
-          fi
-          if [ -z "$VERSION" ]; then
-            echo "::error::No unity-version specified and could not resolve from project."
+            echo "::error::No unity-version specified and could not resolve from config/unity-build-defaults.json."
             exit 1
           fi
           echo "unity-version=${VERSION}" >> "$GITHUB_OUTPUT"

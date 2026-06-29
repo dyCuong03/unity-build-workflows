@@ -44,6 +44,14 @@ ALLOWED_PATHS = frozenset({
     ".github/workflows/unity-release-ios.yml",  # iOS release pipeline (tag-triggered)
     "scripts/ios/run_unity_ios.sh",             # iOS Unity batch-mode invocation (macOS only)
     ".github/actions/build-ios/action.yml",     # iOS composite action — native Unity on macOS (T7)
+    # GameCI-delegation production path: Unity Personal/free Docker activation
+    # is performed by game-ci/unity-builder (the supported, working path). This
+    # workflow intentionally uses the game-ci action.
+    ".github/workflows/unity-build-gameci.yml",
+    # Image build smoke-tests the editor inside the freshly built image
+    # (unity-editor -batchmode -buildTarget X -version). This verifies the
+    # image, it is not a project build invocation.
+    ".github/workflows/build-unity-image.yml",
 })
 
 # ---------------------------------------------------------------------------
@@ -233,13 +241,20 @@ class TestNoNativeUnityInvocation:
             )
 
     def test_no_game_ci_actions_in_workflows(self):
-        """No workflow should use game-ci/unity-builder or game-ci/unity-test-runner."""
+        """No workflow should use game-ci actions EXCEPT approved (ALLOWED_PATHS).
+
+        The toolkit delegates Unity Personal/free Docker activation to
+        game-ci/unity-builder in the approved unity-build-gameci.yml workflow;
+        any other use of a game-ci action is still a violation.
+        """
         violations = []
         builder_pat = re.compile(r"game-ci/unity-builder")
         runner_pat = re.compile(r"game-ci/unity-test-runner")
 
         for glob_pat in (".github/workflows/*.yml", ".github/actions/**/*.yml"):
             for path in REPO_ROOT.glob(glob_pat):
+                if _is_allowed(path):
+                    continue
                 try:
                     content = path.read_text(encoding="utf-8", errors="replace")
                 except OSError:

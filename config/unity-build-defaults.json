@@ -1,0 +1,11 @@
+{
+  "unityVersion": "6000.0.26f1",
+  "unityChangeset": "ccb7c73d2c02",
+  "imageVariants": [
+    "android",
+    "webgl",
+    "linux"
+  ],
+  "registry": "ghcr.io",
+  "imageNamespace": "dycuong03/unity-editor"
+}

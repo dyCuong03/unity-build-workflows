@@ -299,6 +299,87 @@ Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Docker, Unity, and iOS errors; cert rotation; Xcode migration |
 | [docs/adr/001-docker-mandatory-architecture.md](docs/adr/001-docker-mandatory-architecture.md) | Architecture decision record |
 | [docs/adr/002-ios-native-exception.md](docs/adr/002-ios-native-exception.md) | iOS macOS-lane exception decision record |
+| **[docs/UNITY\_PERSONAL\_DOCKER\_LICENSE.md](docs/UNITY_PERSONAL_DOCKER_LICENSE.md)** | **Unity Personal/free Docker licensing — `personal-combined` strategy, secret setup, troubleshooting** |
+| **[docs/UNITY\_VERSION\_UPGRADE.md](docs/UNITY_VERSION_UPGRADE.md)** | **Step-by-step Unity version upgrade checklist — images, config, consumer builds** |
+| **[docs/GITHUB\_ACTIONS\_BUILD\_RUNBOOK.md](docs/GITHUB_ACTIONS_BUILD_RUNBOOK.md)** | **Operational runbook — triggering builds, reading logs, artifacts, common errors** |
+
+---
+
+## Unity Personal / Free License Support
+
+This toolkit uses the **`personal-combined` strategy** for Unity Personal/free
+license activation in ephemeral Docker containers — the only reliable method:
+
+- Provide `UNITY_LICENSE` (raw `.ulf` contents), `UNITY_EMAIL`, and
+  `UNITY_PASSWORD` **together** as repository secrets.
+- `.ulf` alone fails with `TimeStamp validation failed`; credentials alone fail
+  with `0 entitlements`; all three together produce `Activation successful`.
+- `UNITY_LICENSE` must be the raw `.ulf` XML. Do **not** base64-encode it.
+
+See [docs/UNITY\_PERSONAL\_DOCKER\_LICENSE.md](docs/UNITY_PERSONAL_DOCKER_LICENSE.md)
+for full setup instructions, secret commands, and a troubleshooting table.
+
+---
+
+## Docker Image Variants
+
+Images are published to `ghcr.io/dycuong03/unity-editor:<version>-<variant>`.
+
+| Variant | Build targets | Image suffix |
+|---|---|---|
+| `android` | Android (APK, AAB) | `-android` |
+| `webgl` | WebGL | `-webgl` |
+| `linux` | Linux64, LinuxServer | `-linux` |
+
+Build variants using `build-unity-image.yml` in this repository:
+
+```bash
+gh workflow run build-unity-image.yml \
+  --repo dyCuong03/unity-build-workflows \
+  --ref main \
+  -f unity-version=6000.0.26f1 \
+  -f image-variant=android \
+  -f push-image=true
+```
+
+See [docs/UNITY\_VERSION\_UPGRADE.md](docs/UNITY_VERSION_UPGRADE.md) for the
+full rebuild procedure.
+
+---
+
+## Using From a Consumer Repository
+
+The consumer repository (e.g. `dyCuong03/NDC-Unity-Template`) calls this
+toolkit via reusable workflows:
+
+```yaml
+jobs:
+  build:
+    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-build-multi.yml@main
+    with:
+      platform: Android
+      unity-version: '6000.0.26f1'
+      project-path: '.'
+      build-config-path: BuildConfig
+    secrets:
+      UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+```
+
+Required consumer secrets: `UNITY_LICENSE`, `UNITY_EMAIL`, `UNITY_PASSWORD`.
+
+---
+
+## Upgrading Unity Version
+
+When the Unity version changes, you must rebuild all Docker image variants and
+update the config. Follow the step-by-step checklist in
+[docs/UNITY\_VERSION\_UPGRADE.md](docs/UNITY_VERSION_UPGRADE.md).
+
+The Unity version single source of truth is the consumer's
+`ProjectSettings/ProjectVersion.txt`. The toolkit default is stored in
+`config/unity-build-defaults.json`.
 
 ---
 

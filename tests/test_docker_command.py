@@ -56,6 +56,7 @@ def _make_args(**overrides) -> argparse.Namespace:
     defaults = dict(
         project_path="/workspace/MyProject",
         build_config_path="BuildConfig",
+        command="build",
         environment="development",
         target_platform="Android",
         unity_version="2022.3.45f1",
