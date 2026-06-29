@@ -20,6 +20,20 @@ F10  dispatch iOS          only build-ios true
 F11  run-tests=false forces test-mode=None
 F12  push → main (no-match) flow-type=none, all build-* false
 F13  build-ios is never true except manual iOS dispatch
+
+Repository Variable scenarios
+-----------------------------
+V1   no variables → defaults used, platform-source=default
+V2   DEVELOP variable override → only listed platforms built
+V3   STAGING variable override → only listed platforms built
+V4   RELEASE variable override → only listed platforms built
+V5   invalid platform value → script exits non-zero
+V6   manual dispatch overrides repository variables (platform-source=dispatch)
+V7   optional run-tests variable overrides branch default
+V8   optional build-addressables variable overrides branch default
+V9   platform-source emitted for all flows
+V10  invalid run-tests variable → script exits non-zero
+V11  invalid build-addressables variable → script exits non-zero
 """
 
 import os
@@ -44,6 +58,7 @@ EXPECTED_KEYS = {
     "build-linuxserver",
     "build-ios",
     "signing",
+    "platform-source",
 }
 
 ALL_BUILD_PLATFORM_KEYS = [
@@ -271,6 +286,9 @@ class TestPushDevelop:
     def test_signing_none(self):
         assert self.out["signing"] == "none"
 
+    def test_platform_source_default(self):
+        assert self.out["platform-source"] == "default"
+
 
 # ---------------------------------------------------------------------------
 # F5 – push → staging
@@ -312,6 +330,9 @@ class TestPushStaging:
 
     def test_signing_none(self):
         assert self.out["signing"] == "none"
+
+    def test_platform_source_default(self):
+        assert self.out["platform-source"] == "default"
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +377,9 @@ class TestPushReleaseDash:
 
     def test_signing_android_release(self):
         assert self.out["signing"] == "android-release"
+
+    def test_platform_source_default(self):
+        assert self.out["platform-source"] == "default"
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +451,9 @@ class TestDispatchAll:
     def test_build_ios_false_for_all(self):
         """iOS must be excluded from 'All' — never auto-built."""
         assert self.out["build-ios"] == "false"
+
+    def test_platform_source_dispatch(self):
+        assert self.out["platform-source"] == "dispatch"
 
 
 # ---------------------------------------------------------------------------
@@ -617,3 +644,465 @@ def test_dispatch_single_platform_exclusive(platform, expected_true):
     for key in ALL_BUILD_PLATFORM_KEYS:
         if key != expected_true:
             assert out[key] == "false", f"Expected {key}=false for {platform} dispatch"
+
+
+# ===========================================================================
+# Repository Variable tests (V1–V11)
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# V1 – no variables → defaults used, platform-source=default
+# ---------------------------------------------------------------------------
+
+class TestRepoVarDefaults:
+    """V1: Without any VAR_* env, defaults are used."""
+
+    def test_push_develop_defaults(self):
+        r = run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"})
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "false"
+        assert out["build-linuxserver"] == "false"
+        assert out["platform-source"] == "default"
+
+    def test_push_staging_defaults(self):
+        r = run_flow({"EVENT_NAME": "push", "REF_NAME": "staging"})
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "true"
+        assert out["build-linuxserver"] == "true"
+        assert out["platform-source"] == "default"
+
+    def test_push_release_defaults(self):
+        r = run_flow({"EVENT_NAME": "push", "REF_NAME": "release-1.0"})
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "true"
+        assert out["build-linuxserver"] == "true"
+        assert out["platform-source"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# V2 – DEVELOP variable override
+# ---------------------------------------------------------------------------
+
+class TestRepoVarDevelopOverride:
+    """V2: VAR_DEVELOP_BUILD_PLATFORMS overrides develop defaults."""
+
+    def test_develop_android_only(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "Android",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "false"
+        assert out["build-linux64"] == "false"
+        assert out["build-linuxserver"] == "false"
+        assert out["platform-source"] == "variable"
+
+    def test_develop_all_four(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "Android,WebGL,Linux64,LinuxServer",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "true"
+        assert out["build-linuxserver"] == "true"
+        assert out["platform-source"] == "variable"
+
+    def test_develop_webgl_only(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "WebGL",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "false"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "false"
+        assert out["platform-source"] == "variable"
+
+
+# ---------------------------------------------------------------------------
+# V3 – STAGING variable override
+# ---------------------------------------------------------------------------
+
+class TestRepoVarStagingOverride:
+    """V3: VAR_STAGING_BUILD_PLATFORMS overrides staging defaults."""
+
+    def test_staging_android_webgl_only(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "staging",
+            "VAR_STAGING_BUILD_PLATFORMS": "Android,WebGL",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "false"
+        assert out["build-linuxserver"] == "false"
+        assert out["platform-source"] == "variable"
+
+
+# ---------------------------------------------------------------------------
+# V4 – RELEASE variable override
+# ---------------------------------------------------------------------------
+
+class TestRepoVarReleaseOverride:
+    """V4: VAR_RELEASE_BUILD_PLATFORMS overrides release defaults."""
+
+    def test_release_android_only(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-2.0",
+            "VAR_RELEASE_BUILD_PLATFORMS": "Android",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "false"
+        assert out["build-linux64"] == "false"
+        assert out["build-linuxserver"] == "false"
+        assert out["platform-source"] == "variable"
+        # signing still applies for release
+        assert out["signing"] == "android-release"
+
+
+# ---------------------------------------------------------------------------
+# V5 – invalid platform value → script exits non-zero
+# ---------------------------------------------------------------------------
+
+class TestRepoVarInvalidPlatform:
+    """V5: Invalid platform name in variable causes script to fail."""
+
+    def test_invalid_develop_platform(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "Android,InvalidPlatform",
+        })
+        assert r.returncode != 0, "Script should fail on invalid platform name"
+        assert "InvalidPlatform" in r.stderr
+
+    def test_invalid_staging_platform(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "staging",
+            "VAR_STAGING_BUILD_PLATFORMS": "Windoze",
+        })
+        assert r.returncode != 0
+        assert "Windoze" in r.stderr
+
+    def test_invalid_release_platform(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-1.0",
+            "VAR_RELEASE_BUILD_PLATFORMS": "android",  # wrong case
+        })
+        assert r.returncode != 0
+        assert "android" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# V6 – manual dispatch overrides repository variables
+# ---------------------------------------------------------------------------
+
+class TestDispatchOverridesRepoVars:
+    """V6: workflow_dispatch always uses dispatch inputs, not repo variables."""
+
+    def test_dispatch_ignores_develop_var(self):
+        r = run_flow({
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": "Android",
+            "IN_ENVIRONMENT": "development",
+            "IN_RUN_TESTS": "false",
+            "IN_TEST_MODE": "All",
+            "IN_BUILD_ADDRESSABLES": "false",
+            # These should be ignored for dispatch
+            "VAR_DEVELOP_BUILD_PLATFORMS": "WebGL,Linux64",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "false"
+        assert out["platform-source"] == "dispatch"
+
+    def test_dispatch_all_ignores_staging_var(self):
+        r = run_flow({
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": "All",
+            "IN_ENVIRONMENT": "staging",
+            "IN_RUN_TESTS": "false",
+            "IN_TEST_MODE": "All",
+            "IN_BUILD_ADDRESSABLES": "false",
+            "VAR_STAGING_BUILD_PLATFORMS": "Android",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        # All → all 4 core platforms, ignoring the var
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["build-linux64"] == "true"
+        assert out["build-linuxserver"] == "true"
+        assert out["platform-source"] == "dispatch"
+
+
+# ---------------------------------------------------------------------------
+# V7 – optional run-tests variable overrides branch default
+# ---------------------------------------------------------------------------
+
+class TestRepoVarRunTests:
+    """V7: VAR_*_RUN_TESTS overrides branch default for run-tests."""
+
+    def test_develop_disable_tests(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_RUN_TESTS": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["run-tests"] == "false"
+        assert out["test-mode"] == "None"
+
+    def test_staging_disable_tests(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "staging",
+            "VAR_STAGING_RUN_TESTS": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["run-tests"] == "false"
+
+    def test_release_disable_tests(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-1.0",
+            "VAR_RELEASE_RUN_TESTS": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["run-tests"] == "false"
+
+    def test_develop_enable_tests_explicitly(self):
+        """Even though default is true, setting the var to true should work."""
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_RUN_TESTS": "true",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["run-tests"] == "true"
+
+    def test_pr_develop_run_tests_override(self):
+        """PR flows also respect run-tests variable."""
+        r = run_flow({
+            "EVENT_NAME": "pull_request",
+            "BASE_REF": "develop",
+            "VAR_DEVELOP_RUN_TESTS": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["run-tests"] == "false"
+
+
+# ---------------------------------------------------------------------------
+# V8 – optional build-addressables variable overrides branch default
+# ---------------------------------------------------------------------------
+
+class TestRepoVarBuildAddressables:
+    """V8: VAR_*_BUILD_ADDRESSABLES overrides branch default."""
+
+    def test_develop_enable_addressables(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_ADDRESSABLES": "true",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-addressables"] == "true"
+
+    def test_release_disable_addressables(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-1.0",
+            "VAR_RELEASE_BUILD_ADDRESSABLES": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-addressables"] == "false"
+
+    def test_staging_enable_addressables(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "staging",
+            "VAR_STAGING_BUILD_ADDRESSABLES": "true",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-addressables"] == "true"
+
+    def test_pr_release_addressables_override(self):
+        """PR → release default is build-addressables=true, can be overridden."""
+        r = run_flow({
+            "EVENT_NAME": "pull_request",
+            "BASE_REF": "release-1.0",
+            "VAR_RELEASE_BUILD_ADDRESSABLES": "false",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-addressables"] == "false"
+
+
+# ---------------------------------------------------------------------------
+# V9 – platform-source emitted for all flows
+# ---------------------------------------------------------------------------
+
+class TestPlatformSourceEmitted:
+    """V9: platform-source output is always present."""
+
+    @pytest.mark.parametrize("env,expected_source", [
+        ({"EVENT_NAME": "push", "REF_NAME": "develop"}, "default"),
+        ({"EVENT_NAME": "push", "REF_NAME": "staging"}, "default"),
+        ({"EVENT_NAME": "push", "REF_NAME": "release-1.0"}, "default"),
+        ({"EVENT_NAME": "push", "REF_NAME": "main"}, "default"),
+        ({"EVENT_NAME": "pull_request", "BASE_REF": "develop"}, "default"),
+        ({
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": "All",
+            "IN_ENVIRONMENT": "production",
+            "IN_RUN_TESTS": "false",
+            "IN_TEST_MODE": "All",
+            "IN_BUILD_ADDRESSABLES": "false",
+        }, "dispatch"),
+        ({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "Android",
+        }, "variable"),
+    ])
+    def test_platform_source_value(self, env, expected_source):
+        r = run_flow(env)
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["platform-source"] == expected_source
+
+
+# ---------------------------------------------------------------------------
+# V10 – invalid run-tests variable → script exits non-zero
+# ---------------------------------------------------------------------------
+
+class TestRepoVarInvalidRunTests:
+    """V10: Invalid run-tests variable value causes script to fail."""
+
+    def test_invalid_develop_run_tests(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_RUN_TESTS": "yes",
+        })
+        assert r.returncode != 0
+        assert "yes" in r.stderr
+
+    def test_invalid_staging_run_tests(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "staging",
+            "VAR_STAGING_RUN_TESTS": "1",
+        })
+        assert r.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# V11 – invalid build-addressables variable → script exits non-zero
+# ---------------------------------------------------------------------------
+
+class TestRepoVarInvalidBuildAddressables:
+    """V11: Invalid build-addressables variable value causes script to fail."""
+
+    def test_invalid_develop_build_addressables(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_ADDRESSABLES": "yes",
+        })
+        assert r.returncode != 0
+        assert "yes" in r.stderr
+
+    def test_invalid_release_build_addressables(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-1.0",
+            "VAR_RELEASE_BUILD_ADDRESSABLES": "0",
+        })
+        assert r.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# V12 – iOS in repo variable is ignored for branch flows
+# ---------------------------------------------------------------------------
+
+class TestRepoVarIOSIgnored:
+    """iOS in platform variable is silently ignored for branch flows."""
+
+    def test_ios_in_develop_var_ignored(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": "Android,iOS",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-ios"] == "false"
+        assert out["platform-source"] == "variable"
+
+    def test_ios_in_release_var_ignored(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "release-1.0",
+            "VAR_RELEASE_BUILD_PLATFORMS": "Android,WebGL,iOS",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-ios"] == "false"
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+
+
+# ---------------------------------------------------------------------------
+# V13 – whitespace in CSV is handled
+# ---------------------------------------------------------------------------
+
+class TestRepoVarWhitespace:
+    """Whitespace around platform names in CSV is trimmed."""
+
+    def test_whitespace_trimmed(self):
+        r = run_flow({
+            "EVENT_NAME": "push",
+            "REF_NAME": "develop",
+            "VAR_DEVELOP_BUILD_PLATFORMS": " Android , WebGL ",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["build-android"] == "true"
+        assert out["build-webgl"] == "true"
+        assert out["platform-source"] == "variable"
