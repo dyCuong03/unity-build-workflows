@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -77,6 +78,33 @@ SECRET_ENV_VARS = {
     "ANDROID_KEY_ALIAS",
     "ANDROID_KEY_PASS",
 }
+
+# ── Deterministic machine identity for Unity license binding ────────────────
+# A manual Unity .ulf is bound to the machine's identity (/etc/machine-id,
+# D-Bus machine id, hostname, MAC). Ephemeral build containers get a fresh
+# identity each run, so a generated .ulf fails with "TimeStamp validation
+# failed". We pin every Unity container to these fixed values; the same values
+# are used by unity-generate-license.yml when generating the .ulf, so one
+# generated license validates across all build containers.
+#
+# MUST stay identical to the values in unity-generate-license.yml.
+UNITY_CI_MACHINE_ID = "a1b2c3d4e5f64718293a4b5c6d7e8f90"
+UNITY_CI_HOSTNAME = "unity-ci-builder"
+UNITY_CI_MAC = "02:42:ac:11:00:42"
+
+
+def _fixed_machine_id_file() -> str:
+    """Write the pinned machine-id to a stable temp file and return its path.
+
+    Bind-mounted read-only over /etc/machine-id and the D-Bus machine id so
+    Unity's licensing client sees a consistent machine identity every run.
+    """
+    path = os.path.join(tempfile.gettempdir(), "unity-ci-machine-id")
+    # machine-id format: 32 lowercase hex chars + trailing newline
+    with open(path, "w", encoding="ascii") as fh:
+        fh.write(UNITY_CI_MACHINE_ID + "\n")
+    os.chmod(path, 0o644)
+    return path
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -244,6 +272,18 @@ def _build_docker_command(
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
     cmd += ["--rm", "--init"]
+
+    # ── Deterministic machine identity (Unity license binding) ─────────────
+    # Pin hostname / MAC / machine-id so a manual .ulf generated once (with the
+    # same values) validates in every ephemeral build container instead of
+    # failing with "TimeStamp validation failed".
+    machine_id_file = _fixed_machine_id_file()
+    cmd += [
+        "--hostname", UNITY_CI_HOSTNAME,
+        "--mac-address", UNITY_CI_MAC,
+        "--mount", f"type=bind,source={machine_id_file},target=/etc/machine-id,readonly",
+        "--mount", f"type=bind,source={machine_id_file},target=/var/lib/dbus/machine-id,readonly",
+    ]
 
     # ── User mapping (rootless-compatible) ────────────────────────────────
     try:
