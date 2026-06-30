@@ -29,13 +29,11 @@ validate-project
 unity-tests               build-addressables
 (if run-tests=true)       (if build-addressables=true)
                                 │
-          ┌─────────────────────┼─────────────────────┐──────────────────┐
-          ▼                     ▼                     ▼                  ▼
-     build-android        build-webgl          build-linux64   build-linuxserver
-                                                                         │
-                                                                    build-ios
-                                                              (blocked without macOS runner)
-          └─────────────────────┴─────────────────────┴──────────────────┘
+          ┌──────────┬──────────┬──────────────┬──────────────┬──────────────┐
+          ▼          ▼          ▼              ▼              ▼              ▼
+     build-android build-webgl build-linux64 build-linuxserver build-windows64 build-ios
+                                                                         (blocked without macOS runner)
+          └──────────┴──────────┴──────────────┴──────────────┴──────────────┘
                                            │
                                            ▼
                                      final-report  (always runs)
@@ -53,6 +51,7 @@ unity-tests               build-addressables
 | `build-webgl` | Build WebGL bundle | Selected by `runner-mode` |
 | `build-linux64` | Build Linux Standalone | `ubuntu-latest` (docker lane) |
 | `build-linuxserver` | Build Linux Dedicated Server | `ubuntu-latest` (docker lane) |
+| `build-windows64` | Build Windows Standalone (Mono scripting backend) | Selected by `runner-mode` |
 | `build-ios` | Build iOS Xcode project | **`[self-hosted, macOS, unity]` only** |
 | `final-report` | Collect all job results, emit summary annotation | `ubuntu-latest` |
 
@@ -67,7 +66,7 @@ with the `gh` CLI.
 
 | Input | Type | Default | Allowed values | Description |
 |---|---|---|---|---|
-| `platform` | choice | `All` | `All`, `Android`, `WebGL`, `Linux64`, `LinuxServer`, `iOS` | Platform(s) to build. `All` runs every platform whose runner is available. |
+| `platform` | choice | `All` | `All`, `Android`, `WebGL`, `Linux64`, `LinuxServer`, `Windows64`, `iOS` | Platform(s) to build. `All` runs every platform whose runner is available. |
 | `run-tests` | boolean | `false` | `true` / `false` | Run Unity tests before building. When `false` the `unity-tests` job is skipped. |
 | `test-mode` | choice | `All` | `EditMode`, `PlayMode`, `All` | Test suite to run. Only used when `run-tests=true`. |
 | `build-addressables` | boolean | `false` | `true` / `false` | Run the Addressables build pipeline before any platform build. When `false` the `build-addressables` job is skipped and platform builds proceed immediately. |
@@ -180,14 +179,20 @@ condition checks both the `platform` value and the upstream gate jobs.
 
 ### What runs per `platform` value
 
-| `platform` input | `build-android` | `build-webgl` | `build-linux64` | `build-linuxserver` | `build-ios` |
-|---|---|---|---|---|---|
-| `All` | ✓ runs | ✓ runs | ✓ runs | ✓ runs | ✓ runs (blocked if no macOS runner) |
-| `Android` | ✓ runs | ✗ skipped | ✗ skipped | ✗ skipped | ✗ skipped |
-| `WebGL` | ✗ skipped | ✓ runs | ✗ skipped | ✗ skipped | ✗ skipped |
-| `Linux64` | ✗ skipped | ✗ skipped | ✓ runs | ✗ skipped | ✗ skipped |
-| `LinuxServer` | ✗ skipped | ✗ skipped | ✗ skipped | ✓ runs | ✗ skipped |
-| `iOS` | ✗ skipped | ✗ skipped | ✗ skipped | ✗ skipped | ✓ runs (blocked if no macOS runner) |
+| `platform` input | `build-android` | `build-webgl` | `build-linux64` | `build-linuxserver` | `build-windows64` | `build-ios` |
+|---|---|---|---|---|---|---|
+| `All` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (blocked if no macOS runner) |
+| `Android` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `WebGL` | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `Linux64` | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| `LinuxServer` | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| `Windows64` | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ |
+| `iOS` | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (blocked if no macOS runner) |
+
+> **Windows64 scripting backend:** The docker lane cross-compiles `StandaloneWindows64`
+> using the **Mono scripting backend** only. IL2CPP Windows builds cannot be
+> cross-compiled on Linux — use `runner-mode=self-hosted-windows` with a local Unity
+> installation for IL2CPP. See [Section 3](#3-runner-modes) for runner mode details.
 
 > **Skipped ≠ failed.** Jobs that do not match the selected platform have
 > `result: skipped` in the GitHub Actions UI. `final-report` distinguishes
@@ -250,11 +255,13 @@ All artifacts are retained for **14 days** (configurable via `artifact-retention
 | `unity-build-WebGL` | WebGL bundle (`build/` directory) | `build-webgl` |
 | `unity-build-Linux64` | Linux binary (`build/` directory) | `build-linux64` |
 | `unity-build-LinuxServer` | Server binary (`build/` directory) | `build-linuxserver` |
+| `unity-build-Windows64` | Windows `.exe` + `_Data/` (`build/` directory) | `build-windows64` |
 | `unity-build-iOS` | Xcode project (`build/` directory) | `build-ios` |
 | `unity-build-Android-logs` | `Editor.log` + `BuildReport/` | `build-android` (always) |
 | `unity-build-WebGL-logs` | `Editor.log` + `BuildReport/` | `build-webgl` (always) |
 | `unity-build-Linux64-logs` | `Editor.log` + `BuildReport/` | `build-linux64` (always) |
 | `unity-build-LinuxServer-logs` | `Editor.log` + `BuildReport/` | `build-linuxserver` (always) |
+| `unity-build-Windows64-logs` | `Editor.log` + `BuildReport/` | `build-windows64` (always) |
 | `unity-build-iOS-logs` | `Editor.log` + `BuildReport/` | `build-ios` (always) |
 | `unity-build-Addressables` | Addressables catalog + bundles | `build-addressables` |
 | `unity-build-Addressables-logs` | `Editor.log` | `build-addressables` (always) |
@@ -299,6 +306,7 @@ In the **Actions → Run** detail view, each platform appears as a distinct job 
 | `Build WebGL` | `build-webgl` |
 | `Build Linux64` | `build-linux64` |
 | `Build LinuxServer` | `build-linuxserver` |
+| `Build Windows64` | `build-windows64` |
 | `Build iOS` | `build-ios` |
 | `final-report` | `final-report` |
 

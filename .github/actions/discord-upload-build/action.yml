@@ -66,6 +66,11 @@ inputs:
     required: false
     default: skipped
 
+  result-windows64:
+    description: build-windows64 result (success|failure|skipped|cancelled)
+    required: false
+    default: skipped
+
   result-ios:
     description: build-ios result
     required: false
@@ -135,6 +140,7 @@ runs:
         INPUT_RESULT_WEBGL:        ${{ inputs.result-webgl }}
         INPUT_RESULT_LINUX64:      ${{ inputs.result-linux64 }}
         INPUT_RESULT_LINUXSERVER:  ${{ inputs.result-linuxserver }}
+        INPUT_RESULT_WINDOWS64:    ${{ inputs.result-windows64 }}
         INPUT_RESULT_IOS:          ${{ inputs.result-ios }}
         INPUT_RESULT_ADDRESSABLES: ${{ inputs.result-addressables }}
         INPUT_RESULT_TESTS:        ${{ inputs.result-tests }}
@@ -200,6 +206,7 @@ runs:
             "WebGL:${INPUT_RESULT_WEBGL:-skipped}" \
             "Linux64:${INPUT_RESULT_LINUX64:-skipped}" \
             "LinuxServer:${INPUT_RESULT_LINUXSERVER:-skipped}" \
+            "Windows64:${INPUT_RESULT_WINDOWS64:-skipped}" \
             "iOS:${INPUT_RESULT_IOS:-skipped}" \
             "Addressables:${INPUT_RESULT_ADDRESSABLES:-skipped}"; do
 

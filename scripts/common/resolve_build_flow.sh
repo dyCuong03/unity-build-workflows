@@ -109,7 +109,7 @@ _is_release()  { [[ "${1}" == release-* || "${1}" == release/* ]]; }
 # ---------------------------------------------------------------------------
 # Platform validation and CSV parsing
 # ---------------------------------------------------------------------------
-VALID_PLATFORMS="Android WebGL Linux64 LinuxServer iOS"
+VALID_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64 iOS"
 
 validate_platform() {
     local plat="$1"
@@ -150,6 +150,7 @@ set_platforms_from_list() {
     build_webgl="false"
     build_linux64="false"
     build_linuxserver="false"
+    build_windows64="false"
     if [[ "${allow_ios}" == "true" ]]; then
         build_ios="false"
     fi
@@ -159,6 +160,7 @@ set_platforms_from_list() {
             WebGL)       build_webgl="true" ;;
             Linux64)     build_linux64="true" ;;
             LinuxServer) build_linuxserver="true" ;;
+            Windows64)   build_windows64="true" ;;
             iOS)
                 if [[ "${allow_ios}" == "true" ]]; then
                     build_ios="true"
@@ -182,6 +184,7 @@ build_android="false"
 build_webgl="false"
 build_linux64="false"
 build_linuxserver="false"
+build_windows64="false"
 build_ios="false"
 signing="none"
 platform_source="default"
@@ -190,8 +193,8 @@ platform_source="default"
 # Default platform lists per branch (used when no repo variable is set)
 # ---------------------------------------------------------------------------
 DEFAULT_DEVELOP_PLATFORMS="Android WebGL"
-DEFAULT_STAGING_PLATFORMS="Android WebGL Linux64 LinuxServer"
-DEFAULT_RELEASE_PLATFORMS="Android WebGL Linux64 LinuxServer"
+DEFAULT_STAGING_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64"
+DEFAULT_RELEASE_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64"
 
 # ---------------------------------------------------------------------------
 # resolve_branch_platforms BRANCH_TYPE
@@ -349,11 +352,13 @@ case "${EVENT_NAME}" in
         # All excludes iOS — no macOS runner in automatic builds
         build_android="true"; build_webgl="true"
         build_linux64="true"; build_linuxserver="true"
+        build_windows64="true"
         ;;
       Android)     build_android="true" ;;
       WebGL)       build_webgl="true" ;;
       Linux64)     build_linux64="true" ;;
       LinuxServer) build_linuxserver="true" ;;
+      Windows64)   build_windows64="true" ;;
       iOS)
         # iOS: manual only; reusable guard will block if no macOS runner
         build_ios="true"
@@ -397,7 +402,7 @@ esac
 log_info "gh-environment=${gh_environment} (deployment target; empty = none)"
 log_info "flow-type=${flow_type} environment=${environment} run-tests=${run_tests} test-mode=${test_mode}"
 log_info "build-addressables=${build_addressables} signing=${signing}"
-log_info "platforms: android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} ios=${build_ios}"
+log_info "platforms: android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} windows64=${build_windows64} ios=${build_ios}"
 log_info "platform-source=${platform_source}"
 
 # ---------------------------------------------------------------------------
@@ -413,6 +418,7 @@ emit "build-android"       "${build_android}"
 emit "build-webgl"         "${build_webgl}"
 emit "build-linux64"       "${build_linux64}"
 emit "build-linuxserver"   "${build_linuxserver}"
+emit "build-windows64"     "${build_windows64}"
 emit "build-ios"           "${build_ios}"
 emit "signing"             "${signing}"
 emit "platform-source"     "${platform_source}"

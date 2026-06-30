@@ -125,6 +125,7 @@ jobs:
       build-webgl:        ${{ steps.flow.outputs.build-webgl }}
       build-linux64:      ${{ steps.flow.outputs.build-linux64 }}
       build-linuxserver:  ${{ steps.flow.outputs.build-linuxserver }}
+      build-windows64:    ${{ steps.flow.outputs.build-windows64 }}
       build-ios:          ${{ steps.flow.outputs.build-ios }}
       signing:            ${{ steps.flow.outputs.signing }}
       platform-source:    ${{ steps.flow.outputs.platform-source }}
@@ -400,7 +401,38 @@ jobs:
       UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 9: build-ios
+  # JOB 9: build-windows64
+  #
+  # NOTE: The docker lane builds StandaloneWindows64 with the MONO scripting
+  # backend. Windows IL2CPP cannot cross-compile on Linux — use
+  # runner-mode=self-hosted-windows for IL2CPP Windows builds.
+  # ════════════════════════════════════════════════════════════════════════════
+  build-windows64:
+    name: Build Windows64
+    needs: [resolve-config, validate-project, build-addressables]
+    if: >-
+      !cancelled() &&
+      needs.validate-project.result == 'success' &&
+      (needs.build-addressables.result == 'success' || needs.build-addressables.result == 'skipped') &&
+      needs.resolve-config.outputs.build-windows64 == 'true'
+    uses: ./.github/workflows/reusable-build-platform.yml
+    with:
+      platform:            Windows64
+      unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
+      project-path:        ${{ needs.resolve-config.outputs.project-path }}
+      environment:         ${{ needs.resolve-config.outputs.environment }}
+      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      clean-build:         ${{ inputs.clean-build || false }}
+      build-addressables:  false
+      toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+    secrets:
+      UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 10: build-ios
   #   Only triggered when flow resolver sets build-ios=true (manual dispatch only).
   #   runner-mode HARDCODED to self-hosted-macos. Reusable exits 0 with
   #   result=blocked if no macOS runner is registered.
@@ -440,6 +472,7 @@ jobs:
       - build-webgl
       - build-linux64
       - build-linuxserver
+      - build-windows64
       - build-ios
     if: always()
     runs-on: ubuntu-latest
@@ -464,6 +497,7 @@ jobs:
           SEL_WEBGL:       ${{ needs.resolve-config.outputs.build-webgl }}
           SEL_LINUX64:     ${{ needs.resolve-config.outputs.build-linux64 }}
           SEL_LINUXSERVER: ${{ needs.resolve-config.outputs.build-linuxserver }}
+          SEL_WINDOWS64:   ${{ needs.resolve-config.outputs.build-windows64 }}
           SEL_IOS:         ${{ needs.resolve-config.outputs.build-ios }}
           SEL_ADDR:        ${{ needs.resolve-config.outputs.build-addressables }}
           SEL_TESTS:       ${{ needs.resolve-config.outputs.run-tests }}
@@ -482,6 +516,7 @@ jobs:
           R_WEBGL:       ${{ needs.build-webgl.result }}
           R_LINUX64:     ${{ needs.build-linux64.result }}
           R_LINUXSERVER: ${{ needs.build-linuxserver.result }}
+          R_WINDOWS64:   ${{ needs.build-windows64.result }}
           R_IOS:         ${{ needs.build-ios.result }}
         run: |
           emoji() {
@@ -496,12 +531,13 @@ jobs:
           }
 
           SELECTED="" SKIPPED="" BLOCKERS=""
-          for plat in Android WebGL Linux64 LinuxServer; do
+          for plat in Android WebGL Linux64 LinuxServer Windows64; do
             case "$plat" in
               Android)     flag="${SEL_ANDROID}" ;;
               WebGL)       flag="${SEL_WEBGL}" ;;
               Linux64)     flag="${SEL_LINUX64}" ;;
               LinuxServer) flag="${SEL_LINUXSERVER}" ;;
+              Windows64)   flag="${SEL_WINDOWS64}" ;;
             esac
             if [ "${flag}" = "true" ]; then
               SELECTED="${SELECTED:+$SELECTED, }${plat}"
@@ -580,13 +616,14 @@ jobs:
             echo "| WebGL       | $(emoji "${R_WEBGL}") \`${R_WEBGL}\` | \`unity-build-WebGL\` |"
             echo "| Linux64     | $(emoji "${R_LINUX64}") \`${R_LINUX64}\` | \`unity-build-Linux64\` |"
             echo "| LinuxServer | $(emoji "${R_LINUXSERVER}") \`${R_LINUXSERVER}\` | \`unity-build-LinuxServer\` |"
+            echo "| Windows64   | $(emoji "${R_WINDOWS64}") \`${R_WINDOWS64}\` | \`unity-build-Windows64\` |"
             echo "| iOS         | $(emoji "${R_IOS}") \`${R_IOS}\` | \`unity-build-iOS\` |"
             echo ""
             echo "> Log artifacts: \`unity-build-<Platform>-logs\` (retained 14 days)"
           } >> "$GITHUB_STEP_SUMMARY"
 
           FAILED=0
-          for result in "${R_VALIDATE}" "${R_ANDROID}" "${R_WEBGL}" "${R_LINUX64}" "${R_LINUXSERVER}"; do
+          for result in "${R_VALIDATE}" "${R_ANDROID}" "${R_WEBGL}" "${R_LINUX64}" "${R_LINUXSERVER}" "${R_WINDOWS64}"; do
             [ "${result}" = "failure" ] && FAILED=1
           done
           if [ "${FAILED}" -eq 1 ]; then
@@ -595,7 +632,7 @@ jobs:
           fi
 
   # ════════════════════════════════════════════════════════════════════════════
-  # JOB 11: notify-discord
+  # JOB 12: notify-discord
   # ════════════════════════════════════════════════════════════════════════════
   notify-discord:
     name: Notify Discord
@@ -608,6 +645,7 @@ jobs:
       - build-webgl
       - build-linux64
       - build-linuxserver
+      - build-windows64
       - build-ios
       - final-report
     if: always()
@@ -629,16 +667,17 @@ jobs:
           R_WEBGL:       ${{ needs.build-webgl.result }}
           R_LINUX64:     ${{ needs.build-linux64.result }}
           R_LINUXSERVER: ${{ needs.build-linuxserver.result }}
+          R_WINDOWS64:   ${{ needs.build-windows64.result }}
         run: |
           set +e
           overall=success
-          for r in "$R_VALIDATE" "$R_ANDROID" "$R_WEBGL" "$R_LINUX64" "$R_LINUXSERVER"; do
+          for r in "$R_VALIDATE" "$R_ANDROID" "$R_WEBGL" "$R_LINUX64" "$R_LINUXSERVER" "$R_WINDOWS64"; do
             [ "$r" = "cancelled" ] && overall=cancelled
           done
           if [ "$overall" != "cancelled" ]; then
             fail=0; ok=0
             [ "$R_VALIDATE" = "failure" ] && fail=1
-            for r in "$R_ANDROID" "$R_WEBGL" "$R_LINUX64" "$R_LINUXSERVER"; do
+            for r in "$R_ANDROID" "$R_WEBGL" "$R_LINUX64" "$R_LINUXSERVER" "$R_WINDOWS64"; do
               [ "$r" = "failure" ] && fail=1
               [ "$r" = "success" ] && ok=1
             done
@@ -666,6 +705,7 @@ jobs:
           result-webgl:        ${{ needs.build-webgl.result }}
           result-linux64:      ${{ needs.build-linux64.result }}
           result-linuxserver:  ${{ needs.build-linuxserver.result }}
+          result-windows64:    ${{ needs.build-windows64.result }}
           result-ios:          ${{ needs.build-ios.result }}
           result-addressables: ${{ needs.build-addressables.result }}
           result-tests:        ${{ needs.unity-tests.result }}

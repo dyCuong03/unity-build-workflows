@@ -315,7 +315,7 @@ After setup, the pipeline provides:
 
 | Feature | How it works |
 |---|---|
-| **Branch-based CI** | Push to `develop` → builds Android+WebGL; push to `staging` → adds Linux64+LinuxServer; push to `release-*` → full build + Addressables + Android release signing |
+| **Branch-based CI** | Push to `develop` → builds Android+WebGL; push to `staging` → adds Linux64+LinuxServer+Windows64; push to `release-*` → full build (same set) + Addressables + Android release signing. Windows64 uses the Mono scripting backend in the docker lane — use `runner-mode=self-hosted-windows` for IL2CPP ([EXPLICIT\_PLATFORM\_FLOW.md §5](EXPLICIT_PLATFORM_FLOW.md#5-platform-selection-rules)) |
 | **PR validation** | Tests only on PRs to `develop`/`staging`/`release-*`; no binary builds; no environment secrets exposed |
 | **Manual dispatch** | 9 inputs for full control (platform, tests, addressables, environment, runner mode, etc.) |
 | **Per-platform UI jobs** | Each platform is a separate, independently-retryable job node in GitHub Actions |

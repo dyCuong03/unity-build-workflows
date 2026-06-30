@@ -11,15 +11,17 @@ F1   PR → develop    flow-type=pr-develop,  validation only, tests
 F2   PR → staging    flow-type=pr-staging,  validation only, tests
 F3   PR → release-*  flow-type=pr-release,  addressables, tests, no binary builds
 F4   push → develop  flow-type=push-develop, android+webgl, env=development
-F5   push → staging  flow-type=push-staging, android+webgl+linux64+linuxserver
-F6   push → release-1.2   flow-type=push-release, all 4 platforms, signing
+F5   push → staging  flow-type=push-staging, android+webgl+linux64+linuxserver+windows64
+F6   push → release-1.2   flow-type=push-release, all 5 platforms + signing
 F7   push → release/1.2   same as F6 (alternate branch naming convention)
-F8   dispatch All          4 core platforms true, ios false
+F8   dispatch All          5 core platforms true (incl. windows64), ios false
+F8w  dispatch Windows64    only build-windows64 true
 F9   dispatch Android      only build-android true
 F10  dispatch iOS          only build-ios true
 F11  run-tests=false forces test-mode=None
 F12  push → main (no-match) flow-type=none, all build-* false
 F13  build-ios is never true except manual iOS dispatch
+F14  build-windows64 key always present in output
 
 Repository Variable scenarios
 -----------------------------
@@ -56,6 +58,7 @@ EXPECTED_KEYS = {
     "build-webgl",
     "build-linux64",
     "build-linuxserver",
+    "build-windows64",
     "build-ios",
     "signing",
     "platform-source",
@@ -66,6 +69,7 @@ ALL_BUILD_PLATFORM_KEYS = [
     "build-webgl",
     "build-linux64",
     "build-linuxserver",
+    "build-windows64",
     "build-ios",
 ]
 
@@ -280,6 +284,10 @@ class TestPushDevelop:
     def test_build_ios_false(self):
         assert self.out["build-ios"] == "false"
 
+    def test_build_windows64_false(self):
+        """F4: push→develop does not build Windows64 (not in develop defaults)."""
+        assert self.out["build-windows64"] == "false"
+
     def test_build_addressables_false(self):
         assert self.out["build-addressables"] == "false"
 
@@ -324,6 +332,10 @@ class TestPushStaging:
 
     def test_build_ios_false(self):
         assert self.out["build-ios"] == "false"
+
+    def test_build_windows64_true(self):
+        """F5: push→staging includes Windows64 in default staging platforms."""
+        assert self.out["build-windows64"] == "true"
 
     def test_build_addressables_false(self):
         assert self.out["build-addressables"] == "false"
@@ -375,6 +387,10 @@ class TestPushReleaseDash:
     def test_build_ios_false(self):
         assert self.out["build-ios"] == "false"
 
+    def test_build_windows64_true(self):
+        """F6: push→release-1.2 includes Windows64 in default release platforms."""
+        assert self.out["build-windows64"] == "true"
+
     def test_signing_android_release(self):
         assert self.out["signing"] == "android-release"
 
@@ -402,7 +418,7 @@ class TestPushReleaseSlash:
         assert self.out["environment"] == "production"
 
     def test_all_core_platforms_true(self):
-        for key in ["build-android", "build-webgl", "build-linux64", "build-linuxserver"]:
+        for key in ["build-android", "build-webgl", "build-linux64", "build-linuxserver", "build-windows64"]:
             assert self.out[key] == "true", f"Expected {key}=true for push→release/1.2"
 
     def test_build_ios_false(self):
@@ -452,6 +468,10 @@ class TestDispatchAll:
         """iOS must be excluded from 'All' — never auto-built."""
         assert self.out["build-ios"] == "false"
 
+    def test_build_windows64_true_for_all(self):
+        """F8: dispatch All includes Windows64."""
+        assert self.out["build-windows64"] == "true"
+
     def test_platform_source_dispatch(self):
         assert self.out["platform-source"] == "dispatch"
 
@@ -478,7 +498,7 @@ class TestDispatchAndroid:
         assert self.out["build-android"] == "true"
 
     def test_other_platforms_false(self):
-        for key in ["build-webgl", "build-linux64", "build-linuxserver", "build-ios"]:
+        for key in ["build-webgl", "build-linux64", "build-linuxserver", "build-windows64", "build-ios"]:
             assert self.out[key] == "false", f"Expected {key}=false for Android dispatch"
 
 
@@ -505,7 +525,7 @@ class TestDispatchIOS:
         assert self.out["build-ios"] == "true"
 
     def test_core_platforms_false(self):
-        for key in ["build-android", "build-webgl", "build-linux64", "build-linuxserver"]:
+        for key in ["build-android", "build-webgl", "build-linux64", "build-linuxserver", "build-windows64"]:
             assert self.out[key] == "false", f"Expected {key}=false for iOS dispatch"
 
 
@@ -627,6 +647,7 @@ class TestIOSNeverAutomatic:
     ("WebGL",       "build-webgl"),
     ("Linux64",     "build-linux64"),
     ("LinuxServer", "build-linuxserver"),
+    ("Windows64",   "build-windows64"),
 ])
 def test_dispatch_single_platform_exclusive(platform, expected_true):
     """Each single-platform dispatch enables exactly one build-* key."""
@@ -644,6 +665,40 @@ def test_dispatch_single_platform_exclusive(platform, expected_true):
     for key in ALL_BUILD_PLATFORM_KEYS:
         if key != expected_true:
             assert out[key] == "false", f"Expected {key}=false for {platform} dispatch"
+
+
+# ---------------------------------------------------------------------------
+# F8w – workflow_dispatch / IN_PLATFORM=Windows64
+# ---------------------------------------------------------------------------
+
+class TestDispatchWindows64:
+    """F8w: Explicit Windows64 dispatch → only build-windows64 true."""
+
+    @pytest.fixture(autouse=True)
+    def _result(self):
+        r = run_flow({
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": "Windows64",
+            "IN_ENVIRONMENT": "development",
+            "IN_RUN_TESTS": "false",
+            "IN_TEST_MODE": "All",
+            "IN_BUILD_ADDRESSABLES": "false",
+        })
+        assert r.returncode == 0
+        self.out = parse_outputs(r.stdout)
+
+    def test_build_windows64_true(self):
+        assert self.out["build-windows64"] == "true"
+
+    def test_other_platforms_false(self):
+        for key in ["build-android", "build-webgl", "build-linux64", "build-linuxserver", "build-ios"]:
+            assert self.out[key] == "false", f"Expected {key}=false for Windows64 dispatch"
+
+    def test_flow_type_manual(self):
+        assert self.out["flow-type"] == "manual"
+
+    def test_platform_source_dispatch(self):
+        assert self.out["platform-source"] == "dispatch"
 
 
 # ===========================================================================
@@ -675,6 +730,7 @@ class TestRepoVarDefaults:
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "true"
         assert out["build-linuxserver"] == "true"
+        assert out["build-windows64"] == "true"
         assert out["platform-source"] == "default"
 
     def test_push_release_defaults(self):
@@ -685,6 +741,7 @@ class TestRepoVarDefaults:
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "true"
         assert out["build-linuxserver"] == "true"
+        assert out["build-windows64"] == "true"
         assert out["platform-source"] == "default"
 
 
@@ -854,11 +911,12 @@ class TestDispatchOverridesRepoVars:
         })
         assert r.returncode == 0
         out = parse_outputs(r.stdout)
-        # All → all 4 core platforms, ignoring the var
+        # All → all 5 core platforms, ignoring the var
         assert out["build-android"] == "true"
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "true"
         assert out["build-linuxserver"] == "true"
+        assert out["build-windows64"] == "true"
         assert out["platform-source"] == "dispatch"
 
 

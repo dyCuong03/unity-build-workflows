@@ -28,10 +28,11 @@ is tolerant of any future migration:
 
 Covered rules
 -------------
-R1  platform=All          → Android/WebGL/Linux64/LinuxServer True; iOS False
+R1  platform=All          → Android/WebGL/Linux64/LinuxServer/Windows64 True; iOS False
 R2  platform=Android      → only build-android True; others False
 R3  platform=WebGL        → only build-webgl True
 R4  platform=Linux64      → only build-linux64 True
+R4w platform=Windows64    → only build-windows64 True
 R5  platform=LinuxServer  → only build-linuxserver True
 R6  platform=iOS          → only build-ios True
 R7  run-tests=false       → unity-tests if: False (skipped)
@@ -243,6 +244,7 @@ PLATFORM_BUILD_JOBS = [
     "build-webgl",
     "build-linux64",
     "build-linuxserver",
+    "build-windows64",
     "build-ios",
 ]
 
@@ -254,6 +256,7 @@ PLATFORM_BUILD_JOBS_FOR_ALL = [
     "build-webgl",
     "build-linux64",
     "build-linuxserver",
+    "build-windows64",
 ]
 
 # Baseline needs when validate-project succeeded + build-addressables skipped.
@@ -293,6 +296,7 @@ def _ctx(platform="All", run_tests=False, build_addressables_input=False,
     build_webgl      = platform in ("All", "WebGL")
     build_linux64    = platform in ("All", "Linux64")
     build_linuxserver = platform in ("All", "LinuxServer")
+    build_windows64  = platform in ("All", "Windows64")
     build_ios        = (platform == "iOS")  # never included in 'All'
 
     rc_outputs = {
@@ -300,6 +304,7 @@ def _ctx(platform="All", run_tests=False, build_addressables_input=False,
         "build-webgl":      "true" if build_webgl      else "false",
         "build-linux64":    "true" if build_linux64    else "false",
         "build-linuxserver": "true" if build_linuxserver else "false",
+        "build-windows64":  "true" if build_windows64  else "false",
         "build-ios":        "true" if build_ios        else "false",
         "run-tests":        "true" if run_tests        else "false",
         "build-addressables": "true" if build_addressables_input else "false",
@@ -311,6 +316,8 @@ def _ctx(platform="All", run_tests=False, build_addressables_input=False,
             "platform": platform,
             "run-tests": run_tests,
             "build-addressables": build_addressables_input,
+            # Windows64 as direct input too (tolerant dual-context)
+            "build-windows64": "true" if build_windows64 else "false",
         },
         "needs": _base_needs(
             validate=validate,
@@ -362,6 +369,7 @@ def test_r1_platform_all_with_addressables_success(job_ifs):
     ("WebGL",       "build-webgl"),
     ("Linux64",     "build-linux64"),
     ("LinuxServer", "build-linuxserver"),
+    ("Windows64",   "build-windows64"),
     ("iOS",         "build-ios"),
 ])
 def test_r2_r6_single_platform(job_ifs, selected_platform, expected_true_job):
@@ -615,6 +623,7 @@ EXPECTED_JOBS = [
     "build-webgl",
     "build-linux64",
     "build-linuxserver",
+    "build-windows64",
     "build-ios",
     "final-report",
     "notify-discord",
@@ -636,6 +645,82 @@ def test_job_if_expressions_are_parseable(job_ifs):
             eval_gha_expr(expr, ctx)
         except Exception as exc:
             pytest.fail(f"Failed to evaluate if: for job {job_id!r}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# R4w – build-windows64 gates on resolve-config outputs (mirrors Linux64)
+# ---------------------------------------------------------------------------
+
+def test_r4w_build_windows64_job_exists(job_ifs):
+    """R4w: build-windows64 job is present in unity-pipeline.yml."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip(
+            "build-windows64 job not yet present in unity-pipeline.yml — "
+            "waiting for github-actions-engineer to add it."
+        )
+    # Job exists — subsequent tests will exercise it.
+
+
+def test_r4w_build_windows64_enabled_when_output_true(job_ifs):
+    """R4w: build-windows64 if: True when resolve-config outputs build-windows64=true,
+    validate-project success, build-addressables skipped."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="Windows64", validate="success", addressables_result="skipped")
+    assert eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 if: should be True when output build-windows64='true' "
+        "and validate succeeded"
+    )
+
+
+def test_r4w_build_windows64_enabled_in_all(job_ifs):
+    """R4w: build-windows64 if: True when platform=All (Windows64 is in All)."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="All", validate="success", addressables_result="skipped")
+    assert eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 should run for platform=All"
+    )
+
+
+def test_r4w_build_windows64_disabled_when_output_false(job_ifs):
+    """R4w: build-windows64 if: False when resolve-config outputs build-windows64=false."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="Android", validate="success", addressables_result="skipped")
+    assert not eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 if: should be False when build-windows64='false'"
+    )
+
+
+def test_r4w_build_windows64_blocked_when_validate_failed(job_ifs):
+    """R4w: validate-project failure → build-windows64 if: False (mirrors R13)."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="Windows64", validate="failure")
+    assert not eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 should be False when validate-project failed"
+    )
+
+
+def test_r4w_build_windows64_blocked_when_addressables_failed(job_ifs):
+    """R4w: build-addressables failure → build-windows64 if: False (mirrors Linux64 pattern)."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="Windows64", validate="success", addressables_result="failure")
+    assert not eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 should be False when build-addressables failed"
+    )
+
+
+def test_r4w_build_windows64_passes_with_addressables_success(job_ifs):
+    """R4w: build-addressables success (not just skipped) also allows build-windows64."""
+    if "build-windows64" not in job_ifs:
+        pytest.skip("build-windows64 job not in pipeline yet")
+    ctx = _ctx(platform="Windows64", validate="success", addressables_result="success")
+    assert eval_gha_expr(job_ifs["build-windows64"], ctx), (
+        "R4w: build-windows64 should run when addressables succeeded"
+    )
 
 
 # ---------------------------------------------------------------------------

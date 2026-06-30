@@ -108,6 +108,7 @@ class TestActionStructure:
             "result-webgl",
             "result-linux64",
             "result-linuxserver",
+            "result-windows64",
             "result-ios",
             "result-addressables",
             "result-tests",

@@ -17,7 +17,7 @@ is set, appends there too. Never prints secrets.
 | `EVENT_NAME` | `push` \| `pull_request` \| `workflow_dispatch` |
 | `REF_NAME` | branch name (push: the branch; PR: head branch; dispatch: current ref) |
 | `BASE_REF` | PR target branch (empty for push/dispatch) |
-| `IN_PLATFORM` | dispatch input `platform` (All/Android/WebGL/Linux64/LinuxServer/iOS) |
+| `IN_PLATFORM` | dispatch input `platform` (All/Android/WebGL/Linux64/LinuxServer/Windows64/iOS) |
 | `IN_ENVIRONMENT` | dispatch input `environment` |
 | `IN_RUN_TESTS` | dispatch input `run-tests` (true/false) |
 | `IN_TEST_MODE` | dispatch input `test-mode` |
@@ -27,8 +27,8 @@ is set, appends there too. Never prints secrets.
 | Env | GitHub Variable | Default |
 |---|---|---|
 | `VAR_DEVELOP_BUILD_PLATFORMS` | `DEVELOP_BUILD_PLATFORMS` | `Android,WebGL` |
-| `VAR_STAGING_BUILD_PLATFORMS` | `STAGING_BUILD_PLATFORMS` | `Android,WebGL,Linux64,LinuxServer` |
-| `VAR_RELEASE_BUILD_PLATFORMS` | `RELEASE_BUILD_PLATFORMS` | `Android,WebGL,Linux64,LinuxServer` |
+| `VAR_STAGING_BUILD_PLATFORMS` | `STAGING_BUILD_PLATFORMS` | `Android,WebGL,Linux64,LinuxServer,Windows64` |
+| `VAR_RELEASE_BUILD_PLATFORMS` | `RELEASE_BUILD_PLATFORMS` | `Android,WebGL,Linux64,LinuxServer,Windows64` |
 | `VAR_DEVELOP_RUN_TESTS` | `DEVELOP_RUN_TESTS` | `true` |
 | `VAR_STAGING_RUN_TESTS` | `STAGING_RUN_TESTS` | `true` |
 | `VAR_RELEASE_RUN_TESTS` | `RELEASE_RUN_TESTS` | `true` |
@@ -53,6 +53,7 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
 | `build-webgl` | true \| false |
 | `build-linux64` | true \| false |
 | `build-linuxserver` | true \| false |
+| `build-windows64` | true \| false  (docker lane: Mono scripting backend only; IL2CPP requires self-hosted-windows) |
 | `build-ios` | true \| false  (only manual platform==iOS; never automatic) |
 | `signing` | none \| android-release |
 | `platform-source` | default \| variable \| dispatch |
@@ -64,9 +65,9 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
 | PR → develop | pr-develop | development | true | false | *(none — validation only)* | none | default |
 | push → develop | push-develop | development | true | false | Android, WebGL | none | default or variable |
 | PR → staging | pr-staging | staging | true | false | *(none)* | none | default |
-| push → staging | push-staging | staging | true | false | Android, WebGL, Linux64, LinuxServer | none | default or variable |
+| push → staging | push-staging | staging | true | false | Android, WebGL, Linux64, LinuxServer, Windows64 | none | default or variable |
 | PR → release-* | pr-release | production | true | true | *(none)* | none | default |
-| push → release-* | push-release | production | true | true | Android, WebGL, Linux64, LinuxServer | android-release | default or variable |
+| push → release-* | push-release | production | true | true | Android, WebGL, Linux64, LinuxServer, Windows64 | android-release | default or variable |
 | workflow_dispatch | manual | `IN_ENVIRONMENT` | `IN_RUN_TESTS` | `IN_BUILD_ADDRESSABLES` | per `IN_PLATFORM` | n/a | dispatch |
 | anything else | none | development | false | false | *(none)* | none | default |
 
@@ -81,7 +82,7 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
   The variable is applied after the branch default, so it takes precedence.
 
 ### Platform validation
-Allowed platform names (case-sensitive): `Android`, `WebGL`, `Linux64`, `LinuxServer`, `iOS`.
+Allowed platform names (case-sensitive): `Android`, `WebGL`, `Linux64`, `LinuxServer`, `Windows64`, `iOS`.
 An invalid name in any `VAR_*_BUILD_PLATFORMS` variable causes the script to exit with
 a non-zero status and an error message listing the invalid name and the allowed set.
 

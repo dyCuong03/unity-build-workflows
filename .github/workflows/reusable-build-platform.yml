@@ -204,6 +204,8 @@ jobs:
                           echo "params="                   >> "$GITHUB_OUTPUT" ;;
             LinuxServer)  echo "target=StandaloneLinux64" >> "$GITHUB_OUTPUT"
                           echo "params=-standaloneBuildSubtarget Server" >> "$GITHUB_OUTPUT" ;;
+            Windows64)    echo "target=StandaloneWindows64" >> "$GITHUB_OUTPUT"
+                          echo "params="                   >> "$GITHUB_OUTPUT" ;;
             iOS)          echo "target=iOS"               >> "$GITHUB_OUTPUT"
                           echo "params="                   >> "$GITHUB_OUTPUT" ;;
             Addressables) echo "target="                  >> "$GITHUB_OUTPUT"

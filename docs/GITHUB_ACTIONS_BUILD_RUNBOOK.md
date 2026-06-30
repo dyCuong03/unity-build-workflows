@@ -172,6 +172,12 @@ gh workflow run unity-build.yml \
   --ref main \
   -f platform=LinuxServer
 
+# Windows Standalone (Mono backend via docker; use runner-mode=self-hosted-windows for IL2CPP)
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=Windows64
+
 # iOS (requires a registered [self-hosted, macOS, unity] runner — see Section 10)
 gh workflow run unity-build.yml \
   --repo dyCuong03/NDC-Unity-Template \
@@ -192,7 +198,7 @@ gh workflow run unity-build.yml \
 
 | Input | Default | Allowed values | Description |
 |---|---|---|---|
-| `platform` | `All` | `All`, `Android`, `WebGL`, `Linux64`, `LinuxServer`, `iOS` | Platform(s) to build |
+| `platform` | `All` | `All`, `Android`, `WebGL`, `Linux64`, `LinuxServer`, `Windows64`, `iOS` | Platform(s) to build |
 | `run-tests` | `false` | `true` / `false` | Run Unity tests before builds |
 | `test-mode` | `All` | `EditMode`, `PlayMode`, `All` | Test suite (when `run-tests=true`) |
 | `build-addressables` | `false` | `true` / `false` | Build Addressables before platform builds |
@@ -226,6 +232,7 @@ When a run is open in the GitHub Actions UI, platform jobs appear as distinct no
 | `Build WebGL` | WebGL bundle |
 | `Build Linux64` | Linux Standalone binary |
 | `Build LinuxServer` | Linux Dedicated Server binary |
+| `Build Windows64` | Windows Standalone `.exe` (Mono; use `self-hosted-windows` for IL2CPP) |
 | `Build iOS` | iOS Xcode project |
 | `Unity Tests (All)` / `(EditMode)` / `(PlayMode)` | Tests |
 | `Build Addressables` | Addressables catalog |
