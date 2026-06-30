@@ -293,9 +293,9 @@ class TestRunScriptStatic:
         )
 
     def test_c9_sub1mb_normalisation(self, run_script):
-        """C9: ZIP_MB=1 normalisation for sub-1MB zips is present."""
-        assert "ZIP_MB=1" in run_script, (
-            "C9: 'ZIP_MB=1' sub-1MB normalisation not found in run script"
+        """C9: sub-1MB zips are normalised to 1MB so they count against threshold."""
+        assert "PLAT_SIZE_MB=1" in run_script, (
+            "C9: sub-1MB normalisation (PLAT_SIZE_MB=1) not found in run script"
         )
 
     def test_c10_curl_retry_flag(self, run_script):

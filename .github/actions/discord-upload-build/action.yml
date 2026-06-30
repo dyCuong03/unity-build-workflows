@@ -44,6 +44,47 @@ inputs:
     required: false
     default: ''
 
+  actor:
+    description: GitHub actor (user who triggered the workflow — github.actor)
+    required: false
+    default: ''
+
+  event:
+    description: GitHub event name (github.event_name — push, pull_request, workflow_dispatch, etc.)
+    required: false
+    default: ''
+
+  run-number:
+    description: GitHub Actions run number (github.run_number)
+    required: false
+    default: ''
+
+  repository:
+    description: |
+      GitHub repository in owner/repo format (github.repository).
+      Used to build the commit hyperlink URL.
+    required: false
+    default: ''
+
+  commit-message:
+    description: |
+      Commit message. First line only is shown; truncated to 120 chars.
+      Pass github.event.head_commit.message or equivalent.
+    required: false
+    default: ''
+
+  commit-author:
+    description: Commit author name or login (shown after commit SHA in embed)
+    required: false
+    default: ''
+
+  build-duration:
+    description: |
+      Human-readable total build duration string (e.g. "4m 23s").
+      Compute in the caller workflow from job start time.
+    required: false
+    default: ''
+
   # ── Per-platform results ──────────────────────────────────────────────────────
   # All default to 'skipped' — caller only needs to pass platforms that ran.
   result-android:
@@ -146,6 +187,13 @@ runs:
         INPUT_RESULT_TESTS:        ${{ inputs.result-tests }}
         INPUT_THREAD_ID:           ${{ inputs.thread-id }}
         INPUT_THREAD_NAME:         ${{ inputs.thread-name }}
+        INPUT_ACTOR:               ${{ inputs.actor }}
+        INPUT_EVENT:               ${{ inputs.event }}
+        INPUT_RUN_NUMBER:          ${{ inputs.run-number }}
+        INPUT_REPOSITORY:          ${{ inputs.repository }}
+        INPUT_COMMIT_MESSAGE:      ${{ inputs.commit-message }}
+        INPUT_COMMIT_AUTHOR:       ${{ inputs.commit-author }}
+        INPUT_BUILD_DURATION:      ${{ inputs.build-duration }}
         INPUT_ARTIFACT_DIR:        ${{ inputs.artifact-dir }}
         INPUT_THRESHOLD_MB:        ${{ inputs.attach-size-threshold-mb }}
       run: |
@@ -222,7 +270,8 @@ runs:
             *)         RE="❓" ;;
           esac
 
-          DELIVERY="—"
+          DELIVERY=""     # empty = no suffix (skipped/cancelled/blocked)
+          PLAT_SIZE_MB=0  # artifact zip size in MB (0 = unknown/not built)
 
           if [ "${RESULT}" = "success" ]; then
             ARTIFACT_SUBDIR="${INPUT_ARTIFACT_DIR:-./artifacts}/unity-build-${PLAT}"
@@ -234,11 +283,11 @@ runs:
 
               if [ -f "${ZIP_PATH}" ]; then
                 ZIP_KB=$(du -k "${ZIP_PATH}" 2>/dev/null | awk '{print $1}' || echo "0")
-                ZIP_MB=$(( ${ZIP_KB:-0} / 1024 ))
-                # Sub-1MB files get ZIP_MB=0; treat as 1MB so they count against threshold
-                [ "${ZIP_MB}" -eq 0 ] && ZIP_MB=1
+                PLAT_SIZE_MB=$(( ${ZIP_KB:-0} / 1024 ))
+                # Sub-1MB files get PLAT_SIZE_MB=0; treat as 1MB so they count against threshold
+                [ "${PLAT_SIZE_MB}" -eq 0 ] && PLAT_SIZE_MB=1
 
-                if _should_attach "${ZIP_MB}" "${THRESHOLD_MB}"; then
+                if _should_attach "${PLAT_SIZE_MB}" "${THRESHOLD_MB}"; then
                   FILES_ATTACH_NAMES+=("${PLAT}")
                   FILES_ATTACH_PATHS+=("${ZIP_PATH}")
                   ATTACHED=1
@@ -248,12 +297,13 @@ runs:
               fi
             fi
 
+            # Delivery suffix includes size when known: "6 MB (attached)" / "35 MB (linked)"
             if [ "${ATTACHED}" -eq 1 ]; then
-              DELIVERY="📎 attached"
+              DELIVERY="${PLAT_SIZE_MB} MB (attached)"
             elif [ -n "${INPUT_RUN_URL:-}" ]; then
-              DELIVERY="[⬇ download](${INPUT_RUN_URL}) *(GitHub login required)*"
+              DELIVERY="${PLAT_SIZE_MB} MB ([linked](${INPUT_RUN_URL}))"
             else
-              DELIVERY="*(see run for artifact)*"
+              DELIVERY="${PLAT_SIZE_MB} MB (see run)"
             fi
 
           elif [ "${RESULT}" = "failure" ]; then
@@ -261,9 +311,13 @@ runs:
               DELIVERY="[📄 logs](${INPUT_RUN_URL})"
             fi
           fi
-          # skipped / cancelled / blocked keep DELIVERY="—"
+          # skipped / cancelled / blocked: DELIVERY stays empty → no suffix
 
-          PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\` ${DELIVERY}"$'\n'
+          if [ -n "${DELIVERY}" ]; then
+            PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\` — ${DELIVERY}"$'\n'
+          else
+            PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\`"$'\n'
+          fi
         done
 
         # ── Step 5: Build JSON payload via Python ─────────────────────────────
@@ -277,26 +331,37 @@ runs:
           ATTACH_NAMES_PIPE="${ATTACH_NAMES_PIPE%|}"
         fi
 
-        export PLATFORM_ROWS N_ATTACHMENTS ATTACH_NAMES_PIPE
+        # Capture UTC timestamp for embed.timestamp (ISO 8601, best-effort)
+        EMBED_TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
+
+        export PLATFORM_ROWS N_ATTACHMENTS ATTACH_NAMES_PIPE EMBED_TIMESTAMP
 
         PAYLOAD_PY="/tmp/discord_payload_$$.py"
         cat > "${PAYLOAD_PY}" << 'DISCORD_PY'
         import json, os, sys
 
-        status       = os.environ.get('INPUT_STATUS', 'unknown')
-        flow_type    = os.environ.get('INPUT_FLOW_TYPE', 'unknown')
-        environment  = os.environ.get('INPUT_ENVIRONMENT', 'development')
-        run_url      = os.environ.get('INPUT_RUN_URL', '')
-        commit_sha   = os.environ.get('INPUT_COMMIT_SHA', '')
-        branch       = os.environ.get('INPUT_BRANCH', '')
-        unity_ver    = os.environ.get('INPUT_UNITY_VERSION', '')
-        thread_id    = os.environ.get('INPUT_THREAD_ID', '')
-        thread_name  = os.environ.get('INPUT_THREAD_NAME', '')
-        tests_result = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
-        platform_rows= os.environ.get('PLATFORM_ROWS', '')
-        n_attach     = int(os.environ.get('N_ATTACHMENTS', '0'))
-        attach_pipe  = os.environ.get('ATTACH_NAMES_PIPE', '')
-        attach_names = [n for n in attach_pipe.split('|') if n] if attach_pipe else []
+        status         = os.environ.get('INPUT_STATUS', 'unknown')
+        flow_type      = os.environ.get('INPUT_FLOW_TYPE', 'unknown')
+        environment    = os.environ.get('INPUT_ENVIRONMENT', 'development')
+        run_url        = os.environ.get('INPUT_RUN_URL', '')
+        commit_sha     = os.environ.get('INPUT_COMMIT_SHA', '')
+        branch         = os.environ.get('INPUT_BRANCH', '')
+        unity_ver      = os.environ.get('INPUT_UNITY_VERSION', '')
+        actor          = os.environ.get('INPUT_ACTOR', '')
+        event_name     = os.environ.get('INPUT_EVENT', '')
+        run_number     = os.environ.get('INPUT_RUN_NUMBER', '')
+        repository     = os.environ.get('INPUT_REPOSITORY', '')
+        commit_message = os.environ.get('INPUT_COMMIT_MESSAGE', '')
+        commit_author  = os.environ.get('INPUT_COMMIT_AUTHOR', '')
+        build_duration = os.environ.get('INPUT_BUILD_DURATION', '')
+        thread_id      = os.environ.get('INPUT_THREAD_ID', '')
+        thread_name    = os.environ.get('INPUT_THREAD_NAME', '')
+        tests_result   = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
+        platform_rows  = os.environ.get('PLATFORM_ROWS', '')
+        embed_timestamp= os.environ.get('EMBED_TIMESTAMP', '')
+        n_attach       = int(os.environ.get('N_ATTACHMENTS', '0'))
+        attach_pipe    = os.environ.get('ATTACH_NAMES_PIPE', '')
+        attach_names   = [n for n in attach_pipe.split('|') if n] if attach_pipe else []
 
         color_map = {
             'success':   3066993,   # 0x2ECC71 green
@@ -320,19 +385,49 @@ runs:
 
         tests_emoji = emoji_map.get(tests_result, '❓')
 
+        # ── Inline fields (omit when value is empty) ──────────────────────────
         fields = []
         if branch:
             b = branch[:50] + ('...' if len(branch) > 50 else '')
-            fields.append({'name': 'Branch',      'value': b,           'inline': True})
-        fields.append(    {'name': 'Environment', 'value': environment,  'inline': True})
-        fields.append(    {'name': 'Flow',        'value': flow_type,    'inline': True})
+            fields.append({'name': 'Branch',       'value': b,            'inline': True})
+        fields.append(    {'name': 'Environment',  'value': environment,   'inline': True})
+        fields.append(    {'name': 'Flow',         'value': flow_type,     'inline': True})
         if unity_ver:
-            fields.append({'name': 'Unity',       'value': unity_ver,    'inline': True})
-        if short_sha:
-            fields.append({'name': 'Commit',      'value': short_sha,    'inline': True})
+            fields.append({'name': 'Unity',        'value': unity_ver,     'inline': True})
+        if actor:
+            fields.append({'name': 'Triggered by', 'value': actor,         'inline': True})
+        if event_name:
+            fields.append({'name': 'Event',        'value': event_name,    'inline': True})
+        if run_number:
+            fields.append({'name': 'Run',          'value': '#{}'.format(run_number), 'inline': True})
+        if repository:
+            fields.append({'name': 'Repository',   'value': repository,    'inline': True})
+        if build_duration:
+            fields.append({'name': 'Duration',     'value': build_duration,'inline': True})
         fields.append({'name': 'Tests',
                        'value': '{} {}'.format(tests_emoji, tests_result),
                        'inline': True})
+
+        # ── Commit field (block): clickable SHA + message + author ────────────
+        if short_sha:
+            if repository:
+                sha_link = '[{}](https://github.com/{}/commit/{})'.format(
+                    short_sha, repository, commit_sha)
+            else:
+                sha_link = short_sha
+            commit_parts = [sha_link]
+            if commit_message:
+                first_line = commit_message.split('\n')[0]
+                if len(first_line) > 120:
+                    first_line = first_line[:120] + '…'
+                commit_parts.append(first_line)
+            if commit_author:
+                commit_parts.append('— {}'.format(commit_author))
+            fields.append({'name': 'Commit',
+                           'value': ' '.join(commit_parts),
+                           'inline': False})
+
+        # ── Platforms field (block) ───────────────────────────────────────────
         if platform_rows.strip():
             fields.append({'name': 'Platforms', 'value': platform_rows.strip(), 'inline': False})
 
@@ -343,6 +438,8 @@ runs:
         }
         if run_url:
             embed['url'] = run_url
+        if embed_timestamp:
+            embed['timestamp'] = embed_timestamp
 
         payload = {'embeds': [embed]}
 

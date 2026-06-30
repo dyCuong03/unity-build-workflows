@@ -699,6 +699,43 @@ jobs:
           ref: ${{ inputs.toolkit-ref }}
           path: .toolkit
 
+      - name: Gather run context (commit message, author, duration)
+        id: ctx
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          BUILD_DURATION=""
+
+          # ── Commit message (first line) ───────────────────────────────────
+          COMMIT_MSG=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" \
+            -q '.commit.message' 2>/dev/null | head -1) || true
+          echo "commit-message=${COMMIT_MSG}" >> "$GITHUB_OUTPUT"
+
+          # ── Commit author ─────────────────────────────────────────────────
+          COMMIT_AUTHOR=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" \
+            -q '.commit.author.name' 2>/dev/null) || true
+          echo "commit-author=${COMMIT_AUTHOR}" >> "$GITHUB_OUTPUT"
+
+          # ── Build duration ────────────────────────────────────────────────
+          START=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -q '.run_started_at' 2>/dev/null) || true
+          if [ -n "${START}" ]; then
+            START_EPOCH=$(date -u -d "${START}" +%s 2>/dev/null) || true
+            if [ -n "${START_EPOCH}" ] && [ "${START_EPOCH}" -gt 0 ] 2>/dev/null; then
+              NOW=$(date -u +%s)
+              ELAPSED=$(( NOW - START_EPOCH ))
+              if [ "${ELAPSED}" -ge 60 ]; then
+                BUILD_DURATION="$(( ELAPSED / 60 ))m $(( ELAPSED % 60 ))s"
+              else
+                BUILD_DURATION="${ELAPSED}s"
+              fi
+            fi
+          fi
+          echo "build-duration=${BUILD_DURATION}" >> "$GITHUB_OUTPUT"
+
       - name: Post build to Discord thread
         uses: ./.toolkit/.github/actions/discord-upload-build
         continue-on-error: true
@@ -723,3 +760,10 @@ jobs:
           thread-id:           ${{ vars.DISCORD_THREAD_ID }}
           artifact-dir:        ./artifacts
           attach-size-threshold-mb: '24'
+          actor:               ${{ github.actor }}
+          event:               ${{ github.event_name }}
+          run-number:          ${{ github.run_number }}
+          repository:          ${{ github.repository }}
+          commit-message:      ${{ steps.ctx.outputs.commit-message }}
+          commit-author:       ${{ steps.ctx.outputs.commit-author }}
+          build-duration:      ${{ steps.ctx.outputs.build-duration }}
