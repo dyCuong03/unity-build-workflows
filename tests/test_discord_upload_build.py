@@ -118,6 +118,18 @@ class TestActionStructure:
             # File attachment
             "artifact-dir",
             "attach-size-threshold-mb",
+            # Trigger / commit / timing context
+            "actor",
+            "event",
+            "run-number",
+            "repository",
+            "commit-message",
+            "commit-author",
+            "build-duration",
+            # Diagnostics (error/warning counts + log links)
+            "platform-diagnostics",
+            "total-errors",
+            "total-warnings",
         }
         missing = expected - declared
         assert not missing, f"A2: Missing inputs in action.yml: {missing}"

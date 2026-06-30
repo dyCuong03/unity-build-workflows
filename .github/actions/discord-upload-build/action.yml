@@ -62,7 +62,7 @@ inputs:
   repository:
     description: |
       GitHub repository in owner/repo format (github.repository).
-      Used to build the commit hyperlink URL.
+      Used for commit hyperlink URL and embed footer.
     required: false
     default: ''
 
@@ -74,7 +74,7 @@ inputs:
     default: ''
 
   commit-author:
-    description: Commit author name or login (shown after commit SHA in embed)
+    description: Commit author name or login (shown after commit SHA in embed description)
     required: false
     default: ''
 
@@ -82,6 +82,33 @@ inputs:
     description: |
       Human-readable total build duration string (e.g. "4m 23s").
       Compute in the caller workflow from job start time.
+    required: false
+    default: ''
+
+  # ── Diagnostics ───────────────────────────────────────────────────────────────
+  platform-diagnostics:
+    description: |
+      Newline-separated per-platform diagnostic summary.
+      Each line: Platform=errors,warnings,logsArtifactId
+      e.g.: "Android=0,5,1234567\nWebGL=2,12,1234568"
+      logsArtifactId may be empty (omit the logs link).
+      Platforms with no diagnostics line keep the simple row format.
+    required: false
+    default: ''
+
+  total-errors:
+    description: |
+      Total compiler/build error count across all platforms (integer string).
+      Shown in the Diagnostics inline field. Omitted if both total-errors
+      and total-warnings are empty.
+    required: false
+    default: ''
+
+  total-warnings:
+    description: |
+      Total compiler/build warning count across all platforms (integer string).
+      Shown in the Diagnostics inline field. Omitted if both total-errors
+      and total-warnings are empty.
     required: false
     default: ''
 
@@ -157,8 +184,8 @@ inputs:
     description: |
       Maximum CUMULATIVE size (MB) of zipped attachments before switching to
       run-URL links. Checked per file in order (Android, WebGL, Linux64,
-      LinuxServer, iOS, Addressables): if adding a file would push the total
-      over this value, that file and all subsequent ones become links instead.
+      LinuxServer, Windows64, iOS, Addressables): if adding a file would push
+      the total over this value, that file and all subsequent ones become links.
       Default 24 — safely under the Discord 25 MB non-boosted server limit.
     required: false
     default: '24'
@@ -170,32 +197,35 @@ runs:
     - name: Post build summary + artifacts to Discord
       shell: bash
       env:
-        INPUT_STATUS:              ${{ inputs.status }}
-        INPUT_FLOW_TYPE:           ${{ inputs.flow-type }}
-        INPUT_ENVIRONMENT:         ${{ inputs.environment }}
-        INPUT_RUN_URL:             ${{ inputs.run-url }}
-        INPUT_COMMIT_SHA:          ${{ inputs.commit-sha }}
-        INPUT_BRANCH:              ${{ inputs.branch }}
-        INPUT_UNITY_VERSION:       ${{ inputs.unity-version }}
-        INPUT_RESULT_ANDROID:      ${{ inputs.result-android }}
-        INPUT_RESULT_WEBGL:        ${{ inputs.result-webgl }}
-        INPUT_RESULT_LINUX64:      ${{ inputs.result-linux64 }}
-        INPUT_RESULT_LINUXSERVER:  ${{ inputs.result-linuxserver }}
-        INPUT_RESULT_WINDOWS64:    ${{ inputs.result-windows64 }}
-        INPUT_RESULT_IOS:          ${{ inputs.result-ios }}
-        INPUT_RESULT_ADDRESSABLES: ${{ inputs.result-addressables }}
-        INPUT_RESULT_TESTS:        ${{ inputs.result-tests }}
-        INPUT_THREAD_ID:           ${{ inputs.thread-id }}
-        INPUT_THREAD_NAME:         ${{ inputs.thread-name }}
-        INPUT_ACTOR:               ${{ inputs.actor }}
-        INPUT_EVENT:               ${{ inputs.event }}
-        INPUT_RUN_NUMBER:          ${{ inputs.run-number }}
-        INPUT_REPOSITORY:          ${{ inputs.repository }}
-        INPUT_COMMIT_MESSAGE:      ${{ inputs.commit-message }}
-        INPUT_COMMIT_AUTHOR:       ${{ inputs.commit-author }}
-        INPUT_BUILD_DURATION:      ${{ inputs.build-duration }}
-        INPUT_ARTIFACT_DIR:        ${{ inputs.artifact-dir }}
-        INPUT_THRESHOLD_MB:        ${{ inputs.attach-size-threshold-mb }}
+        INPUT_STATUS:                ${{ inputs.status }}
+        INPUT_FLOW_TYPE:             ${{ inputs.flow-type }}
+        INPUT_ENVIRONMENT:           ${{ inputs.environment }}
+        INPUT_RUN_URL:               ${{ inputs.run-url }}
+        INPUT_COMMIT_SHA:            ${{ inputs.commit-sha }}
+        INPUT_BRANCH:                ${{ inputs.branch }}
+        INPUT_UNITY_VERSION:         ${{ inputs.unity-version }}
+        INPUT_ACTOR:                 ${{ inputs.actor }}
+        INPUT_EVENT:                 ${{ inputs.event }}
+        INPUT_RUN_NUMBER:            ${{ inputs.run-number }}
+        INPUT_REPOSITORY:            ${{ inputs.repository }}
+        INPUT_COMMIT_MESSAGE:        ${{ inputs.commit-message }}
+        INPUT_COMMIT_AUTHOR:         ${{ inputs.commit-author }}
+        INPUT_BUILD_DURATION:        ${{ inputs.build-duration }}
+        INPUT_PLATFORM_DIAGNOSTICS:  ${{ inputs.platform-diagnostics }}
+        INPUT_TOTAL_ERRORS:          ${{ inputs.total-errors }}
+        INPUT_TOTAL_WARNINGS:        ${{ inputs.total-warnings }}
+        INPUT_RESULT_ANDROID:        ${{ inputs.result-android }}
+        INPUT_RESULT_WEBGL:          ${{ inputs.result-webgl }}
+        INPUT_RESULT_LINUX64:        ${{ inputs.result-linux64 }}
+        INPUT_RESULT_LINUXSERVER:    ${{ inputs.result-linuxserver }}
+        INPUT_RESULT_WINDOWS64:      ${{ inputs.result-windows64 }}
+        INPUT_RESULT_IOS:            ${{ inputs.result-ios }}
+        INPUT_RESULT_ADDRESSABLES:   ${{ inputs.result-addressables }}
+        INPUT_RESULT_TESTS:          ${{ inputs.result-tests }}
+        INPUT_THREAD_ID:             ${{ inputs.thread-id }}
+        INPUT_THREAD_NAME:           ${{ inputs.thread-name }}
+        INPUT_ARTIFACT_DIR:          ${{ inputs.artifact-dir }}
+        INPUT_THRESHOLD_MB:          ${{ inputs.attach-size-threshold-mb }}
       run: |
         # ── Secret protection — disable xtrace FIRST ─────────────────────────
         # Webhook URL must NEVER appear in any log. xtrace off before first use.
@@ -213,11 +243,17 @@ runs:
         # Mask the URL in ALL subsequent log output (belt-and-suspenders).
         echo "::add-mask::${DISCORD_WEBHOOK_URL}"
 
-        # ── Step 2: Validate threshold input ─────────────────────────────────
+        # ── Step 2: Validate threshold + extract run ID ───────────────────────
         THRESHOLD_MB="${INPUT_THRESHOLD_MB:-24}"
         if ! printf '%s' "${THRESHOLD_MB}" | grep -qE '^[0-9]+$'; then
           echo "::warning::Discord upload-build: invalid attach-size-threshold-mb '${THRESHOLD_MB}'; defaulting to 24."
           THRESHOLD_MB=24
+        fi
+
+        # Extract numeric run ID from run URL tail: .../runs/12345678
+        RUN_ID=""
+        if [ -n "${INPUT_RUN_URL:-}" ]; then
+          RUN_ID=$(printf '%s' "${INPUT_RUN_URL}" | grep -oE '[0-9]+$' || echo "")
         fi
 
         # ── Step 3: Build webhook URL — thread routing ────────────────────────
@@ -227,6 +263,21 @@ runs:
         WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
         if [ -n "${INPUT_THREAD_ID:-}" ]; then
           WEBHOOK_URL="${WEBHOOK_URL}?thread_id=${INPUT_THREAD_ID}"
+        fi
+
+        # ── Step 3b: Parse platform-diagnostics ──────────────────────────────
+        # Format: "Platform=errors,warnings,logsArtifactId" — one entry per line.
+        # Uses bash associative arrays (bash 4+, always available on ubuntu-latest).
+        declare -A _PLAT_ERR _PLAT_WARN _PLAT_LOGID
+        if [ -n "${INPUT_PLATFORM_DIAGNOSTICS:-}" ]; then
+          while IFS='=' read -r _dp _dv || [ -n "${_dp}" ]; do
+            # Trim surrounding whitespace from platform name
+            _dp="$(printf '%s' "${_dp}" | tr -d '[:space:]')"
+            [ -z "${_dp}" ] && continue
+            _PLAT_ERR["${_dp}"]="$(  printf '%s' "${_dv}" | cut -d',' -f1 | tr -d '[:space:]')"
+            _PLAT_WARN["${_dp}"]="$( printf '%s' "${_dv}" | cut -d',' -f2 | tr -d '[:space:]')"
+            _PLAT_LOGID["${_dp}"]="$(printf '%s' "${_dv}" | cut -d',' -f3 | tr -d '[:space:]')"
+          done <<< "${INPUT_PLATFORM_DIAGNOSTICS}"
         fi
 
         # ── Step 4: Artifact sizing + attach-vs-link decision ─────────────────
@@ -297,7 +348,7 @@ runs:
               fi
             fi
 
-            # Delivery suffix includes size when known: "6 MB (attached)" / "35 MB (linked)"
+            # Delivery: size + attach/link indicator
             if [ "${ATTACHED}" -eq 1 ]; then
               DELIVERY="${PLAT_SIZE_MB} MB (attached)"
             elif [ -n "${INPUT_RUN_URL:-}" ]; then
@@ -313,8 +364,27 @@ runs:
           fi
           # skipped / cancelled / blocked: DELIVERY stays empty → no suffix
 
+          # ── Diagnostic suffix (errors/warnings/artifact-log link) ─────────
+          # Appended for success/failure platforms that have a diagnostics entry.
+          DIAG_SUFFIX=""
+          _P_ERR="${_PLAT_ERR[${PLAT}]:-}"
+          _P_WARN="${_PLAT_WARN[${PLAT}]:-}"
+          _P_LOGID="${_PLAT_LOGID[${PLAT}]:-}"
+
+          if [ -n "${_P_ERR}" ] || [ -n "${_P_WARN}" ]; then
+            # Show both counters even when 0 — consistent across all platforms with diag data
+            DIAG_SUFFIX=" · ⚠️ ${_P_WARN:-0} · ❌ ${_P_ERR:-0}"
+            # Artifact log link: only when logsArtifactId + run-id + repository are available
+            if [ -n "${_P_LOGID}" ] && [ -n "${RUN_ID}" ] && [ -n "${INPUT_REPOSITORY:-}" ]; then
+              DIAG_SUFFIX="${DIAG_SUFFIX} · [📄 logs](https://github.com/${INPUT_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${_P_LOGID})"
+            fi
+          fi
+
+          # ── Assemble row ──────────────────────────────────────────────────
           if [ -n "${DELIVERY}" ]; then
-            PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\` — ${DELIVERY}"$'\n'
+            PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\` — ${DELIVERY}${DIAG_SUFFIX}"$'\n'
+          elif [ -n "${DIAG_SUFFIX}" ]; then
+            PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\`${DIAG_SUFFIX}"$'\n'
           else
             PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\`"$'\n'
           fi
@@ -354,6 +424,8 @@ runs:
         commit_message = os.environ.get('INPUT_COMMIT_MESSAGE', '')
         commit_author  = os.environ.get('INPUT_COMMIT_AUTHOR', '')
         build_duration = os.environ.get('INPUT_BUILD_DURATION', '')
+        total_errors   = os.environ.get('INPUT_TOTAL_ERRORS', '')
+        total_warnings = os.environ.get('INPUT_TOTAL_WARNINGS', '')
         thread_id      = os.environ.get('INPUT_THREAD_ID', '')
         thread_name    = os.environ.get('INPUT_THREAD_NAME', '')
         tests_result   = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
@@ -380,66 +452,85 @@ runs:
 
         short_sha    = commit_sha[:7] if commit_sha else ''
         status_emoji = emoji_map.get(status, '❓')
-        title = '{} Unity Build {} — {} / {}'.format(
-            status_emoji, status.capitalize(), environment, flow_type)
 
-        tests_emoji = emoji_map.get(tests_result, '❓')
+        # ── Title: "<emoji> Unity Build <STATUS> — <environment>" ─────────────
+        # flow-type moves to an inline field; commit moves to description.
+        title = '{} Unity Build {} — {}'.format(
+            status_emoji, status.capitalize(), environment)
 
-        # ── Inline fields (omit when value is empty) ──────────────────────────
-        fields = []
-        if branch:
-            b = branch[:50] + ('...' if len(branch) > 50 else '')
-            fields.append({'name': 'Branch',       'value': b,            'inline': True})
-        fields.append(    {'name': 'Environment',  'value': environment,   'inline': True})
-        fields.append(    {'name': 'Flow',         'value': flow_type,     'inline': True})
-        if unity_ver:
-            fields.append({'name': 'Unity',        'value': unity_ver,     'inline': True})
-        if actor:
-            fields.append({'name': 'Triggered by', 'value': actor,         'inline': True})
-        if event_name:
-            fields.append({'name': 'Event',        'value': event_name,    'inline': True})
-        if run_number:
-            fields.append({'name': 'Run',          'value': '#{}'.format(run_number), 'inline': True})
-        if repository:
-            fields.append({'name': 'Repository',   'value': repository,    'inline': True})
-        if build_duration:
-            fields.append({'name': 'Duration',     'value': build_duration,'inline': True})
-        fields.append({'name': 'Tests',
-                       'value': '{} {}'.format(tests_emoji, tests_result),
-                       'inline': True})
-
-        # ── Commit field (block): clickable SHA + message + author ────────────
+        # ── Description: commit line (sha link + message + author) ────────────
+        # Placed in embed.description for cleaner layout (not a field).
+        description = ''
         if short_sha:
             if repository:
-                sha_link = '[{}](https://github.com/{}/commit/{})'.format(
+                sha_link = '[`{}`](https://github.com/{}/commit/{})'.format(
                     short_sha, repository, commit_sha)
             else:
-                sha_link = short_sha
-            commit_parts = [sha_link]
+                sha_link = '`{}`'.format(short_sha)
+            desc_parts = [sha_link]
             if commit_message:
                 first_line = commit_message.split('\n')[0]
                 if len(first_line) > 120:
                     first_line = first_line[:120] + '…'
-                commit_parts.append(first_line)
+                desc_parts.append(first_line)
             if commit_author:
-                commit_parts.append('— {}'.format(commit_author))
-            fields.append({'name': 'Commit',
-                           'value': ' '.join(commit_parts),
-                           'inline': False})
+                desc_parts.append('— {}'.format(commit_author))
+            description = ' '.join(desc_parts)
 
-        # ── Platforms field (block) ───────────────────────────────────────────
+        tests_emoji = emoji_map.get(tests_result, '❓')
+
+        # ── Inline fields — grouped for 3-per-row Discord layout ─────────────
+        # Group 1: Branch | Flow | Run #
+        # Group 2: Triggered by | Event | Duration
+        # Group 3: Unity | Tests | Diagnostics
+        fields = []
+
+        # Group 1
+        if branch:
+            b = branch[:50] + ('...' if len(branch) > 50 else '')
+            fields.append({'name': 'Branch',       'value': b,            'inline': True})
+        fields.append(    {'name': 'Flow',          'value': flow_type,    'inline': True})
+        if run_number:
+            fields.append({'name': 'Run',           'value': '#{}'.format(run_number), 'inline': True})
+
+        # Group 2
+        if actor:
+            fields.append({'name': 'Triggered by',  'value': actor,        'inline': True})
+        if event_name:
+            fields.append({'name': 'Event',         'value': event_name,   'inline': True})
+        if build_duration:
+            fields.append({'name': 'Duration',      'value': build_duration,'inline': True})
+
+        # Group 3
+        if unity_ver:
+            fields.append({'name': 'Unity',         'value': unity_ver,    'inline': True})
+        fields.append({'name': 'Tests',
+                       'value': '{} {}'.format(tests_emoji, tests_result),
+                       'inline': True})
+        if total_errors != '' or total_warnings != '':
+            diag_val = '❌ {} errors · ⚠️ {} warnings'.format(
+                total_errors or '0', total_warnings or '0')
+            fields.append({'name': 'Diagnostics',   'value': diag_val,     'inline': True})
+
+        # ── Platforms block field ─────────────────────────────────────────────
         if platform_rows.strip():
             fields.append({'name': 'Platforms', 'value': platform_rows.strip(), 'inline': False})
 
+        # ── Assemble embed ────────────────────────────────────────────────────
         embed = {
             'title': title,
             'color': color_map.get(status, 9807270),
             'fields': fields,
         }
+        if description:
+            embed['description'] = description
         if run_url:
             embed['url'] = run_url
         if embed_timestamp:
             embed['timestamp'] = embed_timestamp
+        # Footer: repository name + native timestamp shown by Discord as "repo · N min ago"
+        if repository:
+            embed['footer'] = {'text': repository}
 
         payload = {'embeds': [embed]}
 

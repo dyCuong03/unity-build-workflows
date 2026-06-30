@@ -736,6 +736,55 @@ jobs:
           fi
           echo "build-duration=${BUILD_DURATION}" >> "$GITHUB_OUTPUT"
 
+      - name: Gather per-platform error/warning counts + log artifact ids
+        id: diag
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          DIAG=""
+          TOTAL_ERRORS=0
+          TOTAL_WARNINGS=0
+
+          # ── Build name→id map from artifacts API ──────────────────────────
+          ARTIFACT_MAP=$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            -q '.artifacts[]|"\(.name) \(.id)"' 2>/dev/null) || true
+
+          # ── Per-platform scan ─────────────────────────────────────────────
+          for P in Android WebGL Linux64 LinuxServer Windows64 iOS; do
+            LOG=$(find ./artifacts -path "*unity-build-${P}-logs*Editor.log" \
+              -print 2>/dev/null | head -1) || true
+
+            # Skip platforms with no log file — nothing to report
+            [ -z "${LOG}" ] && continue
+
+            errors=$(grep -cE '\): error |Aborting batchmode|BuildFailedException' \
+              "${LOG}" 2>/dev/null) || errors=0
+            warnings=$(grep -cE '\): warning ' \
+              "${LOG}" 2>/dev/null) || warnings=0
+
+            # Look up the logs artifact id from the map
+            logsid=$(printf '%s\n' "${ARTIFACT_MAP}" \
+              | grep "^unity-build-${P}-logs " \
+              | awk '{print $2}' | head -1) || logsid=""
+
+            DIAG="${DIAG}${P}=${errors},${warnings},${logsid}"$'\n'
+            TOTAL_ERRORS=$(( TOTAL_ERRORS + errors ))
+            TOTAL_WARNINGS=$(( TOTAL_WARNINGS + warnings ))
+          done
+
+          # ── Emit outputs ──────────────────────────────────────────────────
+          {
+            echo "platform-diagnostics<<EOF"
+            printf '%s' "${DIAG}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "total-errors=${TOTAL_ERRORS}"   >> "$GITHUB_OUTPUT"
+          echo "total-warnings=${TOTAL_WARNINGS}" >> "$GITHUB_OUTPUT"
+
       - name: Post build to Discord thread
         uses: ./.toolkit/.github/actions/discord-upload-build
         continue-on-error: true
@@ -767,3 +816,6 @@ jobs:
           commit-message:      ${{ steps.ctx.outputs.commit-message }}
           commit-author:       ${{ steps.ctx.outputs.commit-author }}
           build-duration:      ${{ steps.ctx.outputs.build-duration }}
+          platform-diagnostics: ${{ steps.diag.outputs.platform-diagnostics }}
+          total-errors:        ${{ steps.diag.outputs.total-errors }}
+          total-warnings:      ${{ steps.diag.outputs.total-warnings }}
