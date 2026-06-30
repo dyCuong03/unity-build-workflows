@@ -56,6 +56,7 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
 | `build-ios` | true \| false  (only manual platform==iOS; never automatic) |
 | `signing` | none \| android-release |
 | `platform-source` | default \| variable \| dispatch |
+| `gh-environment` | GitHub deployment environment: `development` \| `staging` \| `production` (push/manual); **empty** for all PR flows and `none`. PRs never target a GitHub environment, keeping production secrets/approvals off PRs. |
 
 ### Flow rules
 | Trigger | flow-type | env | tests | addr | platforms built | signing | platform-source |

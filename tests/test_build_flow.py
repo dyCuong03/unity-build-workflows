@@ -1106,3 +1106,40 @@ class TestRepoVarWhitespace:
         assert out["build-android"] == "true"
         assert out["build-webgl"] == "true"
         assert out["platform-source"] == "variable"
+
+
+# ── GitHub deployment environment (gh-environment) ──────────────────────────
+
+class TestGitHubEnvironment:
+    """gh-environment: empty for PR/none flows, the env for push/manual."""
+
+    def test_pr_develop_no_gh_environment(self):
+        out = parse_outputs(run_flow(
+            {"EVENT_NAME": "pull_request", "BASE_REF": "develop", "REF_NAME": "x"}).stdout)
+        assert out["gh-environment"] == "", "PRs must not target a GitHub environment"
+
+    def test_pr_release_no_production(self):
+        out = parse_outputs(run_flow(
+            {"EVENT_NAME": "pull_request", "BASE_REF": "release-2.0", "REF_NAME": "x"}).stdout)
+        assert out["gh-environment"] == "", "PR into release-* must NOT deploy to production"
+
+    def test_push_develop_development(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert out["gh-environment"] == "development"
+
+    def test_push_staging_staging(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "staging"}).stdout)
+        assert out["gh-environment"] == "staging"
+
+    def test_push_release_production(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "release-1.2"}).stdout)
+        assert out["gh-environment"] == "production"
+
+    def test_manual_uses_input_environment(self):
+        out = parse_outputs(run_flow(
+            {"EVENT_NAME": "workflow_dispatch", "IN_PLATFORM": "All", "IN_ENVIRONMENT": "staging"}).stdout)
+        assert out["gh-environment"] == "staging"
+
+    def test_no_match_branch_no_environment(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "main"}).stdout)
+        assert out["gh-environment"] == ""

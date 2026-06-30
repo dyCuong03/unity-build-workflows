@@ -383,6 +383,18 @@ if [[ "${run_tests}" == "false" ]]; then
     test_mode="None"
 fi
 
+# ---------------------------------------------------------------------------
+# GitHub deployment environment (distinct from the Unity build `environment`).
+# Only push and manual flows map to a real GitHub Environment / deployment.
+# Pull-request flows are validation-only and MUST NOT target a GitHub
+# environment (keeps production-scoped secrets/approvals away from PRs).
+# ---------------------------------------------------------------------------
+case "${flow_type}" in
+    pr-develop|pr-staging|pr-release|none) gh_environment="" ;;
+    *)                                     gh_environment="${environment}" ;;
+esac
+
+log_info "gh-environment=${gh_environment} (deployment target; empty = none)"
 log_info "flow-type=${flow_type} environment=${environment} run-tests=${run_tests} test-mode=${test_mode}"
 log_info "build-addressables=${build_addressables} signing=${signing}"
 log_info "platforms: android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} ios=${build_ios}"
@@ -393,6 +405,7 @@ log_info "platform-source=${platform_source}"
 # ---------------------------------------------------------------------------
 emit "flow-type"           "${flow_type}"
 emit "environment"         "${environment}"
+emit "gh-environment"      "${gh_environment}"
 emit "run-tests"           "${run_tests}"
 emit "test-mode"           "${test_mode}"
 emit "build-addressables"  "${build_addressables}"
