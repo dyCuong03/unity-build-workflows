@@ -22,6 +22,7 @@ is set, appends there too. Never prints secrets.
 | `IN_RUN_TESTS` | dispatch input `run-tests` (true/false) |
 | `IN_TEST_MODE` | dispatch input `test-mode` |
 | `IN_BUILD_ADDRESSABLES` | dispatch input `build-addressables` (true/false) |
+| `IN_ANDROID_EXPORT` | dispatch input `android-export` (apk \| aab; default: apk) |
 
 ### Repository Variable inputs (env, optional)
 | Env | GitHub Variable | Default |
@@ -55,6 +56,7 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
 | `build-linuxserver` | true \| false |
 | `build-windows64` | true \| false  (docker lane: Mono scripting backend only; IL2CPP requires self-hosted-windows) |
 | `build-ios` | true \| false  (only manual platform==iOS; never automatic) |
+| `android-export-type` | `apk` \| `aab` — `push-release` always emits `aab`; `workflow_dispatch` uses `IN_ANDROID_EXPORT` (default `apk`); all other flows emit `apk` |
 | `signing` | none \| android-release |
 | `platform-source` | default \| variable \| dispatch |
 | `gh-environment` | GitHub deployment environment: `development` \| `staging` \| `production` (push/manual); **empty** for all PR flows and `none`. PRs never target a GitHub environment, keeping production secrets/approvals off PRs. |

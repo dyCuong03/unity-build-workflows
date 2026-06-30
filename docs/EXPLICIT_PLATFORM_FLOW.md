@@ -74,6 +74,7 @@ with the `gh` CLI.
 | `environment` | choice | `production` | `production`, `staging`, `development` | Build environment profile passed to Unity. |
 | `activation-strategy` | choice | `auto` | `auto`, `manual-license`, `account`, `preactivated`, `none` | Unity license strategy for the Docker lane. See [Section 4](#4-unity-personal--free-activation). Ignored for self-hosted lanes (Unity is pre-activated on the runner). |
 | `runner-mode` | choice | `docker` | `docker`, `self-hosted-windows`, `auto` | Execution lane. Controls which runner type and Docker usage. See [Section 3](#3-runner-modes). |
+| `android-export` | string | `apk` | `apk`, `aab` | Android output format. `apk` = installable debug/release APK. `aab` = Play Store App Bundle. On `push → release-*` (branch flow) the pipeline automatically overrides this to `aab` regardless of the dispatch input — APKs are never uploaded to the Play Store. |
 | `unity-version` | string | *(empty)* | Any version string, e.g. `6000.0.26f1` | Override the Unity version. **Leave blank in production** — the version is read from `ProjectSettings/ProjectVersion.txt` (SSOT). Providing a value that mismatches the file causes `resolve-config` to fail. |
 
 ### Quick CLI examples
@@ -251,7 +252,7 @@ All artifacts are retained for **14 days** (configurable via `artifact-retention
 
 | Artifact name | Contents | Produced by |
 |---|---|---|
-| `unity-build-Android` | APK / AAB (`build/` directory) | `build-android` |
+| `unity-build-Android` | APK (`.apk`) or AAB (`.aab`) depending on `android-export` input; `push → release-*` always produces AAB | `build-android` |
 | `unity-build-WebGL` | WebGL bundle (`build/` directory) | `build-webgl` |
 | `unity-build-Linux64` | Linux binary (`build/` directory) | `build-linux64` |
 | `unity-build-LinuxServer` | Server binary (`build/` directory) | `build-linuxserver` |

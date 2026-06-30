@@ -220,6 +220,14 @@ gh workflow run unity-build.yml \
   -f test-mode=EditMode \
   -f build-addressables=true \
   -f clean-build=false
+
+# Build an Android App Bundle (AAB) for Play Store submission
+gh workflow run unity-build.yml \
+  --repo dyCuong03/NDC-Unity-Template \
+  --ref main \
+  -f platform=Android \
+  -f environment=production \
+  -f android-export=aab
 ```
 
 ### Per-platform job names in the UI
