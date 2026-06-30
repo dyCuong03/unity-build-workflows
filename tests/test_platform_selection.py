@@ -1,12 +1,17 @@
 """
 test_platform_selection.py
 ==========================
-Validates the `if:` selection logic in the consumer Unity build workflow
-(.github/workflows/unity-build.yml) without running GitHub Actions.
+Validates the `if:` selection logic in the Unity pipeline workflow
+(.github/workflows/unity-pipeline.yml) without running GitHub Actions.
+
+The pipeline workflow is the reusable toolkit-local orchestration file that
+contains the full job graph (resolve-config → validate → tests → builds →
+final-report → notify-discord).  The thin consumer (unity-build.yml) just
+calls it via workflow_call.
 
 Strategy
 --------
-1. Parse the consumer YAML to extract each job's `if:` expression.
+1. Parse unity-pipeline.yml to extract each job's `if:` expression.
 2. Evaluate those expressions with mock inputs/needs via a tiny GHA-subset
    evaluator that handles the exact operators used in the workflow.
 3. Assert the rules from EXPLICIT_PLATFORM_FLOW_SPEC.md §6 + §3.3 and
@@ -14,15 +19,12 @@ Strategy
 
 Gating-form tolerance
 ---------------------
-The consumer workflow is being migrated from `inputs.platform`-based gating
-to `needs.resolve-config.outputs.build-<platform>`-based gating.  Both forms
-are supported transparently:
+The pipeline gates on `needs.resolve-config.outputs.build-<platform>` (new
+form).  `_ctx()` injects both input and outputs-based context so the evaluator
+is tolerant of any future migration:
 
   Legacy:  inputs.platform == 'All' || inputs.platform == 'Android'
   New:     needs.resolve-config.outputs.build-android == 'true'
-
-The evaluator handles both, and `_ctx()` injects both into the mock context so
-tests pass regardless of which form the consumer currently uses.
 
 Covered rules
 -------------
@@ -37,9 +39,11 @@ R8  run-tests=true        → unity-tests if: True (runs)
 R9  build-addressables=false → build-addressables if: False;
                                platform builds still True (accept 'skipped')
 R10 UNITY_LICENSE declared optional (required: false) in all reusable workflows
-R11 No UNITY_SERIAL anywhere in consumer or reusable-build-platform.yml
+R11 No UNITY_SERIAL anywhere in unity-pipeline.yml or reusable-build-platform.yml
 R12 final-report if: always() evaluates True regardless of context
 R13 validate-project failure → all platform build if: False
+R14 notify-discord job exists with if: always()
+R15 unity-pipeline.yml on: declares workflow_call (it is a reusable workflow)
 """
 
 import re
@@ -55,7 +59,7 @@ import yaml
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent          # …/unity-build-workflows/
-CONSUMER_WF = REPO_ROOT.parent / ".github" / "workflows" / "unity-build.yml"
+PIPELINE_WF = REPO_ROOT / ".github" / "workflows" / "unity-pipeline.yml"
 REUSABLE_BUILD = REPO_ROOT / ".github" / "workflows" / "reusable-build-platform.yml"
 REUSABLE_TESTS = REPO_ROOT / ".github" / "workflows" / "reusable-unity-tests.yml"
 
@@ -65,13 +69,15 @@ REUSABLE_TESTS = REPO_ROOT / ".github" / "workflows" / "reusable-unity-tests.yml
 
 @pytest.fixture(scope="module")
 def consumer_workflow():
-    if not CONSUMER_WF.exists():
-        pytest.skip(
-            f"Consumer workflow not found — expected at {CONSUMER_WF}\n"
-            "Run this test from a checkout that includes both the toolkit repo "
-            "(unity-build-workflows/) and the consumer repo (.github/workflows/unity-build.yml)."
-        )
-    return yaml.safe_load(CONSUMER_WF.read_text())
+    """Load unity-pipeline.yml — the toolkit-local reusable pipeline workflow.
+
+    This file lives inside the toolkit repo itself (REPO_ROOT/.github/workflows/),
+    so it is always present in a checkout of unity-build-workflows/.
+    Skip gracefully if somehow absent (e.g. shallow clone without the workflows/ dir).
+    """
+    if not PIPELINE_WF.exists():
+        pytest.skip(f"Pipeline workflow not found: {PIPELINE_WF}")
+    return yaml.safe_load(PIPELINE_WF.read_text())
 
 
 @pytest.fixture(scope="module")
@@ -505,13 +511,13 @@ def test_r10_no_unity_license_required_true_in_new_reusables():
 # R11 – No UNITY_SERIAL anywhere
 # ---------------------------------------------------------------------------
 
-def test_r11_no_unity_serial_in_consumer_workflow():
-    """R11: UNITY_SERIAL must not appear in the consumer workflow."""
-    if not CONSUMER_WF.exists():
-        pytest.skip("Consumer workflow not found")
-    text = CONSUMER_WF.read_text()
+def test_r11_no_unity_serial_in_pipeline_workflow():
+    """R11: UNITY_SERIAL must not appear in unity-pipeline.yml."""
+    if not PIPELINE_WF.exists():
+        pytest.skip("Pipeline workflow not found")
+    text = PIPELINE_WF.read_text()
     assert "UNITY_SERIAL" not in text, (
-        "R11: UNITY_SERIAL found in consumer workflow — must not be used (Personal/free license)"
+        "R11: UNITY_SERIAL found in unity-pipeline.yml — must not be used (Personal/free license)"
     )
 
 
@@ -611,6 +617,7 @@ EXPECTED_JOBS = [
     "build-linuxserver",
     "build-ios",
     "final-report",
+    "notify-discord",
 ]
 
 
@@ -629,3 +636,81 @@ def test_job_if_expressions_are_parseable(job_ifs):
             eval_gha_expr(expr, ctx)
         except Exception as exc:
             pytest.fail(f"Failed to evaluate if: for job {job_id!r}: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# R14 – notify-discord always runs
+# ---------------------------------------------------------------------------
+
+def test_r14_notify_discord_job_exists(job_ifs):
+    """R14: notify-discord job is present in the pipeline workflow."""
+    assert "notify-discord" in job_ifs, (
+        "R14: notify-discord job not found in unity-pipeline.yml"
+    )
+
+
+def test_r14_notify_discord_if_is_always(job_ifs):
+    """R14: notify-discord if: is always() and evaluates True in any context."""
+    assert "notify-discord" in job_ifs, "notify-discord job not found"
+    raw = job_ifs["notify-discord"]
+    assert raw is not None, "notify-discord has no if: condition — should be always()"
+    assert "always()" in str(raw), (
+        f"R14: notify-discord if: expected 'always()', got: {raw!r}"
+    )
+    # Evaluate in a worst-case failed context — must still be True
+    worst = {
+        "inputs": {"platform": "Android", "run-tests": False},
+        "needs": {
+            "resolve-config":    {"result": "failure"},
+            "validate-project":  {"result": "failure"},
+            "build-addressables": {"result": "failure"},
+            "build-android":     {"result": "failure"},
+            "build-webgl":       {"result": "failure"},
+            "build-linux64":     {"result": "failure"},
+            "build-linuxserver": {"result": "failure"},
+            "build-ios":         {"result": "failure"},
+            "unity-tests":       {"result": "failure"},
+            "final-report":      {"result": "failure"},
+        },
+    }
+    assert eval_gha_expr(raw, worst), (
+        "R14: notify-discord if: must evaluate True even when all upstreams failed"
+    )
+
+
+# ---------------------------------------------------------------------------
+# R15 – unity-pipeline.yml is a reusable workflow (workflow_call trigger)
+# ---------------------------------------------------------------------------
+
+def test_r15_pipeline_declares_workflow_call(consumer_workflow):
+    """R15: unity-pipeline.yml on: block declares workflow_call trigger.
+
+    PyYAML parses the bare 'on:' key as the boolean True, so probe both.
+    """
+    on_block = consumer_workflow.get(True, consumer_workflow.get("on", {})) or {}
+    assert "workflow_call" in on_block, (
+        "R15: unity-pipeline.yml on: does not declare 'workflow_call' — "
+        "it must be a reusable workflow callable via uses:"
+    )
+
+
+def test_r15_workflow_call_has_inputs(consumer_workflow):
+    """R15: workflow_call block declares inputs (at minimum 'platform')."""
+    on_block = consumer_workflow.get(True, consumer_workflow.get("on", {})) or {}
+    wc = on_block.get("workflow_call", {}) or {}
+    inputs = wc.get("inputs", {})
+    assert "platform" in inputs, (
+        "R15: workflow_call.inputs must declare 'platform' pass-through"
+    )
+
+
+def test_r15_workflow_call_declares_unity_license_secret(consumer_workflow):
+    """R15: workflow_call.secrets declares UNITY_LICENSE as optional."""
+    secrets = _get_workflow_call_secrets(consumer_workflow)
+    assert "UNITY_LICENSE" in secrets, (
+        "R15: unity-pipeline.yml workflow_call.secrets must declare UNITY_LICENSE "
+        "(so callers can forward it)"
+    )
+    assert secrets["UNITY_LICENSE"].get("required") is False, (
+        "R15: UNITY_LICENSE must be required: false in unity-pipeline.yml workflow_call.secrets"
+    )

@@ -283,6 +283,7 @@ Current version: **2.2.0** — see [CHANGELOG.md](CHANGELOG.md).
 | [docs/DOCKER_BUILD.md](docs/DOCKER_BUILD.md) | Container flow, mounts, caches, licensing, debugging |
 | [docs/IMAGE_LIFECYCLE.md](docs/IMAGE_LIFECYCLE.md) | Base image, variants, bootstrap, scanning, SBOM, tagging, deprecation |
 | [docs/ADD_NEW_PROJECT.md](docs/ADD_NEW_PROJECT.md) | Step-by-step consumer onboarding guide |
+| **[docs/CONSUMER\_SETUP.md](docs/CONSUMER_SETUP.md)** | **New — drop-in pipeline setup for new projects (thin caller + secrets + environments)** |
 | [docs/BUILD_CONFIG.md](docs/BUILD_CONFIG.md) | Every BuildConfig field documented (including full iOS section) |
 | [docs/ANDROID.md](docs/ANDROID.md) | Android signing, AAB, symbol export via Docker, image bootstrap |
 | [docs/IOS.md](docs/IOS.md) | Full iOS pipeline: Unity → Xcode → archive → IPA → TestFlight |
@@ -380,6 +381,44 @@ update the config. Follow the step-by-step checklist in
 The Unity version single source of truth is the consumer's
 `ProjectSettings/ProjectVersion.txt`. The toolkit default is stored in
 `config/unity-build-defaults.json`.
+
+---
+
+## Use in Another Project (Quick Start)
+
+The fastest way to add this pipeline to a new Unity project:
+
+```bash
+# 1. Copy the caller workflow template
+mkdir -p .github/workflows
+curl -fsSL \
+  https://raw.githubusercontent.com/dyCuong03/unity-build-workflows/main/templates/consumer-unity-build.yml \
+  -o .github/workflows/unity-build.yml
+
+# 2. Set required secrets
+gh secret set UNITY_EMAIL    --repo YOUR_ORG/YOUR_REPO
+gh secret set UNITY_PASSWORD --repo YOUR_ORG/YOUR_REPO
+gh secret set UNITY_LICENSE  --repo YOUR_ORG/YOUR_REPO < Unity_lic.ulf
+
+# 3. Commit and push — CI is now live
+git add .github/workflows/unity-build.yml
+git commit -m "ci: add Unity build pipeline"
+git push
+```
+
+The caller workflow (`consumer-unity-build.yml`) uses a single
+`uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main`
+call with `secrets: inherit` — no per-secret wiring, no build scripts to copy.
+
+Automatic branch flows:
+- push → `develop` → builds Android + WebGL
+- push → `staging` → builds Android + WebGL + Linux64 + LinuxServer
+- push → `release-*` → full build + Addressables + Android release signing
+- PR → any of the above → tests only (no binary builds, no environment secrets exposed)
+
+For the complete setup guide including GitHub Environments, Addressables,
+Discord notifications, and Repository Variables, see
+**[docs/CONSUMER\_SETUP.md](docs/CONSUMER_SETUP.md)**.
 
 ---
 

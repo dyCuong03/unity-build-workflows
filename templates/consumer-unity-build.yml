@@ -1,0 +1,122 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# consumer-unity-build.yml — Thin caller template for unity-build-workflows
+#
+# Copy this file to .github/workflows/unity-build.yml in your project.
+# Pin @main to a released tag for stability (e.g. @v1.0.0) once a release
+# exists. Use @main for development. Do NOT invent tags that don't exist.
+#
+# Required secrets (set in Settings → Secrets and variables → Actions):
+#   UNITY_EMAIL      — Unity account email
+#   UNITY_PASSWORD   — Unity account password
+#   UNITY_LICENSE    — (optional but recommended) raw .ulf file contents
+#
+# Optional secrets:
+#   DISCORD_WEBHOOK_URL    — Discord channel webhook for build notifications
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS,
+#   ANDROID_KEY_PASS       — Android release signing (production only)
+#
+# See docs/CONSUMER_SETUP.md for the full onboarding walkthrough.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Unity Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: "Platform(s) to build"
+        required: false
+        default: All
+        type: choice
+        options: [All, Android, WebGL, Linux64, LinuxServer, iOS]
+
+      environment:
+        description: "Build environment"
+        required: false
+        default: production
+        type: choice
+        options: [development, staging, production]
+
+      run-tests:
+        description: "Run EditMode/PlayMode tests before building"
+        required: false
+        default: false
+        type: boolean
+
+      test-mode:
+        description: "Test suite (only when run-tests=true)"
+        required: false
+        default: All
+        type: choice
+        options: [EditMode, PlayMode, All]
+
+      build-addressables:
+        description: "Run Addressable build pipeline before platform builds"
+        required: false
+        default: false
+        type: boolean
+
+      activation-strategy:
+        description: "Unity license activation strategy (docker lane only)"
+        required: false
+        default: auto
+        type: choice
+        options: [auto, manual-license, account, serial, preactivated, none]
+
+      runner-mode:
+        description: "Execution lane"
+        required: false
+        default: docker
+        type: choice
+        options: [docker, self-hosted-windows, auto]
+
+      unity-version:
+        description: "Override Unity version (leave blank to read from ProjectVersion.txt)"
+        required: false
+        default: ''
+        type: string
+
+      clean-build:
+        description: "Force clean Library cache (slow — use sparingly)"
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    branches:
+      - develop
+      - staging
+      - 'release-*'
+
+  pull_request:
+    branches:
+      - develop
+      - staging
+      - 'release-*'
+
+# Cancel in-progress runs on the same branch when a new commit is pushed.
+# workflow_dispatch runs are not cancelled (each manual trigger is intentional).
+concurrency:
+  group: unity-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  pipeline:
+    name: Unity Pipeline
+    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main
+    secrets: inherit
+    with:
+      # ── Dispatch inputs (fall back to sensible defaults for push/PR events) ──
+      platform:             ${{ inputs.platform            || 'All' }}
+      environment:          ${{ inputs.environment         || 'production' }}
+      run-tests:            ${{ inputs.run-tests           || false }}
+      test-mode:            ${{ inputs.test-mode           || 'All' }}
+      build-addressables:   ${{ inputs.build-addressables  || false }}
+      activation-strategy:  ${{ inputs.activation-strategy || 'auto' }}
+      runner-mode:          ${{ inputs.runner-mode         || 'docker' }}
+      unity-version:        ${{ inputs.unity-version       || '' }}
+      clean-build:          ${{ inputs.clean-build         || false }}
+
+      # ── Fixed per-project values ───────────────────────────────────────────
+      project-path: '.'
+      toolkit-ref:  'main'   # pin to a released tag in production (e.g. 'v1.0.0')
