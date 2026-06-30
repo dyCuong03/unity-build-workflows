@@ -1,0 +1,428 @@
+name: Discord — Upload Build
+description: >
+  Posts a Discord embed summarising the Unity build run and attaches zipped
+  platform artifacts up to the configurable cumulative size threshold.
+  Oversized files are linked to the GitHub Actions run URL instead.
+  Reads DISCORD_WEBHOOK_URL from the environment — never from an action input.
+  No-ops gracefully when the variable is unset. Never fails the pipeline;
+  every error produces a ::warning:: annotation only.
+
+inputs:
+
+  # ── Run context ──────────────────────────────────────────────────────────────
+  status:
+    description: Overall build status — success | failure | cancelled | partial
+    required: true
+
+  flow-type:
+    description: Flow type from resolve-config (push-develop, push-release, manual, etc.)
+    required: false
+    default: unknown
+
+  environment:
+    description: Build environment (development | staging | production)
+    required: false
+    default: development
+
+  run-url:
+    description: Full GitHub Actions run URL (https://github.com/<repo>/actions/runs/<id>)
+    required: false
+    default: ''
+
+  commit-sha:
+    description: Full or short commit SHA — displayed as first 7 chars in the embed
+    required: false
+    default: ''
+
+  branch:
+    description: Branch name
+    required: false
+    default: ''
+
+  unity-version:
+    description: Unity version used for this build (e.g. 6000.0.26f1)
+    required: false
+    default: ''
+
+  # ── Per-platform results ──────────────────────────────────────────────────────
+  # All default to 'skipped' — caller only needs to pass platforms that ran.
+  result-android:
+    description: build-android result (success|failure|skipped|cancelled|blocked)
+    required: false
+    default: skipped
+
+  result-webgl:
+    description: build-webgl result
+    required: false
+    default: skipped
+
+  result-linux64:
+    description: build-linux64 result
+    required: false
+    default: skipped
+
+  result-linuxserver:
+    description: build-linuxserver result
+    required: false
+    default: skipped
+
+  result-ios:
+    description: build-ios result
+    required: false
+    default: skipped
+
+  result-addressables:
+    description: build-addressables result
+    required: false
+    default: skipped
+
+  result-tests:
+    description: unity-tests result
+    required: false
+    default: skipped
+
+  # ── Thread routing ─────────────────────────────────────────────────────────────
+  thread-id:
+    description: |
+      Discord thread ID (snowflake). Posts into an existing thread via
+      ?thread_id=<id> URL parameter. NOT a secret — pass from vars.DISCORD_THREAD_ID.
+      Takes precedence over thread-name when both are provided.
+    required: false
+    default: ''
+
+  thread-name:
+    description: |
+      Discord thread name. Used ONLY when thread-id is empty AND the webhook
+      targets a forum channel — Discord creates a new thread with this name.
+      Silently ignored by Discord on text/announcement channels.
+    required: false
+    default: ''
+
+  # ── File attachment ────────────────────────────────────────────────────────────
+  artifact-dir:
+    description: |
+      Local directory containing downloaded build artifacts.
+      Expected layout: <artifact-dir>/unity-build-<Platform>/ subdirs,
+      as produced by actions/download-artifact@v4 with merge-multiple: false.
+    required: false
+    default: './artifacts'
+
+  attach-size-threshold-mb:
+    description: |
+      Maximum CUMULATIVE size (MB) of zipped attachments before switching to
+      run-URL links. Checked per file in order (Android, WebGL, Linux64,
+      LinuxServer, iOS, Addressables): if adding a file would push the total
+      over this value, that file and all subsequent ones become links instead.
+      Default 24 — safely under the Discord 25 MB non-boosted server limit.
+    required: false
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+
+    - name: Post build summary + artifacts to Discord
+      shell: bash
+      env:
+        INPUT_STATUS:              ${{ inputs.status }}
+        INPUT_FLOW_TYPE:           ${{ inputs.flow-type }}
+        INPUT_ENVIRONMENT:         ${{ inputs.environment }}
+        INPUT_RUN_URL:             ${{ inputs.run-url }}
+        INPUT_COMMIT_SHA:          ${{ inputs.commit-sha }}
+        INPUT_BRANCH:              ${{ inputs.branch }}
+        INPUT_UNITY_VERSION:       ${{ inputs.unity-version }}
+        INPUT_RESULT_ANDROID:      ${{ inputs.result-android }}
+        INPUT_RESULT_WEBGL:        ${{ inputs.result-webgl }}
+        INPUT_RESULT_LINUX64:      ${{ inputs.result-linux64 }}
+        INPUT_RESULT_LINUXSERVER:  ${{ inputs.result-linuxserver }}
+        INPUT_RESULT_IOS:          ${{ inputs.result-ios }}
+        INPUT_RESULT_ADDRESSABLES: ${{ inputs.result-addressables }}
+        INPUT_RESULT_TESTS:        ${{ inputs.result-tests }}
+        INPUT_THREAD_ID:           ${{ inputs.thread-id }}
+        INPUT_THREAD_NAME:         ${{ inputs.thread-name }}
+        INPUT_ARTIFACT_DIR:        ${{ inputs.artifact-dir }}
+        INPUT_THRESHOLD_MB:        ${{ inputs.attach-size-threshold-mb }}
+      run: |
+        # ── Secret protection — disable xtrace FIRST ─────────────────────────
+        # Webhook URL must NEVER appear in any log. xtrace off before first use.
+        set +x
+        # Disable exit-on-error: this action must never fail the pipeline.
+        # Risky operations use || true; unexpected errors emit ::warning:: only.
+        set +e
+
+        # ── Step 1: Guard — webhook present? ─────────────────────────────────
+        if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+          echo "::notice::DISCORD_WEBHOOK_URL not set — Discord build delivery skipped."
+          exit 0
+        fi
+
+        # Mask the URL in ALL subsequent log output (belt-and-suspenders).
+        echo "::add-mask::${DISCORD_WEBHOOK_URL}"
+
+        # ── Step 2: Validate threshold input ─────────────────────────────────
+        THRESHOLD_MB="${INPUT_THRESHOLD_MB:-24}"
+        if ! printf '%s' "${THRESHOLD_MB}" | grep -qE '^[0-9]+$'; then
+          echo "::warning::Discord upload-build: invalid attach-size-threshold-mb '${THRESHOLD_MB}'; defaulting to 24."
+          THRESHOLD_MB=24
+        fi
+
+        # ── Step 3: Build webhook URL — thread routing ────────────────────────
+        # thread-id (existing thread): append ?thread_id= to URL
+        # thread-name (forum new thread): injected into JSON payload in Step 5
+        # neither: post to channel root
+        WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
+        if [ -n "${INPUT_THREAD_ID:-}" ]; then
+          WEBHOOK_URL="${WEBHOOK_URL}?thread_id=${INPUT_THREAD_ID}"
+        fi
+
+        # ── Step 4: Artifact sizing + attach-vs-link decision ─────────────────
+        #
+        # _should_attach ZIP_MB THRESHOLD_MB
+        #   Updates CUMULATIVE_MB and returns 0 (attach) when cumulative+zip <= threshold.
+        #   Returns 1 (link) without updating when over threshold.
+        #   Unit-testable: source this file, set CUMULATIVE_MB=0, call _should_attach directly.
+        CUMULATIVE_MB=0
+        _should_attach() {
+          local zip_mb="${1}" threshold="${2}"
+          if (( CUMULATIVE_MB + zip_mb <= threshold )); then
+            CUMULATIVE_MB=$(( CUMULATIVE_MB + zip_mb ))
+            return 0
+          fi
+          return 1
+        }
+
+        FILES_ATTACH_NAMES=()   # platform names for files to attach
+        FILES_ATTACH_PATHS=()   # corresponding temp zip paths
+        PLATFORM_ROWS=""        # markdown for the Platforms embed field
+
+        for PLAT_ENTRY in \
+            "Android:${INPUT_RESULT_ANDROID:-skipped}" \
+            "WebGL:${INPUT_RESULT_WEBGL:-skipped}" \
+            "Linux64:${INPUT_RESULT_LINUX64:-skipped}" \
+            "LinuxServer:${INPUT_RESULT_LINUXSERVER:-skipped}" \
+            "iOS:${INPUT_RESULT_IOS:-skipped}" \
+            "Addressables:${INPUT_RESULT_ADDRESSABLES:-skipped}"; do
+
+          PLAT="${PLAT_ENTRY%%:*}"
+          RESULT="${PLAT_ENTRY##*:}"
+
+          case "${RESULT}" in
+            success)   RE="✅" ;;
+            failure)   RE="❌" ;;
+            skipped)   RE="⏭️" ;;
+            cancelled) RE="🚫" ;;
+            blocked)   RE="⛔" ;;
+            *)         RE="❓" ;;
+          esac
+
+          DELIVERY="—"
+
+          if [ "${RESULT}" = "success" ]; then
+            ARTIFACT_SUBDIR="${INPUT_ARTIFACT_DIR:-./artifacts}/unity-build-${PLAT}"
+            ZIP_PATH="/tmp/unity-build-${PLAT}-$$.zip"
+            ATTACHED=0
+
+            if [ -d "${ARTIFACT_SUBDIR}" ]; then
+              zip -qr "${ZIP_PATH}" "${ARTIFACT_SUBDIR}" 2>/dev/null || true
+
+              if [ -f "${ZIP_PATH}" ]; then
+                ZIP_KB=$(du -k "${ZIP_PATH}" 2>/dev/null | awk '{print $1}' || echo "0")
+                ZIP_MB=$(( ${ZIP_KB:-0} / 1024 ))
+                # Sub-1MB files get ZIP_MB=0; treat as 1MB so they count against threshold
+                [ "${ZIP_MB}" -eq 0 ] && ZIP_MB=1
+
+                if _should_attach "${ZIP_MB}" "${THRESHOLD_MB}"; then
+                  FILES_ATTACH_NAMES+=("${PLAT}")
+                  FILES_ATTACH_PATHS+=("${ZIP_PATH}")
+                  ATTACHED=1
+                else
+                  rm -f "${ZIP_PATH}" 2>/dev/null || true
+                fi
+              fi
+            fi
+
+            if [ "${ATTACHED}" -eq 1 ]; then
+              DELIVERY="📎 attached"
+            elif [ -n "${INPUT_RUN_URL:-}" ]; then
+              DELIVERY="[⬇ download](${INPUT_RUN_URL}) *(GitHub login required)*"
+            else
+              DELIVERY="*(see run for artifact)*"
+            fi
+
+          elif [ "${RESULT}" = "failure" ]; then
+            if [ -n "${INPUT_RUN_URL:-}" ]; then
+              DELIVERY="[📄 logs](${INPUT_RUN_URL})"
+            fi
+          fi
+          # skipped / cancelled / blocked keep DELIVERY="—"
+
+          PLATFORM_ROWS="${PLATFORM_ROWS}${RE} **${PLAT}**: \`${RESULT}\` ${DELIVERY}"$'\n'
+        done
+
+        # ── Step 5: Build JSON payload via Python ─────────────────────────────
+        # Python written to a temp file via heredoc. YAML block scalar strips
+        # 8 leading spaces → Python receives col-0 top-level statements.
+        # Nested Python blocks (for/if) are at +4 spaces = 12 total in YAML → 4 in Python.
+        N_ATTACHMENTS="${#FILES_ATTACH_NAMES[@]}"
+        ATTACH_NAMES_PIPE=""
+        if [ "${N_ATTACHMENTS}" -gt 0 ]; then
+          ATTACH_NAMES_PIPE=$(printf '%s|' "${FILES_ATTACH_NAMES[@]}")
+          ATTACH_NAMES_PIPE="${ATTACH_NAMES_PIPE%|}"
+        fi
+
+        export PLATFORM_ROWS N_ATTACHMENTS ATTACH_NAMES_PIPE
+
+        PAYLOAD_PY="/tmp/discord_payload_$$.py"
+        cat > "${PAYLOAD_PY}" << 'DISCORD_PY'
+        import json, os, sys
+
+        status       = os.environ.get('INPUT_STATUS', 'unknown')
+        flow_type    = os.environ.get('INPUT_FLOW_TYPE', 'unknown')
+        environment  = os.environ.get('INPUT_ENVIRONMENT', 'development')
+        run_url      = os.environ.get('INPUT_RUN_URL', '')
+        commit_sha   = os.environ.get('INPUT_COMMIT_SHA', '')
+        branch       = os.environ.get('INPUT_BRANCH', '')
+        unity_ver    = os.environ.get('INPUT_UNITY_VERSION', '')
+        thread_id    = os.environ.get('INPUT_THREAD_ID', '')
+        thread_name  = os.environ.get('INPUT_THREAD_NAME', '')
+        tests_result = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
+        platform_rows= os.environ.get('PLATFORM_ROWS', '')
+        n_attach     = int(os.environ.get('N_ATTACHMENTS', '0'))
+        attach_pipe  = os.environ.get('ATTACH_NAMES_PIPE', '')
+        attach_names = [n for n in attach_pipe.split('|') if n] if attach_pipe else []
+
+        color_map = {
+            'success':   3066993,   # 0x2ECC71 green
+            'failure':   15158332,  # 0xE74C3C red
+            'partial':   15105570,  # 0xE67E22 orange
+            'cancelled': 9807270,   # 0x95A5A6 grey
+        }
+        emoji_map = {
+            'success':   '✅',
+            'failure':   '❌',
+            'cancelled': '\U0001f6ab',
+            'partial':   '⚠️',
+            'skipped':   '⏭️',
+            'blocked':   '⛔',
+        }
+
+        short_sha    = commit_sha[:7] if commit_sha else ''
+        status_emoji = emoji_map.get(status, '❓')
+        title = '{} Unity Build {} — {} / {}'.format(
+            status_emoji, status.capitalize(), environment, flow_type)
+
+        tests_emoji = emoji_map.get(tests_result, '❓')
+
+        fields = []
+        if branch:
+            b = branch[:50] + ('...' if len(branch) > 50 else '')
+            fields.append({'name': 'Branch',      'value': b,           'inline': True})
+        fields.append(    {'name': 'Environment', 'value': environment,  'inline': True})
+        fields.append(    {'name': 'Flow',        'value': flow_type,    'inline': True})
+        if unity_ver:
+            fields.append({'name': 'Unity',       'value': unity_ver,    'inline': True})
+        if short_sha:
+            fields.append({'name': 'Commit',      'value': short_sha,    'inline': True})
+        fields.append({'name': 'Tests',
+                       'value': '{} {}'.format(tests_emoji, tests_result),
+                       'inline': True})
+        if platform_rows.strip():
+            fields.append({'name': 'Platforms', 'value': platform_rows.strip(), 'inline': False})
+
+        embed = {
+            'title': title,
+            'color': color_map.get(status, 9807270),
+            'fields': fields,
+        }
+        if run_url:
+            embed['url'] = run_url
+
+        payload = {'embeds': [embed]}
+
+        # thread_name: inject only when thread_id absent (forum new-thread path)
+        if thread_name and not thread_id:
+            payload['thread_name'] = thread_name
+
+        # Attachment metadata matched to files[] multipart parts by index
+        for i, name in enumerate(attach_names):
+            payload.setdefault('attachments', []).append({
+                'id': i,
+                'filename': 'unity-build-{}.zip'.format(name),
+                'description': 'Unity {} build'.format(name),
+            })
+
+        print(json.dumps(payload))
+        DISCORD_PY
+
+        # Note: YAML block scalar strips the 8-space base indentation from all lines,
+        # so the Python code written to PAYLOAD_PY is at column-0 (valid Python).
+        PAYLOAD=$(python3 "${PAYLOAD_PY}" 2>/dev/null) || true
+        rm -f "${PAYLOAD_PY}" 2>/dev/null || true
+
+        # ── Step 6: Validate JSON ─────────────────────────────────────────────
+        if [ -z "${PAYLOAD:-}" ]; then
+          echo "::warning::Discord upload-build: payload builder returned empty — delivery skipped, pipeline unaffected."
+          rm -f /tmp/unity-build-*-$$.zip 2>/dev/null || true
+          exit 0
+        fi
+
+        if ! printf '%s' "${PAYLOAD}" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+          echo "::warning::Discord upload-build: payload JSON validation failed — delivery skipped, pipeline unaffected."
+          rm -f /tmp/unity-build-*-$$.zip 2>/dev/null || true
+          exit 0
+        fi
+
+        # ── Step 7: Send via curl ─────────────────────────────────────────────
+        _RESP_FILE=$(mktemp 2>/dev/null || echo "/tmp/discord_resp_$$")
+        _CODE_FILE=$(mktemp 2>/dev/null || echo "/tmp/discord_code_$$")
+        _ERR_FILE=$(mktemp  2>/dev/null || echo "/tmp/discord_err_$$")
+
+        if [ "${N_ATTACHMENTS}" -gt 0 ]; then
+          # Case A: Multipart form-data with file attachments.
+          # Do NOT set Content-Type — curl sets correct multipart boundary automatically.
+          CURL_CMD=(
+            curl
+            --silent --show-error
+            --max-time 30 --retry 2 --retry-delay 3
+            --output "${_RESP_FILE}"
+            --write-out "%{http_code}"
+            -F "payload_json=${PAYLOAD}"
+          )
+          for _idx in "${!FILES_ATTACH_PATHS[@]}"; do
+            CURL_CMD+=(-F "files[${_idx}]=@${FILES_ATTACH_PATHS[$_idx]}")
+          done
+          "${CURL_CMD[@]}" "${WEBHOOK_URL}" > "${_CODE_FILE}" 2>"${_ERR_FILE}" || true
+        else
+          # Case B: JSON-only embed (no files to attach).
+          printf '%s' "${PAYLOAD}" | \
+            curl \
+              --silent --show-error \
+              --max-time 30 --retry 2 --retry-delay 3 \
+              --output "${_RESP_FILE}" \
+              --write-out "%{http_code}" \
+              -H "Content-Type: application/json" \
+              --data-binary @- \
+              "${WEBHOOK_URL}" > "${_CODE_FILE}" 2>"${_ERR_FILE}" || true
+        fi
+
+        # ── Step 8: Log HTTP result (warning only — never fail) ───────────────
+        HTTP_CODE=$(cat "${_CODE_FILE}" 2>/dev/null || echo "000")
+
+        case "${HTTP_CODE}" in
+          2*)
+            echo "Discord build delivery sent (HTTP ${HTTP_CODE}, ${N_ATTACHMENTS} file(s) attached, ${CUMULATIVE_MB} MB total)."
+            ;;
+          000)
+            _ERR_MSG=$(head -1 "${_ERR_FILE}" 2>/dev/null || echo "unknown curl error")
+            echo "::warning::Discord upload-build: curl failed (${_ERR_MSG}) — pipeline unaffected."
+            ;;
+          429)
+            echo "::warning::Discord upload-build: HTTP 429 rate-limited — pipeline unaffected."
+            ;;
+          *)
+            echo "::warning::Discord upload-build: HTTP ${HTTP_CODE} — pipeline unaffected."
+            ;;
+        esac
+
+        # ── Step 9: Cleanup temp files ────────────────────────────────────────
+        rm -f /tmp/unity-build-*-$$.zip "${_RESP_FILE}" "${_CODE_FILE}" "${_ERR_FILE}" 2>/dev/null || true
