@@ -62,6 +62,7 @@ EXPECTED_KEYS = {
     "build-ios",
     "signing",
     "platform-source",
+    "android-export-type",
 }
 
 ALL_BUILD_PLATFORM_KEYS = [
@@ -185,6 +186,10 @@ class TestPRDevelop:
     def test_no_binary_builds(self):
         assert_all_builds_false(self.out, "F1 PR→develop")
 
+    def test_android_export_type_apk(self):
+        """PR → develop: android-export-type defaults to apk (not a release build)."""
+        assert self.out["android-export-type"] == "apk"
+
     def test_build_addressables_false(self):
         assert self.out["build-addressables"] == "false"
 
@@ -215,6 +220,10 @@ class TestPRStaging:
     def test_no_binary_builds(self):
         assert_all_builds_false(self.out, "F2 PR→staging")
 
+    def test_android_export_type_apk(self):
+        """PR → staging: android-export-type defaults to apk."""
+        assert self.out["android-export-type"] == "apk"
+
     def test_signing_none(self):
         assert self.out["signing"] == "none"
 
@@ -244,6 +253,10 @@ class TestPRRelease:
 
     def test_no_binary_builds(self):
         assert_all_builds_false(self.out, "F3 PR→release-1.2")
+
+    def test_android_export_type_apk(self):
+        """PR → release: no binary builds, still defaults to apk (not a release push)."""
+        assert self.out["android-export-type"] == "apk"
 
     def test_signing_none(self):
         assert self.out["signing"] == "none"
@@ -287,6 +300,10 @@ class TestPushDevelop:
     def test_build_windows64_false(self):
         """F4: push→develop does not build Windows64 (not in develop defaults)."""
         assert self.out["build-windows64"] == "false"
+
+    def test_android_export_type_apk(self):
+        """F4: push→develop produces APK (not a release build)."""
+        assert self.out["android-export-type"] == "apk"
 
     def test_build_addressables_false(self):
         assert self.out["build-addressables"] == "false"
@@ -336,6 +353,10 @@ class TestPushStaging:
     def test_build_windows64_true(self):
         """F5: push→staging includes Windows64 in default staging platforms."""
         assert self.out["build-windows64"] == "true"
+
+    def test_android_export_type_apk(self):
+        """F5: push→staging produces APK (not a release push)."""
+        assert self.out["android-export-type"] == "apk"
 
     def test_build_addressables_false(self):
         assert self.out["build-addressables"] == "false"
@@ -391,6 +412,10 @@ class TestPushReleaseDash:
         """F6: push→release-1.2 includes Windows64 in default release platforms."""
         assert self.out["build-windows64"] == "true"
 
+    def test_android_export_type_aab(self):
+        """F6: push→release produces AAB for Play Store delivery."""
+        assert self.out["android-export-type"] == "aab"
+
     def test_signing_android_release(self):
         assert self.out["signing"] == "android-release"
 
@@ -423,6 +448,10 @@ class TestPushReleaseSlash:
 
     def test_build_ios_false(self):
         assert self.out["build-ios"] == "false"
+
+    def test_android_export_type_aab(self):
+        """F7: push→release/1.2 (slash form) also produces AAB."""
+        assert self.out["android-export-type"] == "aab"
 
     def test_signing_android_release(self):
         assert self.out["signing"] == "android-release"
@@ -699,6 +728,62 @@ class TestDispatchWindows64:
 
     def test_platform_source_dispatch(self):
         assert self.out["platform-source"] == "dispatch"
+
+
+# ---------------------------------------------------------------------------
+# android-export-type dispatch variants
+# ---------------------------------------------------------------------------
+
+class TestAndroidExportType:
+    """Assert android-export-type for all dispatch / branch scenarios."""
+
+    def _dispatch(self, platform="Android", export=""):
+        env = {
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": platform,
+            "IN_ENVIRONMENT": "development",
+            "IN_RUN_TESTS": "false",
+            "IN_TEST_MODE": "All",
+            "IN_BUILD_ADDRESSABLES": "false",
+        }
+        if export:
+            env["IN_ANDROID_EXPORT"] = export
+        return run_flow(env)
+
+    def test_dispatch_export_aab(self):
+        """Dispatch with IN_ANDROID_EXPORT=aab → android-export-type=aab."""
+        r = self._dispatch(export="aab")
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["android-export-type"] == "aab"
+
+    def test_dispatch_export_apk_explicit(self):
+        """Dispatch with IN_ANDROID_EXPORT=apk → android-export-type=apk."""
+        r = self._dispatch(export="apk")
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["android-export-type"] == "apk"
+
+    def test_dispatch_export_unset_defaults_to_apk(self):
+        """Dispatch without IN_ANDROID_EXPORT → defaults to apk."""
+        r = self._dispatch()  # no export kwarg → IN_ANDROID_EXPORT absent
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["android-export-type"] == "apk"
+
+    def test_key_always_present(self):
+        """android-export-type key present in every flow."""
+        flows = [
+            {"EVENT_NAME": "push", "REF_NAME": "develop"},
+            {"EVENT_NAME": "push", "REF_NAME": "staging"},
+            {"EVENT_NAME": "push", "REF_NAME": "release-1.0"},
+            {"EVENT_NAME": "pull_request", "BASE_REF": "develop"},
+            {"EVENT_NAME": "pull_request", "BASE_REF": "release-2.0"},
+            {"EVENT_NAME": "push", "REF_NAME": "main"},
+        ]
+        for env in flows:
+            r = run_flow(env)
+            out = parse_outputs(r.stdout)
+            assert "android-export-type" in out, (
+                f"android-export-type missing for {env}"
+            )
 
 
 # ===========================================================================

@@ -188,6 +188,7 @@ build_windows64="false"
 build_ios="false"
 signing="none"
 platform_source="default"
+android_export_type="apk"   # apk | aab (Android output format)
 
 # ---------------------------------------------------------------------------
 # Default platform lists per branch (used when no repo variable is set)
@@ -332,6 +333,7 @@ case "${EVENT_NAME}" in
       resolve_branch_platforms "release"
       resolve_branch_optional "release"
       signing="android-release"
+      android_export_type="aab"   # release builds produce an App Bundle for the Play Store
     else
       log_warn "Push branch '${branch}' does not match develop/staging/release-*; flow=none"
     fi
@@ -344,6 +346,7 @@ case "${EVENT_NAME}" in
     test_mode="${IN_TEST_MODE}"
     build_addressables="${IN_BUILD_ADDRESSABLES}"
     platform_source="dispatch"
+    android_export_type="${IN_ANDROID_EXPORT:-apk}"
     log_info "workflow_dispatch: platform=${IN_PLATFORM} environment=${environment} run-tests=${run_tests}"
 
     # Platform selection — iOS is only ever built via explicit manual dispatch
@@ -421,4 +424,5 @@ emit "build-linuxserver"   "${build_linuxserver}"
 emit "build-windows64"     "${build_windows64}"
 emit "build-ios"           "${build_ios}"
 emit "signing"             "${signing}"
+emit "android-export-type" "${android_export_type}"
 emit "platform-source"     "${platform_source}"

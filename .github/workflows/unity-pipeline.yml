@@ -87,6 +87,12 @@ on:
         default: false
         type: boolean
 
+      android-export:
+        description: "Android output format: apk (installable) or aab (Play Store bundle)."
+        required: false
+        default: 'apk'
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: "Raw .ulf file contents. Optional — docker lane personal activation."
@@ -129,6 +135,16 @@ jobs:
       build-ios:          ${{ steps.flow.outputs.build-ios }}
       signing:            ${{ steps.flow.outputs.signing }}
       platform-source:    ${{ steps.flow.outputs.platform-source }}
+      # ── Project metadata (extract_project_metadata.sh) ─────────────────────
+      product-name:       ${{ steps.meta.outputs.product-name }}
+      app-version:        ${{ steps.meta.outputs.app-version }}
+      bundle-id:          ${{ steps.meta.outputs.bundle-id-android }}
+      scripting-backend:  ${{ steps.meta.outputs.scripting-backend }}
+      android-arch:       ${{ steps.meta.outputs.android-arch }}
+      orientation:        ${{ steps.meta.outputs.orientation }}
+      store-link:         ${{ steps.meta.outputs.store-link-android }}
+      android-export-type: ${{ steps.flow.outputs.android-export-type }}
+      define-symbols-count: ${{ steps.meta.outputs.define-symbols-count }}
     steps:
       - name: Checkout (shallow — only needs ProjectVersion.txt)
         uses: actions/checkout@v4
@@ -173,6 +189,16 @@ jobs:
           ref:        ${{ inputs.toolkit-ref }}
           path:       .toolkit
 
+      - name: Extract project metadata
+        id: meta
+        continue-on-error: true
+        shell: bash
+        env:
+          PROJECT_PATH: ${{ inputs.project-path }}
+        run: |
+          set +e
+          bash .toolkit/scripts/common/extract_project_metadata.sh || true
+
       - name: Resolve build flow
         id: flow
         shell: bash
@@ -185,6 +211,7 @@ jobs:
           IN_RUN_TESTS:          ${{ inputs.run-tests || '' }}
           IN_TEST_MODE:          ${{ inputs.test-mode || '' }}
           IN_BUILD_ADDRESSABLES: ${{ inputs.build-addressables || '' }}
+          IN_ANDROID_EXPORT:     ${{ inputs.android-export || '' }}
           # ── Repository Variables (optional platform/config overrides) ──────
           VAR_DEVELOP_BUILD_PLATFORMS:     ${{ vars.DEVELOP_BUILD_PLATFORMS || '' }}
           VAR_STAGING_BUILD_PLATFORMS:     ${{ vars.STAGING_BUILD_PLATFORMS || '' }}
@@ -313,6 +340,7 @@ jobs:
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
+      android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -771,7 +799,11 @@ jobs:
               | grep "^unity-build-${P}-logs " \
               | awk '{print $2}' | head -1) || logsid=""
 
-            DIAG="${DIAG}${P}=${errors},${warnings},${logsid}"$'\n'
+            binid=$(printf '%s\n' "${ARTIFACT_MAP}" \
+              | grep "^unity-build-${P} " \
+              | awk '{print $2}' | head -1) || binid=""
+
+            DIAG="${DIAG}${P}=${errors},${warnings},${logsid},${binid}"$'\n'
             TOTAL_ERRORS=$(( TOTAL_ERRORS + errors ))
             TOTAL_WARNINGS=$(( TOTAL_WARNINGS + warnings ))
           done
@@ -819,3 +851,12 @@ jobs:
           platform-diagnostics: ${{ steps.diag.outputs.platform-diagnostics }}
           total-errors:        ${{ steps.diag.outputs.total-errors }}
           total-warnings:      ${{ steps.diag.outputs.total-warnings }}
+          product-name:        ${{ needs.resolve-config.outputs.product-name }}
+          app-version:         ${{ needs.resolve-config.outputs.app-version }}
+          bundle-id:           ${{ needs.resolve-config.outputs.bundle-id }}
+          scripting-backend:   ${{ needs.resolve-config.outputs.scripting-backend }}
+          android-arch:        ${{ needs.resolve-config.outputs.android-arch }}
+          orientation:         ${{ needs.resolve-config.outputs.orientation }}
+          store-link:          ${{ needs.resolve-config.outputs.store-link }}
+          android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
+          define-symbols-count: ${{ needs.resolve-config.outputs.define-symbols-count }}

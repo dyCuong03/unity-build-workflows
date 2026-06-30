@@ -74,6 +74,12 @@ on:
         default: false
         type: boolean
 
+      android-export-type:
+        description: "Android output format: apk (APK, installable) | aab (Android App Bundle, for Play Store). Ignored for non-Android platforms."
+        required: false
+        default: 'apk'
+        type: string
+
       build-addressables:
         description: |
           Run Addressable build step before the platform binary build.
@@ -318,6 +324,9 @@ jobs:
           targetPlatform: ${{ steps.platform-map.outputs.target }}
           customParameters: ${{ steps.platform-map.outputs.params }}
           allowDirtyBuild: true
+          # Android only — APK (androidPackage) or App Bundle (androidAppBundle).
+          # game-ci ignores this for non-Android targets.
+          androidExportType: ${{ inputs.android-export-type == 'aab' && 'androidAppBundle' || 'androidPackage' }}
 
       # ── Step 9b: Build Addressables only (docker lane, platform=Addressables)
       - name: Build Addressables only (docker)

@@ -85,30 +85,83 @@ inputs:
     required: false
     default: ''
 
+  # ── Build metadata (shown in 🏗️ Build Info block field) ──────────────────────
+  product-name:
+    description: Product / game name
+    required: false
+    default: ''
+
+  app-version:
+    description: Application version string (e.g. 1.4.2)
+    required: false
+    default: ''
+
+  bundle-id:
+    description: Bundle / application ID (e.g. com.company.game)
+    required: false
+    default: ''
+
+  scripting-backend:
+    description: Unity scripting backend (IL2CPP, Mono)
+    required: false
+    default: ''
+
+  android-arch:
+    description: Android architecture (ARM64, ARMv7, x86_64, etc.)
+    required: false
+    default: ''
+
+  orientation:
+    description: Screen orientation (Portrait, Landscape, Auto, etc.)
+    required: false
+    default: ''
+
+  store-link:
+    description: Store URL — shown as a Google Play link in the Build Info field
+    required: false
+    default: ''
+
+  android-export-type:
+    description: |
+      Android export type — apk | aab.
+      Shown as "**Output:** APK" or "**Output:** AAB (App Bundle)" in Build Info.
+      Omitted when empty or unrecognised.
+    required: false
+    default: ''
+
+  define-symbols-count:
+    description: |
+      Number of scripting define symbols used in this build (integer string).
+      Shown as "**Defines:** N symbols" in Build Info when non-empty and > 0.
+    required: false
+    default: ''
+
   # ── Diagnostics ───────────────────────────────────────────────────────────────
   platform-diagnostics:
     description: |
       Newline-separated per-platform diagnostic summary.
-      Each line: Platform=errors,warnings,logsArtifactId
-      e.g.: "Android=0,5,1234567\nWebGL=2,12,1234568"
-      logsArtifactId may be empty (omit the logs link).
-      Platforms with no diagnostics line keep the simple row format.
+      Each line: Platform=errors,warnings,logsArtifactId,binaryArtifactId
+        errors          — compiler error count
+        warnings        — compiler warning count
+        logsArtifactId  — GitHub Actions artifact id for the build log zip
+        binaryArtifactId— GitHub Actions artifact id for the build binary zip
+      All four fields required; use empty string for absent values.
+      Example: "Android=0,5,1234567,1234568\nWebGL=2,12,1234569,"
     required: false
     default: ''
 
   total-errors:
     description: |
       Total compiler/build error count across all platforms (integer string).
-      Shown in the Diagnostics inline field. Omitted if both total-errors
-      and total-warnings are empty.
+      Shown in the Diagnostics inline field. Omitted if both this and
+      total-warnings are empty.
     required: false
     default: ''
 
   total-warnings:
     description: |
       Total compiler/build warning count across all platforms (integer string).
-      Shown in the Diagnostics inline field. Omitted if both total-errors
-      and total-warnings are empty.
+      Shown in the Diagnostics inline field.
     required: false
     default: ''
 
@@ -211,6 +264,15 @@ runs:
         INPUT_COMMIT_MESSAGE:        ${{ inputs.commit-message }}
         INPUT_COMMIT_AUTHOR:         ${{ inputs.commit-author }}
         INPUT_BUILD_DURATION:        ${{ inputs.build-duration }}
+        INPUT_PRODUCT_NAME:          ${{ inputs.product-name }}
+        INPUT_APP_VERSION:           ${{ inputs.app-version }}
+        INPUT_BUNDLE_ID:             ${{ inputs.bundle-id }}
+        INPUT_SCRIPTING_BACKEND:     ${{ inputs.scripting-backend }}
+        INPUT_ANDROID_ARCH:          ${{ inputs.android-arch }}
+        INPUT_ORIENTATION:           ${{ inputs.orientation }}
+        INPUT_STORE_LINK:            ${{ inputs.store-link }}
+        INPUT_ANDROID_EXPORT_TYPE:   ${{ inputs.android-export-type }}
+        INPUT_DEFINE_SYMBOLS_COUNT:  ${{ inputs.define-symbols-count }}
         INPUT_PLATFORM_DIAGNOSTICS:  ${{ inputs.platform-diagnostics }}
         INPUT_TOTAL_ERRORS:          ${{ inputs.total-errors }}
         INPUT_TOTAL_WARNINGS:        ${{ inputs.total-warnings }}
@@ -257,35 +319,33 @@ runs:
         fi
 
         # ── Step 3: Build webhook URL — thread routing ────────────────────────
-        # thread-id (existing thread): append ?thread_id= to URL
-        # thread-name (forum new thread): injected into JSON payload in Step 5
-        # neither: post to channel root
         WEBHOOK_URL="${DISCORD_WEBHOOK_URL}"
         if [ -n "${INPUT_THREAD_ID:-}" ]; then
           WEBHOOK_URL="${WEBHOOK_URL}?thread_id=${INPUT_THREAD_ID}"
         fi
 
         # ── Step 3b: Parse platform-diagnostics ──────────────────────────────
-        # Format: "Platform=errors,warnings,logsArtifactId" — one entry per line.
-        # Uses bash associative arrays (bash 4+, always available on ubuntu-latest).
-        declare -A _PLAT_ERR _PLAT_WARN _PLAT_LOGID
+        # Format: "Platform=errors,warnings,logsArtifactId,binaryArtifactId"
+        # Four comma-separated fields; trailing fields may be empty.
+        # Uses bash 4+ associative arrays (always available on ubuntu-latest).
+        declare -A _PLAT_ERR _PLAT_WARN _PLAT_LOGID _PLAT_BINID
         if [ -n "${INPUT_PLATFORM_DIAGNOSTICS:-}" ]; then
           while IFS='=' read -r _dp _dv || [ -n "${_dp}" ]; do
-            # Trim surrounding whitespace from platform name
             _dp="$(printf '%s' "${_dp}" | tr -d '[:space:]')"
             [ -z "${_dp}" ] && continue
             _PLAT_ERR["${_dp}"]="$(  printf '%s' "${_dv}" | cut -d',' -f1 | tr -d '[:space:]')"
             _PLAT_WARN["${_dp}"]="$( printf '%s' "${_dv}" | cut -d',' -f2 | tr -d '[:space:]')"
             _PLAT_LOGID["${_dp}"]="$(printf '%s' "${_dv}" | cut -d',' -f3 | tr -d '[:space:]')"
+            _PLAT_BINID["${_dp}"]="$(printf '%s' "${_dv}" | cut -d',' -f4 | tr -d '[:space:]')"
           done <<< "${INPUT_PLATFORM_DIAGNOSTICS}"
         fi
 
-        # ── Step 4: Artifact sizing + attach-vs-link decision ─────────────────
+        # ── Step 4: Artifact sizing + attach-vs-link + per-platform rows ──────
         #
         # _should_attach ZIP_MB THRESHOLD_MB
         #   Updates CUMULATIVE_MB and returns 0 (attach) when cumulative+zip <= threshold.
         #   Returns 1 (link) without updating when over threshold.
-        #   Unit-testable: source this file, set CUMULATIVE_MB=0, call _should_attach directly.
+        #   Unit-testable: source this file, set CUMULATIVE_MB=0, call directly.
         CUMULATIVE_MB=0
         _should_attach() {
           local zip_mb="${1}" threshold="${2}"
@@ -298,7 +358,7 @@ runs:
 
         FILES_ATTACH_NAMES=()   # platform names for files to attach
         FILES_ATTACH_PATHS=()   # corresponding temp zip paths
-        PLATFORM_ROWS=""        # markdown for the Platforms embed field
+        PLATFORM_ROWS=""        # markdown for the 📦 Platforms embed field
 
         for PLAT_ENTRY in \
             "Android:${INPUT_RESULT_ANDROID:-skipped}" \
@@ -321,8 +381,20 @@ runs:
             *)         RE="❓" ;;
           esac
 
-          DELIVERY=""     # empty = no suffix (skipped/cancelled/blocked)
-          PLAT_SIZE_MB=0  # artifact zip size in MB (0 = unknown/not built)
+          DELIVERY=""     # empty = no size/link suffix
+          PLAT_SIZE_MB=0  # artifact zip size in MB
+
+          # Read this platform's diagnostics (all 4 fields)
+          _P_ERR="${_PLAT_ERR[${PLAT}]:-}"
+          _P_WARN="${_PLAT_WARN[${PLAT}]:-}"
+          _P_LOGID="${_PLAT_LOGID[${PLAT}]:-}"
+          _P_BINID="${_PLAT_BINID[${PLAT}]:-}"
+
+          # Build binary artifact download URL (used below and in diag suffix)
+          BIN_URL=""
+          if [ -n "${_P_BINID}" ] && [ -n "${RUN_ID}" ] && [ -n "${INPUT_REPOSITORY:-}" ]; then
+            BIN_URL="https://github.com/${INPUT_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${_P_BINID}"
+          fi
 
           if [ "${RESULT}" = "success" ]; then
             ARTIFACT_SUBDIR="${INPUT_ARTIFACT_DIR:-./artifacts}/unity-build-${PLAT}"
@@ -331,13 +403,10 @@ runs:
 
             if [ -d "${ARTIFACT_SUBDIR}" ]; then
               zip -qr "${ZIP_PATH}" "${ARTIFACT_SUBDIR}" 2>/dev/null || true
-
               if [ -f "${ZIP_PATH}" ]; then
                 ZIP_KB=$(du -k "${ZIP_PATH}" 2>/dev/null | awk '{print $1}' || echo "0")
                 PLAT_SIZE_MB=$(( ${ZIP_KB:-0} / 1024 ))
-                # Sub-1MB files get PLAT_SIZE_MB=0; treat as 1MB so they count against threshold
                 [ "${PLAT_SIZE_MB}" -eq 0 ] && PLAT_SIZE_MB=1
-
                 if _should_attach "${PLAT_SIZE_MB}" "${THRESHOLD_MB}"; then
                   FILES_ATTACH_NAMES+=("${PLAT}")
                   FILES_ATTACH_PATHS+=("${ZIP_PATH}")
@@ -348,8 +417,11 @@ runs:
               fi
             fi
 
-            # Delivery: size + attach/link indicator
-            if [ "${ATTACHED}" -eq 1 ]; then
+            # Delivery: prefer explicit binary artifact download link over attached/linked
+            if [ -n "${BIN_URL}" ]; then
+              # binaryArtifactId available → direct download link (most useful)
+              DELIVERY="${PLAT_SIZE_MB} MB · [⬇️ download](${BIN_URL})"
+            elif [ "${ATTACHED}" -eq 1 ]; then
               DELIVERY="${PLAT_SIZE_MB} MB (attached)"
             elif [ -n "${INPUT_RUN_URL:-}" ]; then
               DELIVERY="${PLAT_SIZE_MB} MB ([linked](${INPUT_RUN_URL}))"
@@ -362,21 +434,16 @@ runs:
               DELIVERY="[📄 logs](${INPUT_RUN_URL})"
             fi
           fi
-          # skipped / cancelled / blocked: DELIVERY stays empty → no suffix
+          # skipped / cancelled / blocked: DELIVERY stays empty
 
-          # ── Diagnostic suffix (errors/warnings/artifact-log link) ─────────
-          # Appended for success/failure platforms that have a diagnostics entry.
+          # ── Diagnostic suffix: · ⚠️ N · ❌ N · [📄 logs](...) ─────────────
           DIAG_SUFFIX=""
-          _P_ERR="${_PLAT_ERR[${PLAT}]:-}"
-          _P_WARN="${_PLAT_WARN[${PLAT}]:-}"
-          _P_LOGID="${_PLAT_LOGID[${PLAT}]:-}"
-
           if [ -n "${_P_ERR}" ] || [ -n "${_P_WARN}" ]; then
-            # Show both counters even when 0 — consistent across all platforms with diag data
+            # Show both counters even at 0 — consistent for all diag-covered platforms
             DIAG_SUFFIX=" · ⚠️ ${_P_WARN:-0} · ❌ ${_P_ERR:-0}"
-            # Artifact log link: only when logsArtifactId + run-id + repository are available
             if [ -n "${_P_LOGID}" ] && [ -n "${RUN_ID}" ] && [ -n "${INPUT_REPOSITORY:-}" ]; then
-              DIAG_SUFFIX="${DIAG_SUFFIX} · [📄 logs](https://github.com/${INPUT_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${_P_LOGID})"
+              LOG_URL="https://github.com/${INPUT_REPOSITORY}/actions/runs/${RUN_ID}/artifacts/${_P_LOGID}"
+              DIAG_SUFFIX="${DIAG_SUFFIX} · [📄 logs](${LOG_URL})"
             fi
           fi
 
@@ -410,30 +477,39 @@ runs:
         cat > "${PAYLOAD_PY}" << 'DISCORD_PY'
         import json, os, sys
 
-        status         = os.environ.get('INPUT_STATUS', 'unknown')
-        flow_type      = os.environ.get('INPUT_FLOW_TYPE', 'unknown')
-        environment    = os.environ.get('INPUT_ENVIRONMENT', 'development')
-        run_url        = os.environ.get('INPUT_RUN_URL', '')
-        commit_sha     = os.environ.get('INPUT_COMMIT_SHA', '')
-        branch         = os.environ.get('INPUT_BRANCH', '')
-        unity_ver      = os.environ.get('INPUT_UNITY_VERSION', '')
-        actor          = os.environ.get('INPUT_ACTOR', '')
-        event_name     = os.environ.get('INPUT_EVENT', '')
-        run_number     = os.environ.get('INPUT_RUN_NUMBER', '')
-        repository     = os.environ.get('INPUT_REPOSITORY', '')
-        commit_message = os.environ.get('INPUT_COMMIT_MESSAGE', '')
-        commit_author  = os.environ.get('INPUT_COMMIT_AUTHOR', '')
-        build_duration = os.environ.get('INPUT_BUILD_DURATION', '')
-        total_errors   = os.environ.get('INPUT_TOTAL_ERRORS', '')
-        total_warnings = os.environ.get('INPUT_TOTAL_WARNINGS', '')
-        thread_id      = os.environ.get('INPUT_THREAD_ID', '')
-        thread_name    = os.environ.get('INPUT_THREAD_NAME', '')
-        tests_result   = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
-        platform_rows  = os.environ.get('PLATFORM_ROWS', '')
-        embed_timestamp= os.environ.get('EMBED_TIMESTAMP', '')
-        n_attach       = int(os.environ.get('N_ATTACHMENTS', '0'))
-        attach_pipe    = os.environ.get('ATTACH_NAMES_PIPE', '')
-        attach_names   = [n for n in attach_pipe.split('|') if n] if attach_pipe else []
+        status           = os.environ.get('INPUT_STATUS', 'unknown')
+        flow_type        = os.environ.get('INPUT_FLOW_TYPE', 'unknown')
+        environment      = os.environ.get('INPUT_ENVIRONMENT', 'development')
+        run_url          = os.environ.get('INPUT_RUN_URL', '')
+        commit_sha       = os.environ.get('INPUT_COMMIT_SHA', '')
+        branch           = os.environ.get('INPUT_BRANCH', '')
+        unity_ver        = os.environ.get('INPUT_UNITY_VERSION', '')
+        actor            = os.environ.get('INPUT_ACTOR', '')
+        event_name       = os.environ.get('INPUT_EVENT', '')
+        run_number       = os.environ.get('INPUT_RUN_NUMBER', '')
+        repository       = os.environ.get('INPUT_REPOSITORY', '')
+        commit_message   = os.environ.get('INPUT_COMMIT_MESSAGE', '')
+        commit_author    = os.environ.get('INPUT_COMMIT_AUTHOR', '')
+        build_duration   = os.environ.get('INPUT_BUILD_DURATION', '')
+        product_name     = os.environ.get('INPUT_PRODUCT_NAME', '')
+        app_version      = os.environ.get('INPUT_APP_VERSION', '')
+        bundle_id        = os.environ.get('INPUT_BUNDLE_ID', '')
+        scripting_backend= os.environ.get('INPUT_SCRIPTING_BACKEND', '')
+        android_arch     = os.environ.get('INPUT_ANDROID_ARCH', '')
+        orientation      = os.environ.get('INPUT_ORIENTATION', '')
+        store_link           = os.environ.get('INPUT_STORE_LINK', '')
+        android_export_type  = os.environ.get('INPUT_ANDROID_EXPORT_TYPE', '').strip().lower()
+        define_symbols_count = os.environ.get('INPUT_DEFINE_SYMBOLS_COUNT', '').strip()
+        total_errors     = os.environ.get('INPUT_TOTAL_ERRORS', '')
+        total_warnings   = os.environ.get('INPUT_TOTAL_WARNINGS', '')
+        thread_id        = os.environ.get('INPUT_THREAD_ID', '')
+        thread_name      = os.environ.get('INPUT_THREAD_NAME', '')
+        tests_result     = os.environ.get('INPUT_RESULT_TESTS', 'skipped')
+        platform_rows    = os.environ.get('PLATFORM_ROWS', '')
+        embed_timestamp  = os.environ.get('EMBED_TIMESTAMP', '')
+        n_attach         = int(os.environ.get('N_ATTACHMENTS', '0'))
+        attach_pipe      = os.environ.get('ATTACH_NAMES_PIPE', '')
+        attach_names     = [n for n in attach_pipe.split('|') if n] if attach_pipe else []
 
         color_map = {
             'success':   3066993,   # 0x2ECC71 green
@@ -454,12 +530,10 @@ runs:
         status_emoji = emoji_map.get(status, '❓')
 
         # ── Title: "<emoji> Unity Build <STATUS> — <environment>" ─────────────
-        # flow-type moves to an inline field; commit moves to description.
         title = '{} Unity Build {} — {}'.format(
             status_emoji, status.capitalize(), environment)
 
         # ── Description: commit line (sha link + message + author) ────────────
-        # Placed in embed.description for cleaner layout (not a field).
         description = ''
         if short_sha:
             if repository:
@@ -512,9 +586,54 @@ runs:
                 total_errors or '0', total_warnings or '0')
             fields.append({'name': 'Diagnostics',   'value': diag_val,     'inline': True})
 
-        # ── Platforms block field ─────────────────────────────────────────────
-        if platform_rows.strip():
-            fields.append({'name': 'Platforms', 'value': platform_rows.strip(), 'inline': False})
+        # ── 🏗️ Build Info block field ──────────────────────────────────────────
+        # Omit the entire field when none of the 7 build-metadata inputs are set.
+        # Omit individual lines when all values in that line are empty.
+        build_info_lines = []
+        # Line 1: Product • Version
+        line1 = []
+        if product_name: line1.append('**Product:** {}'.format(product_name))
+        if app_version:  line1.append('**Version:** {}'.format(app_version))
+        if line1:        build_info_lines.append('  •  '.join(line1))
+        # Line 2: Bundle ID
+        if bundle_id:    build_info_lines.append('**Bundle ID:** {}'.format(bundle_id))
+        # Line 3: Backend • Arch • Orientation • Output
+        line3 = []
+        if scripting_backend: line3.append('**Backend:** {}'.format(scripting_backend))
+        if android_arch:      line3.append('**Arch:** {}'.format(android_arch))
+        if orientation:       line3.append('**Orientation:** {}'.format(orientation))
+        if android_export_type == 'apk':
+            line3.append('**Output:** APK')
+        elif android_export_type == 'aab':
+            line3.append('**Output:** AAB (App Bundle)')
+        if line3:             build_info_lines.append('  •  '.join(line3))
+        # Line 4: Define symbols count (omit when empty or 0)
+        try:
+            _dsym = int(define_symbols_count)
+        except (ValueError, TypeError):
+            _dsym = 0
+        if _dsym > 0:
+            build_info_lines.append('**Defines:** {} symbols'.format(_dsym))
+        # Line 5: Store link
+        if store_link:   build_info_lines.append('**Store:** [Google Play]({})'.format(store_link))
+
+        if build_info_lines:
+            build_info_value = '\n'.join(build_info_lines)
+            # Truncate at Discord field value limit (1024 chars)
+            if len(build_info_value) > 1024:
+                build_info_value = build_info_value[:1023] + '…'
+            fields.append({'name': '\U0001f3d7️ Build Info',
+                           'value': build_info_value,
+                           'inline': False})
+
+        # ── 📦 Platforms block field ──────────────────────────────────────────
+        platforms_value = platform_rows.strip()
+        if platforms_value:
+            if len(platforms_value) > 1024:
+                platforms_value = platforms_value[:1023] + '…'
+            fields.append({'name': '\U0001f4e6 Platforms',
+                           'value': platforms_value,
+                           'inline': False})
 
         # ── Assemble embed ────────────────────────────────────────────────────
         embed = {
@@ -528,9 +647,27 @@ runs:
             embed['url'] = run_url
         if embed_timestamp:
             embed['timestamp'] = embed_timestamp
-        # Footer: repository name + native timestamp shown by Discord as "repo · N min ago"
+        # Footer: repository · timestamp (Discord renders them together)
         if repository:
             embed['footer'] = {'text': repository}
+
+        # ── Discord char-limit guard (total embed ≤ 6000) ────────────────────
+        # Trim the Platforms field if the embed is near the limit.
+        def _embed_chars(e):
+            chars = len(e.get('title', '')) + len(e.get('description', ''))
+            for f in e.get('fields', []):
+                chars += len(f.get('name', '')) + len(f.get('value', ''))
+            chars += len(e.get('footer', {}).get('text', ''))
+            return chars
+
+        EMBED_CHAR_LIMIT = 5800
+        if _embed_chars(embed) > EMBED_CHAR_LIMIT:
+            for f in embed['fields']:
+                if f['name'] == '\U0001f4e6 Platforms' and f['value']:
+                    excess = _embed_chars(embed) - EMBED_CHAR_LIMIT
+                    trimmed_len = max(100, len(f['value']) - excess - 1)
+                    f['value'] = f['value'][:trimmed_len] + '…'
+                    break
 
         payload = {'embeds': [embed]}
 

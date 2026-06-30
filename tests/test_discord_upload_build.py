@@ -130,6 +130,16 @@ class TestActionStructure:
             "platform-diagnostics",
             "total-errors",
             "total-warnings",
+            # Build info (project metadata)
+            "product-name",
+            "app-version",
+            "bundle-id",
+            "scripting-backend",
+            "android-arch",
+            "orientation",
+            "store-link",
+            "android-export-type",
+            "define-symbols-count",
         }
         missing = expected - declared
         assert not missing, f"A2: Missing inputs in action.yml: {missing}"
