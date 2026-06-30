@@ -7,6 +7,7 @@ Related docs:
 - [UNITY\_PERSONAL\_DOCKER\_LICENSE.md](UNITY_PERSONAL_DOCKER_LICENSE.md) — license setup and troubleshooting
 - [UNITY\_VERSION\_UPGRADE.md](UNITY_VERSION_UPGRADE.md) — upgrading Unity version
 - [EXPLICIT\_PLATFORM\_FLOW.md](EXPLICIT_PLATFORM_FLOW.md) — explicit-platform-jobs flow guide (inputs, activation, job graph)
+- [GITHUB\_ENVIRONMENTS.md](GITHUB_ENVIRONMENTS.md) — GitHub Environments, deployment protection rules, branch-flow mapping, stale deployment cleanup
 
 ---
 
@@ -466,6 +467,41 @@ listed in [Section 1](#1-required-secrets).
 
 See [IOS\_VERIFICATION.md](IOS_VERIFICATION.md) for the macOS runner verification
 runbook once a runner is available.
+
+---
+
+## 11. Environments & Deployments
+
+The pipeline creates GitHub Deployment records via the `final-report` job's
+`environment:` key. Only push and manual-dispatch runs create deployments —
+PR runs never do (the `gh-environment` output is empty for all PR flows).
+
+| Branch | GitHub Environment | Protection rules |
+|---|---|---|
+| push → `develop` | `development` | Branch: `develop` |
+| push → `staging` | `staging` | Branch: `staging` |
+| push → `release-*` | `production` | Branches: `release-*`, `main` — **add required reviewer** |
+| `workflow_dispatch` | Selected `environment` input | Per-environment rules apply |
+| PR (any target) | *(none)* | n/a |
+
+**Action required:** The `production` environment currently has **0 required
+reviewers**. Add at least one human approver in
+`Settings → Environments → production → Required reviewers` before your first
+release push.
+
+For the full guide — environment vs repository variables vs secrets, protection
+rule configuration steps, branch policy verification, and stale deployment
+cleanup — see [GITHUB\_ENVIRONMENTS.md](GITHUB_ENVIRONMENTS.md).
+
+```bash
+# Verify environments and branch policies
+gh api repos/dyCuong03/NDC-Unity-Template/environments \
+  --jq '.environments[] | {name: .name, protection_rules: .protection_rules}'
+
+# List recent deployments
+gh api 'repos/dyCuong03/NDC-Unity-Template/deployments?per_page=20' \
+  --jq '.[] | {id: .id, environment: .environment, ref: .ref, created_at: .created_at}'
+```
 
 ---
 
