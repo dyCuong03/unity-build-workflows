@@ -688,8 +688,19 @@ jobs:
           echo "overall=$overall" >> "$GITHUB_OUTPUT"
           echo "Overall Discord status: $overall"
 
+      # A local (./) composite action resolves from the runner workspace, which
+      # for a reusable workflow is the CALLER's repo — not this toolkit. So we
+      # check the toolkit out and reference the action from there.
+      - name: Checkout toolkit (for the Discord action)
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: ${{ inputs.toolkit-repo }}
+          ref: ${{ inputs.toolkit-ref }}
+          path: .toolkit
+
       - name: Post build to Discord thread
-        uses: ./.github/actions/discord-upload-build
+        uses: ./.toolkit/.github/actions/discord-upload-build
         continue-on-error: true
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
