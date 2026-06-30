@@ -140,6 +140,7 @@ jobs:
       # Run EditMode first; PlayMode step uses if:always() so it still runs if EditMode fails.
       - name: Run EditMode tests (Docker)
         if: ${{ inputs.runner-mode == 'docker' && (inputs.test-mode == 'EditMode' || inputs.test-mode == 'All') }}
+        continue-on-error: true   # job result is decided by parsed tests-failed, not the runner's exit code
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -161,6 +162,7 @@ jobs:
             inputs.runner-mode == 'docker' &&
             (inputs.test-mode == 'PlayMode' || inputs.test-mode == 'All')
           }}
+        continue-on-error: true   # no PlayMode tests => non-zero exit; not a real failure
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -226,7 +228,9 @@ jobs:
             }
           }
 
-          exit $exitCode
+          # Do not fail here; job result is decided by parsed tests-failed below.
+          Write-Host "Runner aggregate exit code (informational): $exitCode"
+          exit 0
 
       # ── 4d. Run tests — self-hosted-macOS lane ────────────────────────────────
       # Local Unity installation on macOS (no Docker, no license secrets).
@@ -272,7 +276,10 @@ jobs:
             run_unity_tests "PlayMode"
           fi
 
-          exit "${EXIT_CODE}"
+          # Do not fail here on a non-zero runner exit (e.g. a mode with no
+          # tests). The job result is decided by parsed tests-failed below.
+          echo "Runner aggregate exit code (informational): ${EXIT_CODE}"
+          exit 0
 
       # ── 5. Parse NUnit XML results ────────────────────────────────────────────
       # Sums passed/failed counts across all result XML files produced above.
@@ -313,6 +320,7 @@ jobs:
           with open(out_file, "a") as fh:
               fh.write(f"tests-passed={passed}\n")
               fh.write(f"tests-failed={failed}\n")
+              fh.write(f"results-found={'true' if xml_files else 'false'}\n")
 
           print(f"\nTotal — passed: {passed}, failed: {failed}")
 
@@ -333,11 +341,21 @@ jobs:
         if: always()
         shell: bash
         run: |
-          STATUS="${{ job.status }}"
-          if   [ "${STATUS}" = "success" ]; then RESULT="success"
-          elif [ "${STATUS}" = "failure" ]; then RESULT="failure"
-          else                                   RESULT="skipped"
+          # Decide the job result from the PARSED test outcome, not the runner's
+          # raw exit code (game-ci returns non-zero for a mode with no tests).
+          FAILED="${{ steps.parse-results.outputs.tests-failed }}"
+          FOUND="${{ steps.parse-results.outputs.results-found }}"
+          FAILED="${FAILED:-0}"
+          if [ "${FOUND}" != "true" ]; then
+            RESULT="failure"
+            echo "::error::No test result files were produced (runner/activation error)."
+          elif [ "${FAILED}" -gt 0 ]; then
+            RESULT="failure"
+            echo "::error::${FAILED} test(s) failed."
+          else
+            RESULT="success"
           fi
           echo "result=${RESULT}"               >> "$GITHUB_OUTPUT"
           echo "artifact-name=unity-tests-${{ inputs.test-mode }}" >> "$GITHUB_OUTPUT"
-          echo "Job result: ${RESULT}"
+          echo "Job result: ${RESULT} (failed=${FAILED}, results-found=${FOUND})"
+          [ "${RESULT}" = "success" ]
