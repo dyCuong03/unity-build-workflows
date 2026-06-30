@@ -64,15 +64,23 @@ curl -fsSL \
 ```
 
 The file is ready to use as-is. It calls
-`dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main`
+`dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@v1`
 with `secrets: inherit` — no per-secret wiring needed.
 
-**Optionally pin the toolkit ref for stability:**
+**Version pinning (recommended):**
 
-Open `.github/workflows/unity-build.yml` and change the two `@main` and
-`toolkit-ref: 'main'` occurrences to a released tag (e.g. `@v1.0.0` /
-`toolkit-ref: 'v1.0.0'`) once a release exists. Until then, `@main` is
-correct.
+| Ref | Use for | Behavior |
+|---|---|---|
+| `@v1` | **production (default)** | latest stable `v1.x`; receives backward-compatible fixes automatically |
+| `@v1.2.0` | locked / reproducible | exact release, never moves |
+| `@main` | development only | bleeding edge; may break |
+
+The template ships pinned to `@v1`. For fully reproducible builds, pin to an
+exact tag (e.g. `@v1.0.0`) and bump it deliberately. Available tags:
+`gh release list -R dyCuong03/unity-build-workflows` or
+`git ls-remote --tags https://github.com/dyCuong03/unity-build-workflows`.
+Set `toolkit-ref:` in the caller to the SAME ref so the toolkit scripts are
+checked out from the matching version.
 
 Commit and push the workflow file:
 

@@ -103,7 +103,11 @@ concurrency:
 jobs:
   pipeline:
     name: Unity Pipeline
-    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main
+    # Pin the toolkit version. Recommended:
+    #   @v1          — latest stable v1.x (gets backward-compatible fixes)   ← production default
+    #   @v1.2.0      — exact release (fully reproducible)
+    #   @main        — bleeding edge (development only; may break)
+    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@v1
     secrets: inherit
     with:
       # ── Dispatch inputs (fall back to sensible defaults for push/PR events) ──
@@ -119,4 +123,4 @@ jobs:
 
       # ── Fixed per-project values ───────────────────────────────────────────
       project-path: '.'
-      toolkit-ref:  'main'   # pin to a released tag in production (e.g. 'v1.0.0')
+      toolkit-ref:  'v1'   # MUST match the @ref above (use 'v1.2.0' for exact pin; 'main' for dev)

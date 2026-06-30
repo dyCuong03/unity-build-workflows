@@ -407,8 +407,12 @@ git push
 ```
 
 The caller workflow (`consumer-unity-build.yml`) uses a single
-`uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main`
+`uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@v1`
 call with `secrets: inherit` — no per-secret wiring, no build scripts to copy.
+
+**Pin the version**: `@v1` (latest stable, auto-fixes) or `@v1.2.0` (exact) for
+production; `@main` only for development. Keep `toolkit-ref:` set to the same
+ref. See [docs/CONSUMER_SETUP.md](docs/CONSUMER_SETUP.md).
 
 Automatic branch flows:
 - push → `develop` → builds Android + WebGL
