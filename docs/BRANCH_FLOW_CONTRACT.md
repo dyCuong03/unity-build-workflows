@@ -37,6 +37,9 @@ is set, appends there too. Never prints secrets.
 | `VAR_STAGING_BUILD_ADDRESSABLES` | `STAGING_BUILD_ADDRESSABLES` | `false` |
 | `VAR_RELEASE_BUILD_ADDRESSABLES` | `RELEASE_BUILD_ADDRESSABLES` | `true` |
 | `VAR_DEFAULT_RUNNER_MODE` | `DEFAULT_RUNNER_MODE` | `docker` |
+| `VAR_DEVELOP_DEFINE_SYMBOLS` | `DEVELOP_DEFINE_SYMBOLS` | *(empty)* |
+| `VAR_STAGING_DEFINE_SYMBOLS` | `STAGING_DEFINE_SYMBOLS` | *(empty)* |
+| `VAR_RELEASE_DEFINE_SYMBOLS` | `RELEASE_DEFINE_SYMBOLS` | *(empty)* |
 
 All repository variable inputs are optional. When unset, the hardcoded defaults
 apply. Invalid values cause the script to exit non-zero with a clear error message.
@@ -59,6 +62,7 @@ See [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md) for setup and examples.
 | `android-export-type` | `apk` \| `aab` — `push-release` always emits `aab`; `workflow_dispatch` uses `IN_ANDROID_EXPORT` (default `apk`); all other flows emit `apk` |
 | `signing` | none \| android-release |
 | `platform-source` | default \| variable \| dispatch |
+| `define-symbols` | Extra Scripting Define Symbols (`';'`-joined) from the branch's `*_DEFINE_SYMBOLS` variable, or `IN_DEFINE_SYMBOLS` for manual dispatch; **empty** when unset. Applied additively to `ProjectSettings.asset` before the build by `apply_define_symbols.sh`. |
 | `gh-environment` | GitHub deployment environment: `development` \| `staging` \| `production` (push/manual); **empty** for all PR flows and `none`. PRs never target a GitHub environment, keeping production secrets/approvals off PRs. |
 
 ### Flow rules

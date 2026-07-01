@@ -84,6 +84,7 @@ IN_ENVIRONMENT="${IN_ENVIRONMENT:-production}"
 IN_RUN_TESTS="${IN_RUN_TESTS:-false}"
 IN_TEST_MODE="${IN_TEST_MODE:-All}"
 IN_BUILD_ADDRESSABLES="${IN_BUILD_ADDRESSABLES:-false}"
+IN_DEFINE_SYMBOLS="${IN_DEFINE_SYMBOLS:-}"   # manual-dispatch extra define symbols (optional)
 
 # Repository variable inputs (optional, from GitHub vars.*)
 VAR_DEVELOP_BUILD_PLATFORMS="${VAR_DEVELOP_BUILD_PLATFORMS:-}"
@@ -96,6 +97,11 @@ VAR_DEVELOP_BUILD_ADDRESSABLES="${VAR_DEVELOP_BUILD_ADDRESSABLES:-}"
 VAR_STAGING_BUILD_ADDRESSABLES="${VAR_STAGING_BUILD_ADDRESSABLES:-}"
 VAR_RELEASE_BUILD_ADDRESSABLES="${VAR_RELEASE_BUILD_ADDRESSABLES:-}"
 VAR_DEFAULT_RUNNER_MODE="${VAR_DEFAULT_RUNNER_MODE:-}"
+# Per-branch extra Scripting Define Symbols (additive; ';' or ',' separated).
+# Applied to ProjectSettings.asset at build time by apply_define_symbols.sh.
+VAR_DEVELOP_DEFINE_SYMBOLS="${VAR_DEVELOP_DEFINE_SYMBOLS:-}"
+VAR_STAGING_DEFINE_SYMBOLS="${VAR_STAGING_DEFINE_SYMBOLS:-}"
+VAR_RELEASE_DEFINE_SYMBOLS="${VAR_RELEASE_DEFINE_SYMBOLS:-}"
 
 log_info "EVENT_NAME=${EVENT_NAME} REF_NAME=${REF_NAME} BASE_REF=${BASE_REF}"
 
@@ -189,6 +195,7 @@ build_ios="false"
 signing="none"
 platform_source="default"
 android_export_type="apk"   # apk | aab (Android output format)
+define_symbols=""           # extra Scripting Define Symbols (branch-scoped, additive)
 
 # ---------------------------------------------------------------------------
 # Default platform lists per branch (used when no repo variable is set)
@@ -285,6 +292,30 @@ resolve_branch_optional() {
 }
 
 # ---------------------------------------------------------------------------
+# resolve_branch_define_symbols BRANCH_TYPE
+#   Resolves extra Scripting Define Symbols from a per-branch repo variable.
+#   Additive: these are merged into the project's existing symbols at build
+#   time (see apply_define_symbols.sh). Only sets define_symbols if the repo
+#   variable is non-empty; otherwise leaves it as the default (empty).
+#   BRANCH_TYPE: develop | staging | release
+# ---------------------------------------------------------------------------
+resolve_branch_define_symbols() {
+    local branch_type="$1"
+    local var_value=""
+
+    case "${branch_type}" in
+        develop) var_value="${VAR_DEVELOP_DEFINE_SYMBOLS}" ;;
+        staging) var_value="${VAR_STAGING_DEFINE_SYMBOLS}" ;;
+        release) var_value="${VAR_RELEASE_DEFINE_SYMBOLS}" ;;
+    esac
+
+    if [[ -n "${var_value}" ]]; then
+        define_symbols="${var_value}"
+        log_info "define-symbols from repo variable VAR_${branch_type^^}_DEFINE_SYMBOLS='${var_value}'"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Flow resolution
 # ---------------------------------------------------------------------------
 case "${EVENT_NAME}" in
@@ -297,17 +328,20 @@ case "${EVENT_NAME}" in
       run_tests="true"; test_mode="All"
       # PR → develop: validation only, no binary builds
       resolve_branch_optional "develop"
+      resolve_branch_define_symbols "develop"
     elif _is_staging "${target}"; then
       flow_type="pr-staging"; environment="staging"
       run_tests="true"; test_mode="All"
       # PR → staging: validation only, no binary builds
       resolve_branch_optional "staging"
+      resolve_branch_define_symbols "staging"
     elif _is_release "${target}"; then
       flow_type="pr-release"; environment="production"
       run_tests="true"; test_mode="All"
       build_addressables="true"
       # PR → release-*: validation + addressables check, no binary builds
       resolve_branch_optional "release"
+      resolve_branch_define_symbols "release"
     else
       log_warn "PR target branch '${target}' does not match develop/staging/release-*; flow=none"
     fi
@@ -321,17 +355,20 @@ case "${EVENT_NAME}" in
       run_tests="true"; test_mode="All"
       resolve_branch_platforms "develop"
       resolve_branch_optional "develop"
+      resolve_branch_define_symbols "develop"
     elif _is_staging "${branch}"; then
       flow_type="push-staging"; environment="staging"
       run_tests="true"; test_mode="All"
       resolve_branch_platforms "staging"
       resolve_branch_optional "staging"
+      resolve_branch_define_symbols "staging"
     elif _is_release "${branch}"; then
       flow_type="push-release"; environment="production"
       run_tests="true"; test_mode="All"
       build_addressables="true"
       resolve_branch_platforms "release"
       resolve_branch_optional "release"
+      resolve_branch_define_symbols "release"
       signing="android-release"
       android_export_type="aab"   # release builds produce an App Bundle for the Play Store
     else
@@ -347,6 +384,7 @@ case "${EVENT_NAME}" in
     build_addressables="${IN_BUILD_ADDRESSABLES}"
     platform_source="dispatch"
     android_export_type="${IN_ANDROID_EXPORT:-apk}"
+    define_symbols="${IN_DEFINE_SYMBOLS}"
     log_info "workflow_dispatch: platform=${IN_PLATFORM} environment=${environment} run-tests=${run_tests}"
 
     # Platform selection — iOS is only ever built via explicit manual dispatch
@@ -407,11 +445,13 @@ log_info "flow-type=${flow_type} environment=${environment} run-tests=${run_test
 log_info "build-addressables=${build_addressables} signing=${signing}"
 log_info "platforms: android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} windows64=${build_windows64} ios=${build_ios}"
 log_info "platform-source=${platform_source}"
+log_info "define-symbols=${define_symbols:-<none>}"
 
 # ---------------------------------------------------------------------------
 # Emit all outputs
 # ---------------------------------------------------------------------------
 emit "flow-type"           "${flow_type}"
+emit "define-symbols"      "${define_symbols}"
 emit "environment"         "${environment}"
 emit "gh-environment"      "${gh_environment}"
 emit "run-tests"           "${run_tests}"

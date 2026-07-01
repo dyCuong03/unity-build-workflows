@@ -135,6 +135,7 @@ jobs:
       build-ios:          ${{ steps.flow.outputs.build-ios }}
       signing:            ${{ steps.flow.outputs.signing }}
       platform-source:    ${{ steps.flow.outputs.platform-source }}
+      define-symbols:     ${{ steps.flow.outputs.define-symbols }}
       # ── Project metadata (extract_project_metadata.sh) ─────────────────────
       product-name:       ${{ steps.meta.outputs.product-name }}
       app-version:        ${{ steps.meta.outputs.app-version }}
@@ -223,6 +224,9 @@ jobs:
           VAR_STAGING_BUILD_ADDRESSABLES: ${{ vars.STAGING_BUILD_ADDRESSABLES || '' }}
           VAR_RELEASE_BUILD_ADDRESSABLES: ${{ vars.RELEASE_BUILD_ADDRESSABLES || '' }}
           VAR_DEFAULT_RUNNER_MODE:        ${{ vars.DEFAULT_RUNNER_MODE || '' }}
+          VAR_DEVELOP_DEFINE_SYMBOLS:     ${{ vars.DEVELOP_DEFINE_SYMBOLS || '' }}
+          VAR_STAGING_DEFINE_SYMBOLS:     ${{ vars.STAGING_DEFINE_SYMBOLS || '' }}
+          VAR_RELEASE_DEFINE_SYMBOLS:     ${{ vars.RELEASE_DEFINE_SYMBOLS || '' }}
         run: |
           set -euo pipefail
           echo "Flow resolver: event=${EVENT_NAME} ref=${REF_NAME} base=${BASE_REF:-<none>}"
@@ -288,6 +292,7 @@ jobs:
       runner-mode:         ${{ inputs.runner-mode || 'docker' }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -314,6 +319,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -342,6 +348,7 @@ jobs:
       build-addressables:  false
       android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -369,6 +376,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -396,6 +404,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -423,6 +432,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -454,6 +464,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -484,6 +495,7 @@ jobs:
       clean-build:         ${{ inputs.clean-build || false }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets: inherit
 
   # ════════════════════════════════════════════════════════════════════════════

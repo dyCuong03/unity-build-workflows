@@ -1286,3 +1286,63 @@ class TestGitHubEnvironment:
     def test_no_match_branch_no_environment(self):
         out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "main"}).stdout)
         assert out["gh-environment"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Per-branch Scripting Define Symbols (VAR_*_DEFINE_SYMBOLS → define-symbols)
+# ---------------------------------------------------------------------------
+
+class TestDefineSymbols:
+    """define-symbols output resolved from per-branch repo variables."""
+
+    def test_key_always_emitted(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert "define-symbols" in out
+
+    def test_empty_when_no_variable(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert out["define-symbols"] == ""
+
+    def test_push_develop_variable(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "VAR_DEVELOP_DEFINE_SYMBOLS": "DEV;PROFILER",
+        }).stdout)
+        assert out["define-symbols"] == "DEV;PROFILER"
+
+    def test_push_staging_variable(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "VAR_STAGING_DEFINE_SYMBOLS": "STAGING",
+        }).stdout)
+        assert out["define-symbols"] == "STAGING"
+
+    def test_push_release_variable(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "release-1.2",
+            "VAR_RELEASE_DEFINE_SYMBOLS": "PRODUCTION;LIVE",
+        }).stdout)
+        assert out["define-symbols"] == "PRODUCTION;LIVE"
+
+    def test_branch_variables_are_isolated(self):
+        # develop var must NOT leak into a staging build
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "VAR_DEVELOP_DEFINE_SYMBOLS": "DEV_ONLY",
+        }).stdout)
+        assert out["define-symbols"] == ""
+
+    def test_pr_develop_variable_applies(self):
+        # PR validation compiles with the branch's symbols too
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "pull_request", "BASE_REF": "develop",
+            "VAR_DEVELOP_DEFINE_SYMBOLS": "DEV",
+        }).stdout)
+        assert out["define-symbols"] == "DEV"
+
+    def test_manual_dispatch_input_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "workflow_dispatch", "IN_PLATFORM": "Android",
+            "IN_ENVIRONMENT": "staging", "IN_DEFINE_SYMBOLS": "MANUAL_SYM",
+        }).stdout)
+        assert out["define-symbols"] == "MANUAL_SYM"

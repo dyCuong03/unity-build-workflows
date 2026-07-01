@@ -77,6 +77,33 @@ Values must be exactly `true` or `false`. Any other value causes the workflow to
 
 Values must be exactly `true` or `false`.
 
+### Scripting Define Symbols
+
+Per-branch extra Scripting Define Symbols, applied to `ProjectSettings.asset` at
+build time. **Additive** — the listed symbols are merged into every platform
+group; existing project symbols (e.g. `ODIN_INSPECTOR`, `DOTWEEN`) are preserved,
+and duplicates are de-duplicated. Empty (default) = no change.
+
+| Variable | Default | Applies to |
+|---|---|---|
+| `DEVELOP_DEFINE_SYMBOLS` | *(empty)* | `push/PR → develop` |
+| `STAGING_DEFINE_SYMBOLS` | *(empty)* | `push/PR → staging` |
+| `RELEASE_DEFINE_SYMBOLS` | *(empty)* | `push/PR → release-*` |
+
+Format: `';'` or `','` separated (whitespace around tokens is trimmed), e.g.
+`STAGING;PROFILER_ENABLED` or `PRODUCTION, LIVE_BACKEND`.
+
+```
+DEVELOP_DEFINE_SYMBOLS=DEVELOPMENT_BUILD;VERBOSE_LOGGING
+STAGING_DEFINE_SYMBOLS=STAGING;PROFILER_ENABLED
+RELEASE_DEFINE_SYMBOLS=PRODUCTION;LIVE_BACKEND
+```
+
+Applied for both push builds and PR validation (so tests/compilation see the same
+symbols). The symbols also feed the `define-symbols-count` shown in the Discord
+build embed. Manual `workflow_dispatch` runs ignore these variables (repo
+variables are branch-scoped); use them only for automatic push/PR flows.
+
 ### Runner mode
 
 | Variable | Default |

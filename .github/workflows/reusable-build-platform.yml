@@ -89,6 +89,17 @@ on:
         default: false
         type: boolean
 
+      define-symbols:
+        description: |
+          Extra Scripting Define Symbols to apply before the build (';' or ','
+          separated, e.g. "STAGING;PROFILER"). ADDITIVE — merged into every
+          platform group in ProjectSettings.asset (existing symbols preserved).
+          Empty (default) = no change. Resolved per-branch from Repository
+          Variables by resolve_build_flow.sh; see docs/BRANCH_FLOW_CONTRACT.md.
+        required: false
+        default: ''
+        type: string
+
       artifact-retention-days:
         description: Days to retain uploaded build artifacts.
         required: false
@@ -186,6 +197,51 @@ jobs:
         with:
           lfs: true
           submodules: recursive
+
+      # ── Step 3b: Apply per-branch Scripting Define Symbols ────────────────
+      # Additive merge of the resolved define-symbols into every platform group
+      # in ProjectSettings.asset BEFORE the build, so all lanes (docker /
+      # self-hosted) and the define-symbols-count metric stay consistent.
+      # Logic mirrors scripts/common/apply_define_symbols.sh (unit-tested).
+      - name: Apply define symbols
+        if: ${{ inputs.define-symbols != '' && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        env:
+          DEFINE_SYMBOLS: ${{ inputs.define-symbols }}
+          PROJECT_PATH:   ${{ inputs.project-path }}
+        run: |
+          set -euo pipefail
+          SYMS="$(printf '%s' "${DEFINE_SYMBOLS}" \
+            | tr ',' ';' | tr ';' '\n' \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d' \
+            | paste -sd ';' - )"
+          [ -z "${SYMS}" ] && { echo "No define symbols; skipping."; exit 0; }
+          PS="${PROJECT_PATH%/}/ProjectSettings/ProjectSettings.asset"
+          if [ ! -f "${PS}" ] || ! grep -q '^  scriptingDefineSymbols:' "${PS}"; then
+            echo "::warning:: scriptingDefineSymbols block not found in ${PS}; skipping."
+            exit 0
+          fi
+          echo "Applying define symbols (additive): ${SYMS}"
+          TMP="$(mktemp)"
+          awk -v add="${SYMS}" '
+            function merge(val,   n,parts,m,A,i,j,found,out,s) {
+              n=split(val,parts,";"); out=val; m=split(add,A,";")
+              for(i=1;i<=m;i++){ s=A[i]; if(s=="")continue; found=0
+                for(j=1;j<=n;j++){ if(parts[j]==s){found=1;break} }
+                if(!found){ out=(out=="")?s:out";"s } }
+              return out }
+            BEGIN{inblock=0}
+            { line=$0; sub(/\r$/,"",line)
+              if(line ~ /^  scriptingDefineSymbols:[[:space:]]*$/){ inblock=1; print line; next }
+              if(inblock==1){
+                if(line ~ /^    /){ idx=index(line,":")
+                  if(idx>0){ key=substr(line,1,idx); val=substr(line,idx+1); sub(/^[ \t]+/,"",val)
+                    nv=merge(val); if(nv=="") print key; else print key" "nv; next } }
+                else { inblock=0 } }
+              print line }
+          ' "${PS}" > "${TMP}"
+          mv "${TMP}" "${PS}"
+          echo "Done."
 
       # ── Step 4: Map platform → GameCI targetPlatform ──────────────────────
       # Mapping per spec §2.1 table:
