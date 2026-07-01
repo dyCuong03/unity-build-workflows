@@ -304,7 +304,6 @@ jobs:
       runner-mode:         ${{ inputs.runner-mode || 'docker' }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
-      define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
