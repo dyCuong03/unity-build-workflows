@@ -247,9 +247,12 @@ inputs:
       run-URL links. Checked per file in order (Android, WebGL, Linux64,
       LinuxServer, Windows64, iOS, Addressables): if adding a file would push
       the total over this value, that file and all subsequent ones become links.
-      Default 24 — safely under the Discord 25 MB non-boosted server limit.
+      Default 8 — the guaranteed Discord upload limit for a non-boosted (Level 0)
+      server. Higher values 413 unless the server has boost (Level 2 = 50 MB,
+      Level 3 = 100 MB). On a 413 the action auto-retries embed-only, so the
+      notification always lands regardless of this value.
     required: false
-    default: '24'
+    default: '8'
 
 runs:
   using: composite
@@ -315,10 +318,10 @@ runs:
         echo "::add-mask::${DISCORD_WEBHOOK_URL}"
 
         # ── Step 2: Validate threshold + extract run ID ───────────────────────
-        THRESHOLD_MB="${INPUT_THRESHOLD_MB:-24}"
+        THRESHOLD_MB="${INPUT_THRESHOLD_MB:-8}"
         if ! printf '%s' "${THRESHOLD_MB}" | grep -qE '^[0-9]+$'; then
-          echo "::warning::Discord upload-build: invalid attach-size-threshold-mb '${THRESHOLD_MB}'; defaulting to 24."
-          THRESHOLD_MB=24
+          echo "::warning::Discord upload-build: invalid attach-size-threshold-mb '${THRESHOLD_MB}'; defaulting to 8."
+          THRESHOLD_MB=8
         fi
 
         # Extract numeric run ID from run URL tail: .../runs/12345678
@@ -756,6 +759,29 @@ runs:
 
         # ── Step 8: Log HTTP result (warning only — never fail) ───────────────
         HTTP_CODE=$(cat "${_CODE_FILE}" 2>/dev/null || echo "000")
+
+        # ── Step 8a: Fallback — retry embed-only if attachments caused failure ─
+        # Discord returns 413 (Payload Too Large) when the multipart upload
+        # exceeds the server's boost-tier limit. The embed itself is tiny, so
+        # re-post it WITHOUT files (drop the attachments metadata) — the run URL
+        # and per-platform links in the embed still point at every artifact.
+        if [ "${N_ATTACHMENTS}" -gt 0 ] && ! printf '%s' "${HTTP_CODE}" | grep -qE '^2'; then
+          echo "::warning::Discord upload-build: HTTP ${HTTP_CODE} with ${N_ATTACHMENTS} attachment(s) (likely 413 payload-too-large); retrying embed-only."
+          PAYLOAD_NOATTACH=$(printf '%s' "${PAYLOAD}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('attachments', None); print(json.dumps(d))" 2>/dev/null \
+            || printf '%s' "${PAYLOAD}")
+          printf '%s' "${PAYLOAD_NOATTACH}" | \
+            curl \
+              --silent --show-error \
+              --max-time 30 --retry 2 --retry-delay 3 \
+              --output "${_RESP_FILE}" \
+              --write-out "%{http_code}" \
+              -H "Content-Type: application/json" \
+              --data-binary @- \
+              "${WEBHOOK_URL}" > "${_CODE_FILE}" 2>"${_ERR_FILE}" || true
+          HTTP_CODE=$(cat "${_CODE_FILE}" 2>/dev/null || echo "000")
+          N_ATTACHMENTS=0   # final delivery carried no files
+        fi
 
         case "${HTTP_CODE}" in
           2*)

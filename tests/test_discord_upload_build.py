@@ -369,12 +369,17 @@ class TestActionTextLevel:
             f"Found webhook-related inputs: {webhook_inputs}"
         )
 
-    def test_attach_size_threshold_default_is_24(self, action_yaml):
-        """attach-size-threshold-mb default is '24' (safe headroom below Discord 25MB)."""
+    def test_attach_size_threshold_default_is_8(self, action_yaml):
+        """attach-size-threshold-mb default is '8' (guaranteed Discord non-boosted upload limit)."""
         threshold = action_yaml["inputs"]["attach-size-threshold-mb"].get("default")
-        assert str(threshold) == "24", (
-            f"attach-size-threshold-mb default should be '24', got {threshold!r}"
+        assert str(threshold) == "8", (
+            f"attach-size-threshold-mb default should be '8', got {threshold!r}"
         )
+
+    def test_retries_embed_only_on_attachment_failure(self, run_script):
+        """On a non-2xx response with attachments, the action re-posts embed-only (413 fallback)."""
+        assert "retrying embed-only" in run_script, "missing 413 embed-only retry fallback"
+        assert "d.pop('attachments'" in run_script, "retry must strip attachments metadata"
 
     def test_all_result_inputs_default_to_skipped(self, action_yaml):
         """All result-* inputs default to 'skipped' (caller only passes active platforms)."""

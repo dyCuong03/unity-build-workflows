@@ -863,7 +863,7 @@ jobs:
           result-tests:        ${{ needs.unity-tests.result }}
           thread-id:           ${{ vars.DISCORD_THREAD_ID }}
           artifact-dir:        ./artifacts
-          attach-size-threshold-mb: '24'
+          attach-size-threshold-mb: '8'
           actor:               ${{ github.actor }}
           event:               ${{ github.event_name }}
           run-number:          ${{ github.run_number }}
