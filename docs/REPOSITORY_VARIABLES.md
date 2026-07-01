@@ -100,9 +100,10 @@ RELEASE_DEFINE_SYMBOLS=PRODUCTION;LIVE_BACKEND
 ```
 
 Applied for both push builds and PR validation (so tests/compilation see the same
-symbols). The symbols also feed the `define-symbols-count` shown in the Discord
-build embed. Manual `workflow_dispatch` runs ignore these variables (repo
-variables are branch-scoped); use them only for automatic push/PR flows.
+symbols). The symbols also feed the `define-symbols` / `define-symbols-count`
+shown in the Discord build embed. Manual `workflow_dispatch` runs ignore these
+variables (repo variables are branch-scoped) — for a manual build (including iOS,
+which is manual-only) pass the **`define-symbols`** dispatch input instead.
 
 ### Runner mode
 

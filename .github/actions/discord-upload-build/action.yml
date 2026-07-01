@@ -136,6 +136,14 @@ inputs:
     required: false
     default: ''
 
+  define-symbols:
+    description: |
+      Extra branch/dispatch Scripting Define Symbols applied at build time
+      (';'-separated). Shown as "**Extra defines:** A, B, ..." in Build Info
+      when non-empty. Distinct from define-symbols-count (the project total).
+    required: false
+    default: ''
+
   # ── Diagnostics ───────────────────────────────────────────────────────────────
   platform-diagnostics:
     description: |
@@ -273,6 +281,7 @@ runs:
         INPUT_STORE_LINK:            ${{ inputs.store-link }}
         INPUT_ANDROID_EXPORT_TYPE:   ${{ inputs.android-export-type }}
         INPUT_DEFINE_SYMBOLS_COUNT:  ${{ inputs.define-symbols-count }}
+        INPUT_DEFINE_SYMBOLS:        ${{ inputs.define-symbols }}
         INPUT_PLATFORM_DIAGNOSTICS:  ${{ inputs.platform-diagnostics }}
         INPUT_TOTAL_ERRORS:          ${{ inputs.total-errors }}
         INPUT_TOTAL_WARNINGS:        ${{ inputs.total-warnings }}
@@ -500,6 +509,7 @@ runs:
         store_link           = os.environ.get('INPUT_STORE_LINK', '')
         android_export_type  = os.environ.get('INPUT_ANDROID_EXPORT_TYPE', '').strip().lower()
         define_symbols_count = os.environ.get('INPUT_DEFINE_SYMBOLS_COUNT', '').strip()
+        define_symbols       = os.environ.get('INPUT_DEFINE_SYMBOLS', '').strip()
         total_errors     = os.environ.get('INPUT_TOTAL_ERRORS', '')
         total_warnings   = os.environ.get('INPUT_TOTAL_WARNINGS', '')
         thread_id        = os.environ.get('INPUT_THREAD_ID', '')
@@ -614,6 +624,13 @@ runs:
             _dsym = 0
         if _dsym > 0:
             build_info_lines.append('**Defines:** {} symbols'.format(_dsym))
+        # Line 4b: Extra (branch/dispatch) define symbols, actual values
+        if define_symbols:
+            _extra = ', '.join(
+                s.strip() for s in define_symbols.replace(',', ';').split(';') if s.strip()
+            )
+            if _extra:
+                build_info_lines.append('**Extra defines:** {}'.format(_extra))
         # Line 5: Store link
         if store_link:   build_info_lines.append('**Store:** [Google Play]({})'.format(store_link))
 

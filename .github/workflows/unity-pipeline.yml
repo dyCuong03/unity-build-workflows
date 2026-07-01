@@ -93,6 +93,17 @@ on:
         default: 'apk'
         type: string
 
+      define-symbols:
+        description: |
+          Manual-dispatch extra Scripting Define Symbols (';' or ',' separated),
+          applied additively at build time. For automatic push/PR builds the
+          symbols come from the per-branch *_DEFINE_SYMBOLS repository variables
+          instead; this input only applies to workflow_dispatch (e.g. iOS builds,
+          which are manual-only).
+        required: false
+        default: ''
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: "Raw .ulf file contents. Optional — docker lane personal activation."
@@ -213,6 +224,7 @@ jobs:
           IN_TEST_MODE:          ${{ inputs.test-mode || '' }}
           IN_BUILD_ADDRESSABLES: ${{ inputs.build-addressables || '' }}
           IN_ANDROID_EXPORT:     ${{ inputs.android-export || '' }}
+          IN_DEFINE_SYMBOLS:     ${{ inputs.define-symbols || '' }}
           # ── Repository Variables (optional platform/config overrides) ──────
           VAR_DEVELOP_BUILD_PLATFORMS:     ${{ vars.DEVELOP_BUILD_PLATFORMS || '' }}
           VAR_STAGING_BUILD_PLATFORMS:     ${{ vars.STAGING_BUILD_PLATFORMS || '' }}
@@ -872,3 +884,4 @@ jobs:
           store-link:          ${{ needs.resolve-config.outputs.store-link }}
           android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
           define-symbols-count: ${{ needs.resolve-config.outputs.define-symbols-count }}
+          define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
