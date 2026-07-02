@@ -44,6 +44,7 @@ fi
 # identical to "empty" for the resolver. Set them by hand only when non-empty.
 DEFAULTS=$(cat <<'TSV'
 BUILD_DEVELOP_PLATFORMS	Android,WebGL
+_UNITY_VERSION_PLACEHOLDER_
 BUILD_STAGING_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
 BUILD_RELEASE_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
 BUILD_TIMEOUT_MINUTES	120
@@ -69,6 +70,15 @@ ARTIFACT_RETENTION_DAYS	30
 ARTIFACT_COMPRESSION	zip
 TSV
 )
+
+# UNITY_VERSION default is the project's editor version (SSOT: ProjectVersion.txt),
+# not a hardcoded constant. Substitute the placeholder, or drop it if not found.
+_uv="$(grep '^m_EditorVersion:' ProjectSettings/ProjectVersion.txt 2>/dev/null | awk '{print $2}' || true)"
+if [ -n "${_uv}" ]; then
+  DEFAULTS="${DEFAULTS/_UNITY_VERSION_PLACEHOLDER_/UNITY_VERSION	${_uv}}"
+else
+  DEFAULTS="$(printf '%s\n' "${DEFAULTS}" | grep -v '_UNITY_VERSION_PLACEHOLDER_')"
+fi
 
 # Existing variable names (one per line).
 existing="$(gh variable list "${REPO_FLAG[@]}" --json name --jq '.[].name' 2>/dev/null || true)"

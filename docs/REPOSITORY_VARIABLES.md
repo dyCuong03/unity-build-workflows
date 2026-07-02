@@ -38,9 +38,11 @@ same layered priority, highest first:
    `DEVELOP_BUILD_PLATFORMS`), if set to a non-empty value. Used only when the
    new variable is unset, so existing repos keep working unchanged. The
    resolver logs a deprecation note naming the new variable to migrate to.
-4. **`ProjectVersion.txt`** — Unity-version only. The Unity editor version is
-   read directly from the project's `ProjectSettings/ProjectVersion.txt` (its
-   single source of truth); there is no Unity-version repository variable.
+4. **`ProjectVersion.txt`** — Unity editor version only, and its single source
+   of truth. The version is read directly from
+   `ProjectSettings/ProjectVersion.txt`. A `UNITY_VERSION` variable (or the
+   `unity-version` dispatch input) may pin it, but is validated against this
+   file and cannot override it — a mismatch fails the build.
 5. **Toolkit default** — the hardcoded fallback baked into the resolver,
    documented in the "Default" column of each table below.
 
@@ -53,14 +55,15 @@ an unconfigured repo behaves exactly as it did before this refactor.
 
 | Variable | Default | Applies to | Notes |
 |---|---|---|---|
+| `UNITY_VERSION` | *(read from `ProjectVersion.txt`)* | all flows | **Validated pin**, not an override. If set, it must equal the editor version in `ProjectSettings/ProjectVersion.txt` — a mismatch fails the build. `ProjectVersion.txt` stays the source of truth (a different value would select a Unity image that can't open the project). The detected version is printed in the Resolve Config report. |
 | `UNITY_BUILD_METHOD` | *(empty = game-ci default)* | all flows | Override the Unity build method invoked by game-ci (docker lane, non-Addressables). |
 | `UNITY_DEVELOP_DEFINE_SYMBOLS` | *(empty)* | `push/PR → develop` | Legacy: `DEVELOP_DEFINE_SYMBOLS`. |
 | `UNITY_STAGING_DEFINE_SYMBOLS` | *(empty)* | `push/PR → staging` | Legacy: `STAGING_DEFINE_SYMBOLS`. |
 | `UNITY_RELEASE_DEFINE_SYMBOLS` | *(empty)* | `push/PR → release-*` | Legacy: `RELEASE_DEFINE_SYMBOLS`. |
 
-> **Not repository variables (redundant — do not set):**
-> - **Unity version** — the single source of truth is `ProjectSettings/ProjectVersion.txt`. The pipeline reads it directly and errors on any mismatching override, so a `UNITY_VERSION` variable would be redundant/risky. The detected version is printed in the Resolve Config report.
-> - **Project path** — set once by the calling workflow (`unity-build.yml`, `project-path: '.'`), not per-run configuration. There is no `UNITY_PROJECT_PATH` variable.
+> **To change the Unity editor version:** edit `ProjectSettings/ProjectVersion.txt` (the SSOT). Keep `UNITY_VERSION` in sync (or unset) — it only *confirms* the version, it cannot change it.
+>
+> **Not a repository variable:** **project path** is set once by the calling workflow (`unity-build.yml`, `project-path: '.'`), not per-run configuration. There is no `UNITY_PROJECT_PATH` variable.
 
 Define-symbols variables are **additive** — the listed symbols are merged
 into every platform group at build time; existing project symbols (e.g.

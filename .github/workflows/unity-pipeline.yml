@@ -187,7 +187,10 @@ jobs:
         id: version
         shell: bash
         env:
-          OVERRIDE:     ${{ inputs.unity-version }}
+          # Explicit pin: dispatch input > UNITY_VERSION repo variable. Either is
+          # OPTIONAL and is validated against ProjectVersion.txt (the SSOT) below —
+          # a mismatch fails the build, so the pin can only confirm, never override.
+          OVERRIDE:     ${{ inputs.unity-version || vars.UNITY_VERSION }}
           PROJECT_PATH: ${{ inputs.project-path }}
           TOOLKIT_REF:  ${{ inputs.toolkit-ref }}
         run: |
@@ -202,8 +205,8 @@ jobs:
           if [ -n "${OVERRIDE}" ] && [ "${OVERRIDE}" != "${PROJECT_VERSION}" ]; then
             echo "::error::Unity version mismatch:"
             echo "::error::  ProjectVersion.txt: ${PROJECT_VERSION}"
-            echo "::error::  Input override:     ${OVERRIDE}"
-            echo "::error::Update ProjectVersion.txt to change the version (it is the SSOT)."
+            echo "::error::  Pin (input/UNITY_VERSION var): ${OVERRIDE}"
+            echo "::error::ProjectVersion.txt is the source of truth. Either update it to change the Unity version, or fix the UNITY_VERSION repository variable / unity-version input to match."
             exit 1
           fi
           RESOLVED="${OVERRIDE:-${PROJECT_VERSION}}"
