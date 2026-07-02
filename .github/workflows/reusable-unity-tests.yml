@@ -126,14 +126,9 @@ on:
 jobs:
   test:
     name: Unity Tests (${{ inputs.test-mode }})
-    timeout-minutes: ${{ inputs.build-timeout-minutes }}
-    # Select runner based on lane. fromJson array form is required for label lists.
-    runs-on: >-
-      ${{
-        inputs.runner-mode == 'docker'              && inputs.runner-linux-label                             ||
-        inputs.runner-mode == 'self-hosted-windows' && fromJson(format('["{0}","unity"]', inputs.runner-windows-label)) ||
-        fromJson(format('["{0}","unity"]', inputs.runner-macos-label))
-      }}
+    # docker → ubuntu-latest ; self-hosted-* → labelled runner arrays.
+    # (timeout applied at step level — job-level expression timeout-minutes broke instantiation.)
+    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON('["self-hosted","Windows","unity"]')) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON('["self-hosted","macOS","unity"]')) || 'ubuntu-latest' }}
 
     outputs:
       result:        ${{ steps.set-result.outputs.result }}
