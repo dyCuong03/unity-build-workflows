@@ -419,12 +419,12 @@ jobs:
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
       runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
       runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
-      test-fail-fast:          ${{ needs.resolve-config.outputs.test-fail-fast }}
+      test-fail-fast:          ${{ fromJSON(needs.resolve-config.outputs.test-fail-fast) }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -448,15 +448,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -487,16 +487,16 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -527,15 +527,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -566,15 +566,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -605,15 +605,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -648,15 +648,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
@@ -690,15 +690,15 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         self-hosted-macos
       activation-strategy: preactivated
-      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
+      clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
-      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
-      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
-      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
-      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
+      cache-gradle:            ${{ fromJSON(needs.resolve-config.outputs.cache-gradle) }}
+      cache-addressables:      ${{ fromJSON(needs.resolve-config.outputs.cache-addressables) }}
+      cache-nuget:             ${{ fromJSON(needs.resolve-config.outputs.cache-nuget) }}
       artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
       artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
       build-method:            ${{ needs.resolve-config.outputs.build-method }}
