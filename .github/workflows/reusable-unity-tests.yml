@@ -55,6 +55,46 @@ on:
         default: 14
         type: number
 
+      # ── Grouped-config additions (backward compatible; defaults preserve today) ─
+      build-timeout-minutes:
+        description: Maximum minutes the test job may run before GitHub Actions cancels it.
+        required: false
+        default: 120
+        type: number
+
+      cache-library:
+        description: Cache the Unity Library folder.
+        required: false
+        default: true
+        type: boolean
+
+      test-fail-fast:
+        description: |
+          Best-effort fail-fast toggle. No test matrix exists today (single job runs
+          EditMode then PlayMode sequentially), so this is currently informational only
+          and reserved for a future matrix-based implementation.
+        required: false
+        default: false
+        type: boolean
+
+      runner-windows-label:
+        description: Runner label used for the self-hosted-windows lane.
+        required: false
+        default: 'self-hosted-windows'
+        type: string
+
+      runner-macos-label:
+        description: Runner label used for the self-hosted-macos lane.
+        required: false
+        default: 'self-hosted-macos'
+        type: string
+
+      runner-linux-label:
+        description: Runner label used for the docker/ubuntu lane.
+        required: false
+        default: 'ubuntu-latest'
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: Raw .ulf file contents (personal-combined strategy). Optional.
@@ -86,12 +126,13 @@ on:
 jobs:
   test:
     name: Unity Tests (${{ inputs.test-mode }})
+    timeout-minutes: ${{ inputs.build-timeout-minutes }}
     # Select runner based on lane. fromJson array form is required for label lists.
     runs-on: >-
       ${{
-        inputs.runner-mode == 'docker'              && 'ubuntu-latest'                             ||
-        inputs.runner-mode == 'self-hosted-windows' && fromJson('["self-hosted","Windows","unity"]') ||
-        fromJson('["self-hosted","macOS","unity"]')
+        inputs.runner-mode == 'docker'              && inputs.runner-linux-label                             ||
+        inputs.runner-mode == 'self-hosted-windows' && fromJson(format('["{0}","unity"]', inputs.runner-windows-label)) ||
+        fromJson(format('["{0}","unity"]', inputs.runner-macos-label))
       }}
 
     outputs:
@@ -123,6 +164,7 @@ jobs:
 
       # ── 3. Cache Library ──────────────────────────────────────────────────────
       - name: Cache Library
+        if: ${{ inputs.cache-library == true }}
         uses: actions/cache@v4
         with:
           path: ${{ inputs.project-path }}/Library

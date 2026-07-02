@@ -82,10 +82,10 @@ on:
         type: string
 
       clean-build:
-        description: "Force clean Library cache before building."
+        description: "auto|true|false — Force clean Library cache before building (auto = use BUILD_CLEAN variable)."
         required: false
-        default: false
-        type: boolean
+        default: 'auto'
+        type: string
 
       android-export:
         description: "Android output format: apk (installable) or aab (Play Store bundle)."
@@ -147,6 +147,24 @@ jobs:
       signing:            ${{ steps.flow.outputs.signing }}
       platform-source:    ${{ steps.flow.outputs.platform-source }}
       define-symbols:     ${{ steps.flow.outputs.define-symbols }}
+      # ── New grouped config resolver outputs ─────────────────────────────────
+      build-method:            ${{ steps.flow.outputs.build-method }}
+      build-timeout-minutes:   ${{ steps.flow.outputs.build-timeout-minutes }}
+      clean-build:             ${{ steps.flow.outputs.clean-build }}
+      clean-build-source:      ${{ steps.flow.outputs.clean-build-source }}
+      test-editmode:           ${{ steps.flow.outputs.test-editmode }}
+      test-playmode:           ${{ steps.flow.outputs.test-playmode }}
+      test-fail-fast:          ${{ steps.flow.outputs.test-fail-fast }}
+      runner-mode:             ${{ steps.flow.outputs.runner-mode }}
+      runner-windows-label:    ${{ steps.flow.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ steps.flow.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ steps.flow.outputs.runner-linux-label }}
+      cache-library:           ${{ steps.flow.outputs.cache-library }}
+      cache-gradle:            ${{ steps.flow.outputs.cache-gradle }}
+      cache-addressables:      ${{ steps.flow.outputs.cache-addressables }}
+      cache-nuget:             ${{ steps.flow.outputs.cache-nuget }}
+      artifact-retention-days: ${{ steps.flow.outputs.artifact-retention-days }}
+      artifact-compression:    ${{ steps.flow.outputs.artifact-compression }}
       # ── Project metadata (extract_project_metadata.sh) ─────────────────────
       product-name:       ${{ steps.meta.outputs.product-name }}
       app-version:        ${{ steps.meta.outputs.app-version }}
@@ -239,10 +257,106 @@ jobs:
           VAR_DEVELOP_DEFINE_SYMBOLS:     ${{ vars.DEVELOP_DEFINE_SYMBOLS || '' }}
           VAR_STAGING_DEFINE_SYMBOLS:     ${{ vars.STAGING_DEFINE_SYMBOLS || '' }}
           VAR_RELEASE_DEFINE_SYMBOLS:     ${{ vars.RELEASE_DEFINE_SYMBOLS || '' }}
+          # ── New grouped Repository Variables (New > Legacy > Default) ──────
+          NEW_BUILD_DEVELOP_PLATFORMS:  ${{ vars.BUILD_DEVELOP_PLATFORMS }}
+          NEW_BUILD_STAGING_PLATFORMS:  ${{ vars.BUILD_STAGING_PLATFORMS }}
+          NEW_BUILD_RELEASE_PLATFORMS:  ${{ vars.BUILD_RELEASE_PLATFORMS }}
+          NEW_TEST_DEVELOP_ENABLED:     ${{ vars.TEST_DEVELOP_ENABLED }}
+          NEW_TEST_STAGING_ENABLED:     ${{ vars.TEST_STAGING_ENABLED }}
+          NEW_TEST_RELEASE_ENABLED:     ${{ vars.TEST_RELEASE_ENABLED }}
+          NEW_ADDRESSABLES_DEVELOP_ENABLED: ${{ vars.ADDRESSABLES_DEVELOP_ENABLED }}
+          NEW_ADDRESSABLES_STAGING_ENABLED: ${{ vars.ADDRESSABLES_STAGING_ENABLED }}
+          NEW_ADDRESSABLES_RELEASE_ENABLED: ${{ vars.ADDRESSABLES_RELEASE_ENABLED }}
+          NEW_DEVELOP_DEFINE_SYMBOLS:   ${{ vars.UNITY_DEVELOP_DEFINE_SYMBOLS }}
+          NEW_STAGING_DEFINE_SYMBOLS:   ${{ vars.UNITY_STAGING_DEFINE_SYMBOLS }}
+          NEW_RELEASE_DEFINE_SYMBOLS:   ${{ vars.UNITY_RELEASE_DEFINE_SYMBOLS }}
+          NEW_UNITY_VERSION:            ${{ vars.UNITY_VERSION }}
+          NEW_UNITY_PROJECT_PATH:       ${{ vars.UNITY_PROJECT_PATH }}
+          NEW_UNITY_BUILD_METHOD:       ${{ vars.UNITY_BUILD_METHOD }}
+          NEW_BUILD_TIMEOUT_MINUTES:    ${{ vars.BUILD_TIMEOUT_MINUTES }}
+          NEW_BUILD_CLEAN:              ${{ vars.BUILD_CLEAN }}
+          NEW_TEST_EDITMODE_ENABLED:    ${{ vars.TEST_EDITMODE_ENABLED }}
+          NEW_TEST_PLAYMODE_ENABLED:    ${{ vars.TEST_PLAYMODE_ENABLED }}
+          NEW_TEST_FAIL_FAST:           ${{ vars.TEST_FAIL_FAST }}
+          NEW_RUNNER_DEFAULT_MODE:      ${{ vars.RUNNER_DEFAULT_MODE }}
+          NEW_RUNNER_WINDOWS_LABEL:     ${{ vars.RUNNER_WINDOWS_LABEL }}
+          NEW_RUNNER_MACOS_LABEL:       ${{ vars.RUNNER_MACOS_LABEL }}
+          NEW_RUNNER_LINUX_LABEL:       ${{ vars.RUNNER_LINUX_LABEL }}
+          NEW_CACHE_LIBRARY_ENABLED:    ${{ vars.CACHE_LIBRARY_ENABLED }}
+          NEW_CACHE_GRADLE_ENABLED:     ${{ vars.CACHE_GRADLE_ENABLED }}
+          NEW_CACHE_ADDRESSABLES_ENABLED: ${{ vars.CACHE_ADDRESSABLES_ENABLED }}
+          NEW_CACHE_NUGET_ENABLED:      ${{ vars.CACHE_NUGET_ENABLED }}
+          NEW_ARTIFACT_RETENTION_DAYS:  ${{ vars.ARTIFACT_RETENTION_DAYS }}
+          NEW_ARTIFACT_COMPRESSION:     ${{ vars.ARTIFACT_COMPRESSION }}
+          IN_CLEAN_BUILD:               ${{ inputs.clean-build || '' }}
         run: |
           set -euo pipefail
           echo "Flow resolver: event=${EVENT_NAME} ref=${REF_NAME} base=${BASE_REF:-<none>}"
           bash .toolkit/scripts/common/resolve_build_flow.sh
+
+      - name: Write config summary
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          FLOW_TYPE:      ${{ steps.flow.outputs.flow-type }}
+          ENVIRONMENT:    ${{ steps.flow.outputs.environment }}
+          UNITY_VERSION:  ${{ steps.version.outputs.version }}
+          RUNNER_MODE:    ${{ steps.flow.outputs.runner-mode }}
+          SEL_ANDROID:     ${{ steps.flow.outputs.build-android }}
+          SEL_WEBGL:       ${{ steps.flow.outputs.build-webgl }}
+          SEL_LINUX64:     ${{ steps.flow.outputs.build-linux64 }}
+          SEL_LINUXSERVER: ${{ steps.flow.outputs.build-linuxserver }}
+          SEL_WINDOWS64:   ${{ steps.flow.outputs.build-windows64 }}
+          SEL_IOS:         ${{ steps.flow.outputs.build-ios }}
+          RUN_TESTS:       ${{ steps.flow.outputs.run-tests }}
+          TEST_MODE:       ${{ steps.flow.outputs.test-mode }}
+          BUILD_ADDR:      ${{ steps.flow.outputs.build-addressables }}
+          DEFINE_SYMBOLS:  ${{ steps.flow.outputs.define-symbols }}
+          BUILD_TIMEOUT:   ${{ steps.flow.outputs.build-timeout-minutes }}
+          CACHE_LIBRARY:      ${{ steps.flow.outputs.cache-library }}
+          CACHE_GRADLE:       ${{ steps.flow.outputs.cache-gradle }}
+          CACHE_ADDRESSABLES: ${{ steps.flow.outputs.cache-addressables }}
+          CACHE_NUGET:        ${{ steps.flow.outputs.cache-nuget }}
+          ARTIFACT_RETENTION: ${{ steps.flow.outputs.artifact-retention-days }}
+          ARTIFACT_COMPRESSION: ${{ steps.flow.outputs.artifact-compression }}
+          CLEAN_BUILD:        ${{ steps.flow.outputs.clean-build }}
+          CLEAN_BUILD_SOURCE: ${{ steps.flow.outputs.clean-build-source }}
+        run: |
+          set +e
+          PLATFORMS=""
+          [ "${SEL_ANDROID}" = "true" ]     && PLATFORMS="${PLATFORMS:+$PLATFORMS, }Android"
+          [ "${SEL_WEBGL}" = "true" ]       && PLATFORMS="${PLATFORMS:+$PLATFORMS, }WebGL"
+          [ "${SEL_LINUX64}" = "true" ]     && PLATFORMS="${PLATFORMS:+$PLATFORMS, }Linux64"
+          [ "${SEL_LINUXSERVER}" = "true" ] && PLATFORMS="${PLATFORMS:+$PLATFORMS, }LinuxServer"
+          [ "${SEL_WINDOWS64}" = "true" ]   && PLATFORMS="${PLATFORMS:+$PLATFORMS, }Windows64"
+          [ "${SEL_IOS}" = "true" ]         && PLATFORMS="${PLATFORMS:+$PLATFORMS, }iOS"
+          [ -z "${PLATFORMS}" ] && PLATFORMS="(none)"
+
+          TESTS="disabled"
+          [ "${RUN_TESTS}" = "true" ] && TESTS="${TEST_MODE:-All}"
+
+          CACHE="library=${CACHE_LIBRARY:-?} gradle=${CACHE_GRADLE:-?} addressables=${CACHE_ADDRESSABLES:-?} nuget=${CACHE_NUGET:-?}"
+          ARTIFACT="retention=${ARTIFACT_RETENTION:-?}d compression=${ARTIFACT_COMPRESSION:-?}"
+
+          {
+            echo "## Resolve Config Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Flow | \`${FLOW_TYPE:-unknown}\` |"
+            echo "| Environment | \`${ENVIRONMENT:-unknown}\` |"
+            echo "| Unity Version | \`${UNITY_VERSION:-unknown}\` |"
+            echo "| Runner | \`${RUNNER_MODE:-unknown}\` |"
+            echo "| Platforms | ${PLATFORMS} |"
+            echo "| Tests | \`${TESTS}\` |"
+            echo "| Addressables | \`${BUILD_ADDR:-false}\` |"
+            echo "| Define Symbols | \`${DEFINE_SYMBOLS:-(none)}\` |"
+            echo "| Timeout | \`${BUILD_TIMEOUT:-?} min\` |"
+            echo "| Cache | \`${CACHE}\` |"
+            echo "| Artifact | \`${ARTIFACT}\` |"
+            echo "| Clean Build | \`${CLEAN_BUILD:-false}\` (source: \`${CLEAN_BUILD_SOURCE:-default}\`) |"
+          } >> "$GITHUB_STEP_SUMMARY" || true
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 2: validate-project
@@ -301,9 +415,16 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       test-mode:           ${{ needs.resolve-config.outputs.test-mode }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
+      test-fail-fast:          ${{ needs.resolve-config.outputs.test-fail-fast }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -325,12 +446,23 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -353,13 +485,24 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -382,12 +525,23 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -410,12 +564,23 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -438,12 +603,23 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -470,12 +646,23 @@ jobs:
       unity-version:       ${{ needs.resolve-config.outputs.unity-version }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
-      runner-mode:         ${{ inputs.runner-mode || 'docker' }}
+      runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
       activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
@@ -503,10 +690,21 @@ jobs:
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         self-hosted-macos
       activation-strategy: preactivated
-      clean-build:         ${{ inputs.clean-build || false }}
+      clean-build:         ${{ needs.resolve-config.outputs.clean-build }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       define-symbols:      ${{ needs.resolve-config.outputs.define-symbols }}
+      build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
+      cache-library:           ${{ needs.resolve-config.outputs.cache-library }}
+      cache-gradle:            ${{ needs.resolve-config.outputs.cache-gradle }}
+      cache-addressables:      ${{ needs.resolve-config.outputs.cache-addressables }}
+      cache-nuget:             ${{ needs.resolve-config.outputs.cache-nuget }}
+      artifact-retention-days: ${{ fromJSON(needs.resolve-config.outputs.artifact-retention-days) }}
+      artifact-compression:    ${{ needs.resolve-config.outputs.artifact-compression }}
+      build-method:            ${{ needs.resolve-config.outputs.build-method }}
+      runner-windows-label:    ${{ needs.resolve-config.outputs.runner-windows-label }}
+      runner-macos-label:      ${{ needs.resolve-config.outputs.runner-macos-label }}
+      runner-linux-label:      ${{ needs.resolve-config.outputs.runner-linux-label }}
     secrets: inherit
 
   # ════════════════════════════════════════════════════════════════════════════

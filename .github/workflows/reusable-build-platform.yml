@@ -106,6 +106,67 @@ on:
         default: 14
         type: number
 
+      # ── Grouped-config additions (backward compatible; defaults preserve today) ─
+      build-timeout-minutes:
+        description: Maximum minutes the build job may run before GitHub Actions cancels it.
+        required: false
+        default: 120
+        type: number
+
+      cache-library:
+        description: Cache the Unity Library folder (skipped automatically on clean-build).
+        required: false
+        default: true
+        type: boolean
+
+      cache-gradle:
+        description: Cache Gradle caches/wrapper (docker lane, Android only). Best-effort.
+        required: false
+        default: true
+        type: boolean
+
+      cache-addressables:
+        description: Cache Addressables build output (docker lane). Best-effort.
+        required: false
+        default: true
+        type: boolean
+
+      cache-nuget:
+        description: Cache NuGet packages (docker lane). Best-effort.
+        required: false
+        default: true
+        type: boolean
+
+      artifact-compression:
+        description: "Artifact compression format. Only 'zip' is supported today; reserved for future formats."
+        required: false
+        default: 'zip'
+        type: string
+
+      build-method:
+        description: Optional custom build method passed to game-ci/unity-builder (docker lane, non-Addressables build). Empty = game-ci default.
+        required: false
+        default: ''
+        type: string
+
+      runner-windows-label:
+        description: Runner label used for the self-hosted-windows lane.
+        required: false
+        default: 'self-hosted-windows'
+        type: string
+
+      runner-macos-label:
+        description: Runner label used for the self-hosted-macos lane.
+        required: false
+        default: 'self-hosted-macos'
+        type: string
+
+      runner-linux-label:
+        description: Runner label used for the docker/ubuntu lane.
+        required: false
+        default: 'ubuntu-latest'
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: |
@@ -143,11 +204,12 @@ on:
 jobs:
   build:
     name: Build ${{ inputs.platform }}
+    timeout-minutes: ${{ inputs.build-timeout-minutes }}
     # ── Runner selection by lane ─────────────────────────────────────────────
-    # docker / auto → ubuntu-latest
-    # self-hosted-windows → [self-hosted, Windows, unity]
-    # self-hosted-macos   → [self-hosted, macOS, unity]
-    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON('["self-hosted","Windows","unity"]')) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON('["self-hosted","macOS","unity"]')) || 'ubuntu-latest' }}
+    # docker / auto → inputs.runner-linux-label (default 'ubuntu-latest')
+    # self-hosted-windows → [inputs.runner-windows-label, unity] (default self-hosted-windows)
+    # self-hosted-macos   → [inputs.runner-macos-label, unity] (default self-hosted-macos)
+    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON(format('["{0}","unity"]', inputs.runner-windows-label))) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON(format('["{0}","unity"]', inputs.runner-macos-label))) || inputs.runner-linux-label }}
 
     outputs:
       result:                 ${{ steps.set-outputs.outputs.result }}
@@ -297,14 +359,51 @@ jobs:
           fi
 
       # ── Step 6: Cache Library ──────────────────────────────────────────────
-      # Skipped when clean-build=true to force a full rebuild.
+      # Skipped when clean-build=true to force a full rebuild, or when cache-library=false.
       - name: Cache Library
-        if: ${{ inputs.clean-build == false && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.clean-build == false && inputs.cache-library == true && steps.ios-guard.outputs.blocked != 'true' }}
         uses: actions/cache@v4
         with:
           path: ${{ inputs.project-path }}/Library
           key: Library-${{ inputs.platform }}-${{ hashFiles(format('{0}/ProjectSettings/ProjectVersion.txt', inputs.project-path), format('{0}/Packages/manifest.json', inputs.project-path)) }}
           restore-keys: Library-${{ inputs.platform }}-
+
+      # ── Step 6b: Cache Gradle (docker lane, Android only) ──────────────────
+      # Best-effort — cache misses/failures never fail the build.
+      - name: Cache Gradle
+        if: ${{ inputs.cache-gradle == true && inputs.platform == 'Android' && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*') }}
+          restore-keys: gradle-
+
+      # ── Step 6c: Cache NuGet (docker lane) ──────────────────────────────────
+      # Best-effort — cache misses/failures never fail the build.
+      - name: Cache NuGet
+        if: ${{ inputs.cache-nuget == true && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('**/packages.lock.json', '**/*.csproj') }}
+          restore-keys: nuget-
+
+      # ── Step 6d: Cache Addressables (docker lane) ───────────────────────────
+      # Best-effort — cache misses/failures never fail the build.
+      - name: Cache Addressables
+        if: ${{ inputs.cache-addressables == true && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        continue-on-error: true
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ inputs.project-path }}/Library/com.unity.addressables
+            ${{ inputs.project-path }}/ServerData
+          key: addr-${{ inputs.platform }}-${{ hashFiles('**/AddressableAssetsData/**') }}
+          restore-keys: addr-${{ inputs.platform }}-
 
       # ── Step 7a: Build Addressables pre-step (docker lane) ────────────────
       # Runs when build-addressables=true AND this is NOT the Addressables platform job itself.
@@ -379,6 +478,7 @@ jobs:
           unityVersion: ${{ inputs.unity-version }}
           targetPlatform: ${{ steps.platform-map.outputs.target }}
           customParameters: ${{ steps.platform-map.outputs.params }}
+          buildMethod: ${{ inputs.build-method }}
           allowDirtyBuild: true
           # Android only — APK (androidPackage) or App Bundle (androidAppBundle).
           # game-ci ignores this for non-Android targets.
@@ -536,6 +636,7 @@ jobs:
           path: build/
           if-no-files-found: warn
           retention-days: ${{ inputs.artifact-retention-days }}
+          compression-level: 6
 
       # ── Step 11b: Upload Addressables artifact ────────────────────────────
       # Artifacts: Addressable catalog + bundles (ServerData, StreamingAssets).
@@ -549,6 +650,7 @@ jobs:
             ${{ inputs.project-path }}/Assets/AddressableAssetsData
           if-no-files-found: warn
           retention-days: ${{ inputs.artifact-retention-days }}
+          compression-level: 6
 
       # ── Step 12: Upload logs artifact (always — diagnose failures) ─────────
       # Collects Editor.log and any BuildReport files from common locations.

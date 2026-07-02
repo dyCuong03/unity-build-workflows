@@ -2,55 +2,32 @@
 # =============================================================================
 # resolve_build_flow.sh — Build flow resolver (branch-based CI automation)
 #
-# Reads trigger context from env, writes KEY=value lines to stdout AND
-# appends to $GITHUB_OUTPUT when that variable is set in the environment.
-# All diagnostic output goes to stderr only — never to stdout.
+# Reads trigger context + grouped configuration from env, writes KEY=value
+# lines to stdout AND appends to $GITHUB_OUTPUT when that variable is set in
+# the environment. All diagnostic/report output goes to stderr only — never
+# to stdout (tests parse stdout as pure KEY=value pairs).
 #
-# Inputs (env):
-#   EVENT_NAME             push | pull_request | workflow_dispatch
-#   REF_NAME               branch/ref name for push or dispatch
-#   BASE_REF               PR target branch (empty for push/dispatch)
-#   IN_PLATFORM            dispatch: All | Android | WebGL | Linux64 | LinuxServer | iOS
-#   IN_ENVIRONMENT         dispatch: production | staging | development
-#   IN_RUN_TESTS           dispatch: true | false
-#   IN_TEST_MODE           dispatch: EditMode | PlayMode | All
-#   IN_BUILD_ADDRESSABLES  dispatch: true | false
+# ---------------------------------------------------------------------------
+# Resolution priority (every setting), per CONFIG_CONTRACT.md:
+#   workflow_dispatch input (IN_*)  >  new repo variable  >  legacy repo
+#   variable  >  toolkit default
+# For push/pull_request there is no dispatch layer: new > legacy > default.
 #
-# Repository Variable inputs (env, optional — set from GitHub vars.*):
-#   VAR_DEVELOP_BUILD_PLATFORMS     CSV: Android,WebGL (default)
-#   VAR_STAGING_BUILD_PLATFORMS     CSV: Android,WebGL,Linux64,LinuxServer (default)
-#   VAR_RELEASE_BUILD_PLATFORMS     CSV: Android,WebGL,Linux64,LinuxServer (default)
-#   VAR_DEVELOP_RUN_TESTS           true|false (default: true)
-#   VAR_STAGING_RUN_TESTS           true|false (default: true)
-#   VAR_RELEASE_RUN_TESTS           true|false (default: true)
-#   VAR_DEVELOP_BUILD_ADDRESSABLES  true|false (default: false)
-#   VAR_STAGING_BUILD_ADDRESSABLES  true|false (default: false)
-#   VAR_RELEASE_BUILD_ADDRESSABLES  true|false (default: true)
-#   VAR_DEFAULT_RUNNER_MODE         docker|self-hosted-windows|auto (default: docker)
+# For every grouped setting the resolver accepts BOTH of these env-name
+# styles for the "new" tier and BOTH of these for the "legacy" tier (first
+# non-empty wins within its tier; new tier always beats legacy tier):
+#   new tier:    NEW_<SETTING>            (preferred; from vars.<NEW_NAME>)
+#                <SETTING>                (bare new-variable name)
+#   legacy tier: LEG_<LEGACY_SETTING>     (preferred; from vars.<LEGACY_NAME>)
+#                <LEGACY_SETTING>         (bare legacy-variable name)
+#                VAR_<LEGACY_SETTING>     (original toolkit env name — kept
+#                                           so existing consumers that only
+#                                           set VAR_* resolve identically to
+#                                           today)
+# Dispatch inputs always use IN_<...>.
 #
-# Outputs (stdout + GITHUB_OUTPUT when set):
-#   flow-type           pr-develop | push-develop | pr-staging | push-staging |
-#                       pr-release | push-release | manual | none
-#   environment         development | staging | production
-#   run-tests           true | false
-#   test-mode           None | EditMode | PlayMode | All
-#   build-addressables  true | false
-#   build-android       true | false
-#   build-webgl         true | false
-#   build-linux64       true | false
-#   build-linuxserver   true | false
-#   build-ios           true | false  (manual platform=iOS only; NEVER auto)
-#   signing             none | android-release
-#   platform-source     default | variable | dispatch
-#
-# Branch matching rules:
-#   develop:   exact match
-#   staging:   exact match
-#   release-*: starts with 'release-' or 'release/'
-#
-# PR target branch uses BASE_REF; push uses REF_NAME.
-#
-# Contract: docs/BRANCH_FLOW_CONTRACT.md
+# See docs/BRANCH_FLOW_CONTRACT.md and CONFIG_CONTRACT.md for the full table
+# of settings, env names, and defaults.
 # =============================================================================
 set -Eeuo pipefail
 
@@ -74,7 +51,60 @@ emit() {
 }
 
 # ---------------------------------------------------------------------------
-# Inputs — read from env, never fail on missing (default to empty)
+# resolve_setting DEFAULT NEW_DISPLAY_NAME [TIER VALUE]...
+#   Returns (via stdout) the first non-empty VALUE, scanning tiers in the
+#   order given by the caller (caller is responsible for ordering tiers
+#   dispatch > variable-new > variable-legacy). Sets the global
+#   _resolved_source to the matching tier label, or "default" if none
+#   matched. When the matched tier is "variable-legacy" and NEW_DISPLAY_NAME
+#   is non-empty, logs a deprecation warning naming the new variable.
+# ---------------------------------------------------------------------------
+# NOTE: resolve_setting sets globals _resolved_value/_resolved_source directly
+# (rather than "returning" via stdout/command substitution) because command
+# substitution forks a subshell — any variable it sets would be lost the
+# instant the subshell exits. Callers MUST invoke it as a plain statement
+# (not inside $(...)) and then read _resolved_value / _resolved_source.
+_resolved_source="default"
+_resolved_value=""
+resolve_setting() {
+    local default_val="$1"; shift
+    local new_display_name="$1"; shift
+    while [[ $# -ge 2 ]]; do
+        local tier="$1" val="$2"
+        if [[ -n "${val}" ]]; then
+            _resolved_source="${tier}"
+            _resolved_value="${val}"
+            if [[ "${tier}" == "variable-legacy" && -n "${new_display_name}" ]]; then
+                log_warn "Legacy variable in use; please migrate to '${new_display_name}'."
+            fi
+            return 0
+        fi
+        shift 2
+    done
+    _resolved_source="default"
+    _resolved_value="${default_val}"
+}
+
+# validate_bool NAME VALUE — fail fast on anything but true|false
+validate_bool() {
+    local name="$1" val="$2"
+    if [[ "${val}" != "true" && "${val}" != "false" ]]; then
+        log_error "Invalid ${name}='${val}'. Allowed: true false"
+        exit 1
+    fi
+}
+
+# validate_positive_int NAME VALUE
+validate_positive_int() {
+    local name="$1" val="$2"
+    if ! [[ "${val}" =~ ^[0-9]+$ ]] || [[ "${val}" -le 0 ]]; then
+        log_error "Invalid ${name}='${val}'. Must be a positive integer."
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Trigger inputs — read from env, never fail on missing (default to empty)
 # ---------------------------------------------------------------------------
 EVENT_NAME="${EVENT_NAME:-}"
 REF_NAME="${REF_NAME:-}"
@@ -85,23 +115,7 @@ IN_RUN_TESTS="${IN_RUN_TESTS:-false}"
 IN_TEST_MODE="${IN_TEST_MODE:-All}"
 IN_BUILD_ADDRESSABLES="${IN_BUILD_ADDRESSABLES:-false}"
 IN_DEFINE_SYMBOLS="${IN_DEFINE_SYMBOLS:-}"   # manual-dispatch extra define symbols (optional)
-
-# Repository variable inputs (optional, from GitHub vars.*)
-VAR_DEVELOP_BUILD_PLATFORMS="${VAR_DEVELOP_BUILD_PLATFORMS:-}"
-VAR_STAGING_BUILD_PLATFORMS="${VAR_STAGING_BUILD_PLATFORMS:-}"
-VAR_RELEASE_BUILD_PLATFORMS="${VAR_RELEASE_BUILD_PLATFORMS:-}"
-VAR_DEVELOP_RUN_TESTS="${VAR_DEVELOP_RUN_TESTS:-}"
-VAR_STAGING_RUN_TESTS="${VAR_STAGING_RUN_TESTS:-}"
-VAR_RELEASE_RUN_TESTS="${VAR_RELEASE_RUN_TESTS:-}"
-VAR_DEVELOP_BUILD_ADDRESSABLES="${VAR_DEVELOP_BUILD_ADDRESSABLES:-}"
-VAR_STAGING_BUILD_ADDRESSABLES="${VAR_STAGING_BUILD_ADDRESSABLES:-}"
-VAR_RELEASE_BUILD_ADDRESSABLES="${VAR_RELEASE_BUILD_ADDRESSABLES:-}"
-VAR_DEFAULT_RUNNER_MODE="${VAR_DEFAULT_RUNNER_MODE:-}"
-# Per-branch extra Scripting Define Symbols (additive; ';' or ',' separated).
-# Applied to ProjectSettings.asset at build time by apply_define_symbols.sh.
-VAR_DEVELOP_DEFINE_SYMBOLS="${VAR_DEVELOP_DEFINE_SYMBOLS:-}"
-VAR_STAGING_DEFINE_SYMBOLS="${VAR_STAGING_DEFINE_SYMBOLS:-}"
-VAR_RELEASE_DEFINE_SYMBOLS="${VAR_RELEASE_DEFINE_SYMBOLS:-}"
+IN_CLEAN_BUILD="${IN_CLEAN_BUILD:-auto}"     # auto | true | false
 
 log_info "EVENT_NAME=${EVENT_NAME} REF_NAME=${REF_NAME} BASE_REF=${BASE_REF}"
 
@@ -116,6 +130,7 @@ _is_release()  { [[ "${1}" == release-* || "${1}" == release/* ]]; }
 # Platform validation and CSV parsing
 # ---------------------------------------------------------------------------
 VALID_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64 iOS"
+VALID_RUNNER_MODES="docker self-hosted-windows self-hosted-macos auto"
 
 validate_platform() {
     local plat="$1"
@@ -123,6 +138,15 @@ validate_platform() {
         [[ "${plat}" == "${valid}" ]] && return 0
     done
     return 1
+}
+
+validate_runner_mode() {
+    local mode="$1" name="$2"
+    for valid in ${VALID_RUNNER_MODES}; do
+        [[ "${mode}" == "${valid}" ]] && return 0
+    done
+    log_error "Invalid ${name}='${mode}'. Allowed: ${VALID_RUNNER_MODES}"
+    exit 1
 }
 
 # parse_platforms CSV_STRING VAR_NAME
@@ -196,124 +220,308 @@ signing="none"
 platform_source="default"
 android_export_type="apk"   # apk | aab (Android output format)
 define_symbols=""           # extra Scripting Define Symbols (branch-scoped, additive)
+skipped_platforms=()        # human-readable "PLATFORM: reason" notes for the report
 
 # ---------------------------------------------------------------------------
 # Default platform lists per branch (used when no repo variable is set)
+# UNCHANGED from today — do not shrink these.
 # ---------------------------------------------------------------------------
 DEFAULT_DEVELOP_PLATFORMS="Android WebGL"
 DEFAULT_STAGING_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64"
 DEFAULT_RELEASE_PLATFORMS="Android WebGL Linux64 LinuxServer Windows64"
 
 # ---------------------------------------------------------------------------
+# Group: UNITY
+# ---------------------------------------------------------------------------
+NEW_UNITY_VERSION="${NEW_UNITY_VERSION:-}"
+NEW_UNITY_PROJECT_PATH="${NEW_UNITY_PROJECT_PATH:-}"
+NEW_UNITY_BUILD_METHOD="${NEW_UNITY_BUILD_METHOD:-}"
+TOOLKIT_DEFAULT_UNITY_VERSION="6000.0.26f1"
+
+resolve_setting "." "" \
+    variable-new "${NEW_UNITY_PROJECT_PATH}"
+unity_project_path="${_resolved_value}"
+unity_project_path_source="${_resolved_source}"
+
+resolve_setting "" "" \
+    variable-new "${NEW_UNITY_BUILD_METHOD}"
+unity_build_method="${_resolved_value}"
+unity_build_method_source="${_resolved_source}"
+
+if [[ -n "${NEW_UNITY_VERSION}" ]]; then
+    unity_version="${NEW_UNITY_VERSION}"
+    unity_version_source="variable-new"
+    log_info "Unity version from repo variable: ${unity_version}"
+else
+    _pv_file="${unity_project_path}/ProjectSettings/ProjectVersion.txt"
+    _detected=""
+    if [[ -f "${_pv_file}" ]]; then
+        _detected="$(grep -m1 '^m_EditorVersion:' "${_pv_file}" 2>/dev/null | sed -E 's/^m_EditorVersion:[[:space:]]*//' | tr -d '[:space:]' || true)"
+    fi
+    if [[ -n "${_detected}" ]]; then
+        unity_version="${_detected}"
+        unity_version_source="project-version-file"
+        log_info "Unity version detected from ProjectVersion.txt (${_pv_file}): ${unity_version}"
+    else
+        unity_version="${TOOLKIT_DEFAULT_UNITY_VERSION}"
+        unity_version_source="default"
+        log_info "Unity version not set and ProjectVersion.txt not found/parseable; using toolkit default: ${unity_version}"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # resolve_branch_platforms BRANCH_TYPE
-#   Resolves platforms for a push event using repo variables or defaults.
-#   Sets build_* flags and platform_source.
+#   Resolves platforms for a push/PR event using new/legacy repo variables
+#   or defaults. Sets build_* flags and platform_source.
 #   BRANCH_TYPE: develop | staging | release
 # ---------------------------------------------------------------------------
 resolve_branch_platforms() {
-    local branch_type="$1"
-    local var_value="" default_list="" var_name=""
+    local branch_type="$1" branch_upper
+    branch_upper="$(echo "${branch_type}" | tr '[:lower:]' '[:upper:]')"
+    local new_a new_b leg_a leg_b leg_c default_list new_display
+    new_display="BUILD_${branch_upper}_PLATFORMS"
+    default_list="$(eval echo "\${DEFAULT_${branch_upper}_PLATFORMS}")"
 
-    case "${branch_type}" in
-        develop)
-            var_value="${VAR_DEVELOP_BUILD_PLATFORMS}"
-            var_name="VAR_DEVELOP_BUILD_PLATFORMS"
-            default_list="${DEFAULT_DEVELOP_PLATFORMS}"
-            ;;
-        staging)
-            var_value="${VAR_STAGING_BUILD_PLATFORMS}"
-            var_name="VAR_STAGING_BUILD_PLATFORMS"
-            default_list="${DEFAULT_STAGING_PLATFORMS}"
-            ;;
-        release)
-            var_value="${VAR_RELEASE_BUILD_PLATFORMS}"
-            var_name="VAR_RELEASE_BUILD_PLATFORMS"
-            default_list="${DEFAULT_RELEASE_PLATFORMS}"
-            ;;
-    esac
+    new_a="$(eval echo "\${NEW_BUILD_${branch_upper}_PLATFORMS:-}")"
+    new_b="$(eval echo "\${BUILD_${branch_upper}_PLATFORMS:-}")"
+    leg_a="$(eval echo "\${LEG_${branch_upper}_BUILD_PLATFORMS:-}")"
+    leg_b="$(eval echo "\${${branch_upper}_BUILD_PLATFORMS:-}")"
+    leg_c="$(eval echo "\${VAR_${branch_upper}_BUILD_PLATFORMS:-}")"
 
-    if [[ -n "${var_value}" ]]; then
-        local validated
-        validated="$(parse_platforms "${var_value}" "${var_name}")"
-        set_platforms_from_list "${validated}"
-        platform_source="variable"
-        log_info "Platforms from repo variable ${var_name}='${var_value}'"
+    local resolved
+    resolve_setting "${default_list}" "${new_display}" \
+        variable-new "${new_a}" \
+        variable-new "${new_b}" \
+        variable-legacy "${leg_a}" \
+        variable-legacy "${leg_b}" \
+        variable-legacy "${leg_c}"
+    resolved="${_resolved_value}"
+    platform_source="${_resolved_source}"
+
+    local var_name_used="${new_display} (or legacy equivalent)"
+    if [[ "${platform_source}" == "default" ]]; then
+        log_info "Platforms from defaults: ${resolved}"
     else
-        set_platforms_from_list "${default_list}"
-        platform_source="default"
-        log_info "Platforms from defaults: ${default_list}"
+        log_info "Platforms (${platform_source}) resolved to '${resolved}' for ${var_name_used}"
     fi
+    local validated
+    validated="$(parse_platforms "${resolved}" "${new_display}")"
+    set_platforms_from_list "${validated}"
 }
 
 # ---------------------------------------------------------------------------
 # resolve_branch_optional BRANCH_TYPE
-#   Resolves optional run-tests and build-addressables from repo variables.
-#   Only overrides if the repo variable is set (non-empty).
-#   BRANCH_TYPE: develop | staging | release
+#   Resolves per-branch run-tests and build-addressables toggles from new
+#   or legacy repo variables. Only overrides if resolved value is non-empty
+#   relative to the default (which callers apply beforehand).
 # ---------------------------------------------------------------------------
 resolve_branch_optional() {
-    local branch_type="$1"
-    local var_run_tests="" var_build_addr=""
+    local branch_type="$1" branch_upper
+    branch_upper="$(echo "${branch_type}" | tr '[:lower:]' '[:upper:]')"
 
-    case "${branch_type}" in
-        develop)
-            var_run_tests="${VAR_DEVELOP_RUN_TESTS}"
-            var_build_addr="${VAR_DEVELOP_BUILD_ADDRESSABLES}"
-            ;;
-        staging)
-            var_run_tests="${VAR_STAGING_RUN_TESTS}"
-            var_build_addr="${VAR_STAGING_BUILD_ADDRESSABLES}"
-            ;;
-        release)
-            var_run_tests="${VAR_RELEASE_RUN_TESTS}"
-            var_build_addr="${VAR_RELEASE_BUILD_ADDRESSABLES}"
-            ;;
-    esac
+    local rt_new_a rt_new_b rt_leg_a rt_leg_b rt_leg_c
+    rt_new_a="$(eval echo "\${NEW_TEST_${branch_upper}_ENABLED:-}")"
+    rt_new_b="$(eval echo "\${TEST_${branch_upper}_ENABLED:-}")"
+    rt_leg_a="$(eval echo "\${LEG_${branch_upper}_RUN_TESTS:-}")"
+    rt_leg_b="$(eval echo "\${${branch_upper}_RUN_TESTS:-}")"
+    rt_leg_c="$(eval echo "\${VAR_${branch_upper}_RUN_TESTS:-}")"
 
-    if [[ -n "${var_run_tests}" ]]; then
-        if [[ "${var_run_tests}" == "true" || "${var_run_tests}" == "false" ]]; then
-            run_tests="${var_run_tests}"
-            log_info "run-tests from repo variable: ${var_run_tests}"
-        else
-            log_error "Invalid VAR_${branch_type^^}_RUN_TESTS='${var_run_tests}'. Must be 'true' or 'false'."
-            exit 1
-        fi
+    local rt_resolved
+    resolve_setting "${run_tests}" "TEST_${branch_upper}_ENABLED" \
+        variable-new "${rt_new_a}" \
+        variable-new "${rt_new_b}" \
+        variable-legacy "${rt_leg_a}" \
+        variable-legacy "${rt_leg_b}" \
+        variable-legacy "${rt_leg_c}"
+    rt_resolved="${_resolved_value}"
+    if [[ "${_resolved_source}" != "default" ]]; then
+        validate_bool "TEST_${branch_upper}_ENABLED" "${rt_resolved}"
+        run_tests="${rt_resolved}"
+        run_tests_source="${_resolved_source}"
+        log_info "run-tests (${_resolved_source}) = ${run_tests}"
     fi
 
-    if [[ -n "${var_build_addr}" ]]; then
-        if [[ "${var_build_addr}" == "true" || "${var_build_addr}" == "false" ]]; then
-            build_addressables="${var_build_addr}"
-            log_info "build-addressables from repo variable: ${var_build_addr}"
-        else
-            log_error "Invalid VAR_${branch_type^^}_BUILD_ADDRESSABLES='${var_build_addr}'. Must be 'true' or 'false'."
-            exit 1
-        fi
+    local addr_new_a addr_new_b addr_leg_a addr_leg_b addr_leg_c
+    addr_new_a="$(eval echo "\${NEW_ADDRESSABLES_${branch_upper}_ENABLED:-}")"
+    addr_new_b="$(eval echo "\${ADDRESSABLES_${branch_upper}_ENABLED:-}")"
+    addr_leg_a="$(eval echo "\${LEG_${branch_upper}_BUILD_ADDRESSABLES:-}")"
+    addr_leg_b="$(eval echo "\${${branch_upper}_BUILD_ADDRESSABLES:-}")"
+    addr_leg_c="$(eval echo "\${VAR_${branch_upper}_BUILD_ADDRESSABLES:-}")"
+
+    local addr_resolved
+    resolve_setting "${build_addressables}" "ADDRESSABLES_${branch_upper}_ENABLED" \
+        variable-new "${addr_new_a}" \
+        variable-new "${addr_new_b}" \
+        variable-legacy "${addr_leg_a}" \
+        variable-legacy "${addr_leg_b}" \
+        variable-legacy "${addr_leg_c}"
+    addr_resolved="${_resolved_value}"
+    if [[ "${_resolved_source}" != "default" ]]; then
+        validate_bool "ADDRESSABLES_${branch_upper}_ENABLED" "${addr_resolved}"
+        build_addressables="${addr_resolved}"
+        addressables_source="${_resolved_source}"
+        log_info "build-addressables (${_resolved_source}) = ${build_addressables}"
     fi
 }
 
 # ---------------------------------------------------------------------------
 # resolve_branch_define_symbols BRANCH_TYPE
-#   Resolves extra Scripting Define Symbols from a per-branch repo variable.
-#   Additive: these are merged into the project's existing symbols at build
-#   time (see apply_define_symbols.sh). Only sets define_symbols if the repo
-#   variable is non-empty; otherwise leaves it as the default (empty).
-#   BRANCH_TYPE: develop | staging | release
+#   Resolves extra Scripting Define Symbols from new/legacy per-branch repo
+#   variables. Additive: merged into the project's existing symbols at build
+#   time (see apply_define_symbols.sh).
 # ---------------------------------------------------------------------------
 resolve_branch_define_symbols() {
-    local branch_type="$1"
-    local var_value=""
+    local branch_type="$1" branch_upper
+    branch_upper="$(echo "${branch_type}" | tr '[:lower:]' '[:upper:]')"
 
-    case "${branch_type}" in
-        develop) var_value="${VAR_DEVELOP_DEFINE_SYMBOLS}" ;;
-        staging) var_value="${VAR_STAGING_DEFINE_SYMBOLS}" ;;
-        release) var_value="${VAR_RELEASE_DEFINE_SYMBOLS}" ;;
-    esac
+    local new_val leg_a leg_b
+    new_val="$(eval echo "\${NEW_${branch_upper}_DEFINE_SYMBOLS:-}")"
+    leg_a="$(eval echo "\${LEG_${branch_upper}_DEFINE_SYMBOLS:-}")"
+    leg_b="$(eval echo "\${VAR_${branch_upper}_DEFINE_SYMBOLS:-}")"
 
-    if [[ -n "${var_value}" ]]; then
-        define_symbols="${var_value}"
-        log_info "define-symbols from repo variable VAR_${branch_type^^}_DEFINE_SYMBOLS='${var_value}'"
+    local resolved
+    resolve_setting "" "UNITY_${branch_upper}_DEFINE_SYMBOLS" \
+        variable-new "${new_val}" \
+        variable-legacy "${leg_a}" \
+        variable-legacy "${leg_b}"
+    resolved="${_resolved_value}"
+    if [[ -n "${resolved}" ]]; then
+        define_symbols="${resolved}"
+        log_info "define-symbols (${_resolved_source}) = '${define_symbols}'"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Group: TEST (global toggles) — editmode / playmode / fail-fast
+# ---------------------------------------------------------------------------
+resolve_setting "true" "" \
+    variable-new "${NEW_TEST_EDITMODE_ENABLED:-}" \
+    variable-new "${TEST_EDITMODE_ENABLED:-}"
+test_editmode="${_resolved_value}"
+validate_bool "TEST_EDITMODE_ENABLED" "${test_editmode}"
+
+resolve_setting "true" "" \
+    variable-new "${NEW_TEST_PLAYMODE_ENABLED:-}" \
+    variable-new "${TEST_PLAYMODE_ENABLED:-}"
+test_playmode="${_resolved_value}"
+validate_bool "TEST_PLAYMODE_ENABLED" "${test_playmode}"
+
+resolve_setting "false" "" \
+    variable-new "${NEW_TEST_FAIL_FAST:-}" \
+    variable-new "${TEST_FAIL_FAST:-}"
+test_fail_fast="${_resolved_value}"
+validate_bool "TEST_FAIL_FAST" "${test_fail_fast}"
+
+if [[ "${test_editmode}" == "true" && "${test_playmode}" == "true" ]]; then
+    derived_test_mode="All"
+elif [[ "${test_editmode}" == "true" ]]; then
+    derived_test_mode="EditMode"
+elif [[ "${test_playmode}" == "true" ]]; then
+    derived_test_mode="PlayMode"
+else
+    derived_test_mode="None"
+fi
+
+# ---------------------------------------------------------------------------
+# Group: BUILD (global) — timeout minutes, clean build
+# ---------------------------------------------------------------------------
+resolve_setting "120" "" \
+    variable-new "${NEW_BUILD_TIMEOUT_MINUTES:-}" \
+    variable-new "${BUILD_TIMEOUT_MINUTES:-}"
+build_timeout_minutes="${_resolved_value}"
+validate_positive_int "BUILD_TIMEOUT_MINUTES" "${build_timeout_minutes}"
+
+resolve_setting "false" "" \
+    variable-new "${NEW_BUILD_CLEAN:-}" \
+    variable-new "${BUILD_CLEAN:-}"
+_build_clean_var="${_resolved_value}"
+if [[ "${_resolved_source}" != "default" ]]; then
+    validate_bool "BUILD_CLEAN" "${_build_clean_var}"
+fi
+
+if [[ "${IN_CLEAN_BUILD}" != "auto" ]]; then
+    validate_bool "IN_CLEAN_BUILD" "${IN_CLEAN_BUILD}"
+    clean_build="${IN_CLEAN_BUILD}"
+    clean_build_source="workflow_dispatch"
+else
+    clean_build="${_build_clean_var}"
+    clean_build_source="${_resolved_source}"
+fi
+
+# ---------------------------------------------------------------------------
+# Group: RUNNER
+# ---------------------------------------------------------------------------
+resolve_setting "docker" "RUNNER_DEFAULT_MODE" \
+    variable-new "${NEW_RUNNER_DEFAULT_MODE:-}" \
+    variable-new "${RUNNER_DEFAULT_MODE:-}" \
+    variable-legacy "${LEG_DEFAULT_RUNNER_MODE:-}" \
+    variable-legacy "${DEFAULT_RUNNER_MODE:-}" \
+    variable-legacy "${VAR_DEFAULT_RUNNER_MODE:-}"
+runner_mode="${_resolved_value}"
+runner_mode_source="${_resolved_source}"
+validate_runner_mode "${runner_mode}" "runner-mode"
+
+resolve_setting "self-hosted-windows" "" \
+    variable-new "${NEW_RUNNER_WINDOWS_LABEL:-}" \
+    variable-new "${RUNNER_WINDOWS_LABEL:-}"
+runner_windows_label="${_resolved_value}"
+resolve_setting "self-hosted-macos" "" \
+    variable-new "${NEW_RUNNER_MACOS_LABEL:-}" \
+    variable-new "${RUNNER_MACOS_LABEL:-}"
+runner_macos_label="${_resolved_value}"
+resolve_setting "ubuntu-latest" "" \
+    variable-new "${NEW_RUNNER_LINUX_LABEL:-}" \
+    variable-new "${RUNNER_LINUX_LABEL:-}"
+runner_linux_label="${_resolved_value}"
+
+# ---------------------------------------------------------------------------
+# Group: CACHE (all default true)
+# ---------------------------------------------------------------------------
+resolve_setting "true" "" \
+    variable-new "${NEW_CACHE_LIBRARY_ENABLED:-}" \
+    variable-new "${CACHE_LIBRARY_ENABLED:-}"
+cache_library="${_resolved_value}"
+validate_bool "CACHE_LIBRARY_ENABLED" "${cache_library}"
+
+resolve_setting "true" "" \
+    variable-new "${NEW_CACHE_GRADLE_ENABLED:-}" \
+    variable-new "${CACHE_GRADLE_ENABLED:-}"
+cache_gradle="${_resolved_value}"
+validate_bool "CACHE_GRADLE_ENABLED" "${cache_gradle}"
+
+resolve_setting "true" "" \
+    variable-new "${NEW_CACHE_ADDRESSABLES_ENABLED:-}" \
+    variable-new "${CACHE_ADDRESSABLES_ENABLED:-}"
+cache_addressables="${_resolved_value}"
+validate_bool "CACHE_ADDRESSABLES_ENABLED" "${cache_addressables}"
+
+resolve_setting "true" "" \
+    variable-new "${NEW_CACHE_NUGET_ENABLED:-}" \
+    variable-new "${CACHE_NUGET_ENABLED:-}"
+cache_nuget="${_resolved_value}"
+validate_bool "CACHE_NUGET_ENABLED" "${cache_nuget}"
+
+# ---------------------------------------------------------------------------
+# Group: ARTIFACT
+# ---------------------------------------------------------------------------
+resolve_setting "30" "" \
+    variable-new "${NEW_ARTIFACT_RETENTION_DAYS:-}" \
+    variable-new "${ARTIFACT_RETENTION_DAYS:-}"
+artifact_retention_days="${_resolved_value}"
+validate_positive_int "ARTIFACT_RETENTION_DAYS" "${artifact_retention_days}"
+
+resolve_setting "zip" "" \
+    variable-new "${NEW_ARTIFACT_COMPRESSION:-}" \
+    variable-new "${ARTIFACT_COMPRESSION:-}"
+artifact_compression="${_resolved_value}"
+if [[ "${artifact_compression}" != "zip" ]]; then
+    log_error "Invalid ARTIFACT_COMPRESSION='${artifact_compression}'. Allowed: zip"
+    exit 1
+fi
+
+# run-tests/addressables sources default (may be overridden per-branch below)
+run_tests_source="default"
+addressables_source="default"
 
 # ---------------------------------------------------------------------------
 # Flow resolution
@@ -325,19 +533,19 @@ case "${EVENT_NAME}" in
     log_info "pull_request: target=${target}"
     if _is_develop "${target}"; then
       flow_type="pr-develop"; environment="development"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       # PR → develop: validation only, no binary builds
       resolve_branch_optional "develop"
       resolve_branch_define_symbols "develop"
     elif _is_staging "${target}"; then
       flow_type="pr-staging"; environment="staging"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       # PR → staging: validation only, no binary builds
       resolve_branch_optional "staging"
       resolve_branch_define_symbols "staging"
     elif _is_release "${target}"; then
       flow_type="pr-release"; environment="production"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       build_addressables="true"
       # PR → release-*: validation + addressables check, no binary builds
       resolve_branch_optional "release"
@@ -352,19 +560,19 @@ case "${EVENT_NAME}" in
     log_info "push: branch=${branch}"
     if _is_develop "${branch}"; then
       flow_type="push-develop"; environment="development"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       resolve_branch_platforms "develop"
       resolve_branch_optional "develop"
       resolve_branch_define_symbols "develop"
     elif _is_staging "${branch}"; then
       flow_type="push-staging"; environment="staging"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       resolve_branch_platforms "staging"
       resolve_branch_optional "staging"
       resolve_branch_define_symbols "staging"
     elif _is_release "${branch}"; then
       flow_type="push-release"; environment="production"
-      run_tests="true"; test_mode="All"
+      run_tests="true"; test_mode="${derived_test_mode}"
       build_addressables="true"
       resolve_branch_platforms "release"
       resolve_branch_optional "release"
@@ -394,6 +602,7 @@ case "${EVENT_NAME}" in
         build_android="true"; build_webgl="true"
         build_linux64="true"; build_linuxserver="true"
         build_windows64="true"
+        skipped_platforms+=("iOS: manual-only, not included in 'All'")
         ;;
       Android)     build_android="true" ;;
       WebGL)       build_webgl="true" ;;
@@ -422,6 +631,10 @@ case "${EVENT_NAME}" in
     ;;
 esac
 
+if [[ "${flow_type}" != "manual" && "${flow_type}" != "none" ]]; then
+    [[ "${build_ios}" == "false" ]] && skipped_platforms+=("iOS: manual-only")
+fi
+
 # ---------------------------------------------------------------------------
 # Normalise: if run-tests is false, test-mode must be None
 # ---------------------------------------------------------------------------
@@ -448,21 +661,90 @@ log_info "platform-source=${platform_source}"
 log_info "define-symbols=${define_symbols:-<none>}"
 
 # ---------------------------------------------------------------------------
+# Human-readable REPORT — stderr only. stdout stays pure KEY=value.
+# ---------------------------------------------------------------------------
+_source_label() {
+    case "${1}" in
+        variable-new)     echo "Repository Variable" ;;
+        variable-legacy)  echo "Legacy Variable" ;;
+        dispatch|workflow_dispatch) echo "Workflow Dispatch Input" ;;
+        project-version-file) echo "ProjectVersion.txt" ;;
+        default)          echo "Toolkit Default" ;;
+        *)                echo "${1}" ;;
+    esac
+}
+
+{
+    echo ""
+    echo "==================== Resolve Config: Build Flow ===================="
+    echo "Flow:                ${flow_type}"
+    echo "Event:                ${EVENT_NAME:-<none>}"
+    echo "Branch:               ${REF_NAME:-<none>}"
+    echo "Target branch:        ${BASE_REF:-<none>}"
+    echo "Environment:          ${environment} (gh-environment: ${gh_environment:-<none>})"
+    echo "Unity Version:        ${unity_version} (source: $(_source_label "${unity_version_source}"))"
+    echo "Unity Project Path:   ${unity_project_path} (source: $(_source_label "${unity_project_path_source}"))"
+    echo "Unity Build Method:   ${unity_build_method:-<game-ci default>} (source: $(_source_label "${unity_build_method_source}"))"
+    echo "Runner:               mode=${runner_mode} (source: $(_source_label "${runner_mode_source}")) windows='${runner_windows_label}' macos='${runner_macos_label}' linux='${runner_linux_label}'"
+    echo "Platforms:            android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} windows64=${build_windows64} ios=${build_ios} (source: $(_source_label "${platform_source}"))"
+    echo "Tests:                run-tests=${run_tests} (source: $(_source_label "${run_tests_source}")) test-mode=${test_mode} editmode=${test_editmode} playmode=${test_playmode} fail-fast=${test_fail_fast}"
+    echo "Addressables:         build-addressables=${build_addressables} (source: $(_source_label "${addressables_source}"))"
+    echo "Define Symbols:       ${define_symbols:-<none>}"
+    echo "Timeout:              ${build_timeout_minutes} minutes"
+    echo "Cache:                library=${cache_library} gradle=${cache_gradle} addressables=${cache_addressables} nuget=${cache_nuget}"
+    echo "Artifact:             retention=${artifact_retention_days}d compression=${artifact_compression}"
+    echo "Clean Build:          ${clean_build} (source: $(_source_label "${clean_build_source}"))"
+    echo "Signing:              ${signing}"
+    echo "Android Export Type:  ${android_export_type}"
+    if [[ "${#skipped_platforms[@]}" -gt 0 ]]; then
+        echo "Skipped Platforms:"
+        for note in "${skipped_platforms[@]}"; do
+            echo "  - ${note}"
+        done
+    else
+        echo "Skipped Platforms:    <none>"
+    fi
+    echo "======================================================================"
+    echo ""
+} >&2
+
+# ---------------------------------------------------------------------------
 # Emit all outputs
 # ---------------------------------------------------------------------------
-emit "flow-type"           "${flow_type}"
-emit "define-symbols"      "${define_symbols}"
-emit "environment"         "${environment}"
-emit "gh-environment"      "${gh_environment}"
-emit "run-tests"           "${run_tests}"
-emit "test-mode"           "${test_mode}"
-emit "build-addressables"  "${build_addressables}"
-emit "build-android"       "${build_android}"
-emit "build-webgl"         "${build_webgl}"
-emit "build-linux64"       "${build_linux64}"
-emit "build-linuxserver"   "${build_linuxserver}"
-emit "build-windows64"     "${build_windows64}"
-emit "build-ios"           "${build_ios}"
-emit "signing"             "${signing}"
-emit "android-export-type" "${android_export_type}"
-emit "platform-source"     "${platform_source}"
+emit "flow-type"               "${flow_type}"
+emit "define-symbols"          "${define_symbols}"
+emit "environment"             "${environment}"
+emit "gh-environment"          "${gh_environment}"
+emit "run-tests"                "${run_tests}"
+emit "test-mode"               "${test_mode}"
+emit "build-addressables"      "${build_addressables}"
+emit "build-android"           "${build_android}"
+emit "build-webgl"             "${build_webgl}"
+emit "build-linux64"           "${build_linux64}"
+emit "build-linuxserver"       "${build_linuxserver}"
+emit "build-windows64"         "${build_windows64}"
+emit "build-ios"               "${build_ios}"
+emit "signing"                 "${signing}"
+emit "android-export-type"     "${android_export_type}"
+emit "platform-source"         "${platform_source}"
+
+# New outputs
+emit "unity-version"           "${unity_version}"
+emit "project-path"            "${unity_project_path}"
+emit "build-method"            "${unity_build_method}"
+emit "build-timeout-minutes"   "${build_timeout_minutes}"
+emit "clean-build"             "${clean_build}"
+emit "clean-build-source"      "${clean_build_source}"
+emit "test-editmode"           "${test_editmode}"
+emit "test-playmode"           "${test_playmode}"
+emit "test-fail-fast"          "${test_fail_fast}"
+emit "runner-mode"             "${runner_mode}"
+emit "runner-windows-label"    "${runner_windows_label}"
+emit "runner-macos-label"      "${runner_macos_label}"
+emit "runner-linux-label"      "${runner_linux_label}"
+emit "cache-library"           "${cache_library}"
+emit "cache-gradle"            "${cache_gradle}"
+emit "cache-addressables"      "${cache_addressables}"
+emit "cache-nuget"             "${cache_nuget}"
+emit "artifact-retention-days" "${artifact_retention_days}"
+emit "artifact-compression"    "${artifact_compression}"

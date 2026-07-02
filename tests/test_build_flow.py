@@ -849,7 +849,7 @@ class TestRepoVarDevelopOverride:
         assert out["build-webgl"] == "false"
         assert out["build-linux64"] == "false"
         assert out["build-linuxserver"] == "false"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
     def test_develop_all_four(self):
         r = run_flow({
@@ -863,7 +863,7 @@ class TestRepoVarDevelopOverride:
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "true"
         assert out["build-linuxserver"] == "true"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
     def test_develop_webgl_only(self):
         r = run_flow({
@@ -876,7 +876,7 @@ class TestRepoVarDevelopOverride:
         assert out["build-android"] == "false"
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "false"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -898,7 +898,7 @@ class TestRepoVarStagingOverride:
         assert out["build-webgl"] == "true"
         assert out["build-linux64"] == "false"
         assert out["build-linuxserver"] == "false"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -920,7 +920,7 @@ class TestRepoVarReleaseOverride:
         assert out["build-webgl"] == "false"
         assert out["build-linux64"] == "false"
         assert out["build-linuxserver"] == "false"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
         # signing still applies for release
         assert out["signing"] == "android-release"
 
@@ -1140,7 +1140,7 @@ class TestPlatformSourceEmitted:
             "EVENT_NAME": "push",
             "REF_NAME": "develop",
             "VAR_DEVELOP_BUILD_PLATFORMS": "Android",
-        }, "variable"),
+        }, "variable-legacy"),
     ])
     def test_platform_source_value(self, env, expected_source):
         r = run_flow(env)
@@ -1216,7 +1216,7 @@ class TestRepoVarIOSIgnored:
         out = parse_outputs(r.stdout)
         assert out["build-android"] == "true"
         assert out["build-ios"] == "false"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
     def test_ios_in_release_var_ignored(self):
         r = run_flow({
@@ -1248,7 +1248,7 @@ class TestRepoVarWhitespace:
         out = parse_outputs(r.stdout)
         assert out["build-android"] == "true"
         assert out["build-webgl"] == "true"
-        assert out["platform-source"] == "variable"
+        assert out["platform-source"] == "variable-legacy"
 
 
 # ── GitHub deployment environment (gh-environment) ──────────────────────────
@@ -1346,3 +1346,459 @@ class TestDefineSymbols:
             "IN_ENVIRONMENT": "staging", "IN_DEFINE_SYMBOLS": "MANUAL_SYM",
         }).stdout)
         assert out["define-symbols"] == "MANUAL_SYM"
+
+
+# ===========================================================================
+# Grouped-config resolver tests (NEW_/LEG_/IN_ env styles, per CONFIG_CONTRACT.md)
+# ===========================================================================
+#
+# G1  No variables -> all defaults
+# G2  Legacy-only vars resolve (LEG_/VAR_/bare) -> platform-source=variable-legacy
+# G3  New-only vars resolve (NEW_/bare-new) -> platform-source=variable-new
+# G4  Mixed new+legacy -> new wins
+# G5  Priority resolution for tests/addressables/define-symbols/runner-mode
+# G6  Invalid platform / runner mode -> nonzero exit
+# G7  Boolean parsing (valid + invalid)
+# G8  Unity version resolution (repo var / ProjectVersion.txt / default)
+# G9  BUILD_CLEAN + IN_CLEAN_BUILD priority
+# G10 Timeout / retention / compression validation
+# G11 Runner labels
+# G12 test-mode derivation from editmode/playmode toggles
+
+
+class TestGroupedConfigDefaults:
+    """G1: With zero grouped-config env set, every new output uses its documented default."""
+
+    @pytest.fixture(autouse=True)
+    def _result(self):
+        r = run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"})
+        assert r.returncode == 0
+        self.out = parse_outputs(r.stdout)
+
+    def test_platform_source_default(self):
+        assert self.out["platform-source"] == "default"
+
+    def test_unity_version_default(self):
+        # No repo var, no ProjectVersion.txt at project-path "." within the toolkit
+        # tree that would resolve -> falls through to toolkit default.
+        assert self.out["unity-version"] == "6000.0.26f1"
+
+    def test_project_path_default(self):
+        assert self.out["project-path"] == "."
+
+    def test_runner_mode_default(self):
+        assert self.out["runner-mode"] == "docker"
+
+    def test_clean_build_default(self):
+        assert self.out["clean-build"] == "false"
+        assert self.out["clean-build-source"] == "default"
+
+    def test_timeout_default(self):
+        assert self.out["build-timeout-minutes"] == "120"
+
+    def test_caches_default_true(self):
+        for key in ["cache-library", "cache-gradle", "cache-addressables", "cache-nuget"]:
+            assert self.out[key] == "true", f"{key} should default true"
+
+    def test_retention_default(self):
+        assert self.out["artifact-retention-days"] == "30"
+
+    def test_compression_default(self):
+        assert self.out["artifact-compression"] == "zip"
+
+    def test_runner_labels_default(self):
+        assert self.out["runner-windows-label"] == "self-hosted-windows"
+        assert self.out["runner-macos-label"] == "self-hosted-macos"
+        assert self.out["runner-linux-label"] == "ubuntu-latest"
+
+    def test_test_toggles_default_true(self):
+        assert self.out["test-editmode"] == "true"
+        assert self.out["test-playmode"] == "true"
+        assert self.out["test-fail-fast"] == "false"
+
+
+class TestGroupedConfigLegacyOnly:
+    """G2: Legacy-tier-only env (LEG_/VAR_/bare) resolves platforms; source=variable-legacy."""
+
+    def test_leg_prefixed(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "LEG_STAGING_BUILD_PLATFORMS": "WebGL",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-legacy"
+
+    def test_var_prefixed(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "VAR_STAGING_BUILD_PLATFORMS": "WebGL",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-legacy"
+
+    def test_bare_legacy_name(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "STAGING_BUILD_PLATFORMS": "WebGL",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-legacy"
+
+
+class TestGroupedConfigNewOnly:
+    """G3: New-tier-only env resolves platforms; source=variable-new."""
+
+    def test_new_prefixed(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "NEW_BUILD_STAGING_PLATFORMS": "WebGL",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-new"
+
+    def test_bare_new_name(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "BUILD_STAGING_PLATFORMS": "WebGL",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-new"
+
+
+class TestGroupedConfigNewBeatsLegacy:
+    """G4: When both new and legacy tiers are set, new always wins."""
+
+    def test_platforms_new_wins(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "staging",
+            "NEW_BUILD_STAGING_PLATFORMS": "WebGL",
+            "VAR_STAGING_BUILD_PLATFORMS": "Android",
+        }).stdout)
+        assert out["build-webgl"] == "true"
+        assert out["build-android"] == "false"
+        assert out["platform-source"] == "variable-new"
+
+
+class TestGroupedConfigPriorityResolution:
+    """G5: New beats legacy beats default for tests-enabled, addressables,
+    define-symbols, and runner-mode."""
+
+    def test_run_tests_new_beats_legacy(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_DEVELOP_ENABLED": "false",
+            "VAR_DEVELOP_RUN_TESTS": "true",
+        }).stdout)
+        assert out["run-tests"] == "false"
+
+    def test_addressables_new_beats_legacy(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ADDRESSABLES_DEVELOP_ENABLED": "true",
+            "VAR_DEVELOP_BUILD_ADDRESSABLES": "false",
+        }).stdout)
+        assert out["build-addressables"] == "true"
+
+    def test_define_symbols_new_beats_legacy(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_DEVELOP_DEFINE_SYMBOLS": "NEWSYM",
+            "VAR_DEVELOP_DEFINE_SYMBOLS": "OLDSYM",
+        }).stdout)
+        assert out["define-symbols"] == "NEWSYM"
+
+    def test_runner_mode_new_beats_legacy(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_DEFAULT_MODE": "auto",
+            "VAR_DEFAULT_RUNNER_MODE": "self-hosted-macos",
+        }).stdout)
+        assert out["runner-mode"] == "auto"
+
+    def test_runner_mode_legacy_beats_default(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "VAR_DEFAULT_RUNNER_MODE": "self-hosted-macos",
+        }).stdout)
+        assert out["runner-mode"] == "self-hosted-macos"
+
+
+class TestGroupedConfigValidation:
+    """G6/G7/G10: Invalid values fail fast with nonzero exit; valid values pass."""
+
+    def test_invalid_platform_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_DEVELOP_PLATFORMS": "Nope",
+        })
+        assert r.returncode != 0
+        assert "Nope" in r.stderr
+
+    def test_invalid_runner_mode_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_DEFAULT_MODE": "bogus",
+        })
+        assert r.returncode != 0
+        assert "bogus" in r.stderr
+
+    def test_invalid_test_fail_fast_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_FAIL_FAST": "yes",
+        })
+        assert r.returncode != 0
+
+    def test_invalid_cache_library_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_CACHE_LIBRARY_ENABLED": "nope",
+        })
+        assert r.returncode != 0
+
+    def test_valid_bool_true_accepted(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_FAIL_FAST": "true",
+        })
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["test-fail-fast"] == "true"
+
+    def test_valid_bool_false_accepted(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_FAIL_FAST": "false",
+        })
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["test-fail-fast"] == "false"
+
+    def test_timeout_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_TIMEOUT_MINUTES": "45",
+        }).stdout)
+        assert out["build-timeout-minutes"] == "45"
+
+    def test_timeout_invalid_non_integer_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_TIMEOUT_MINUTES": "abc",
+        })
+        assert r.returncode != 0
+
+    def test_timeout_invalid_zero_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_TIMEOUT_MINUTES": "0",
+        })
+        assert r.returncode != 0
+
+    def test_retention_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ARTIFACT_RETENTION_DAYS": "7",
+        }).stdout)
+        assert out["artifact-retention-days"] == "7"
+
+    def test_retention_invalid_zero_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ARTIFACT_RETENTION_DAYS": "0",
+        })
+        assert r.returncode != 0
+
+    def test_retention_invalid_non_integer_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ARTIFACT_RETENTION_DAYS": "many",
+        })
+        assert r.returncode != 0
+
+    def test_compression_invalid_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ARTIFACT_COMPRESSION": "gzip",
+        })
+        assert r.returncode != 0
+
+    def test_compression_zip_passes(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_ARTIFACT_COMPRESSION": "zip",
+        })
+        assert r.returncode == 0
+        assert parse_outputs(r.stdout)["artifact-compression"] == "zip"
+
+
+class TestGroupedConfigUnityVersion:
+    """G8: unity-version resolution order: repo var -> ProjectVersion.txt -> default."""
+
+    def test_repo_var_wins(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_UNITY_VERSION": "1.2.3",
+        }).stdout)
+        assert out["unity-version"] == "1.2.3"
+
+    def test_detected_from_project_version_file(self, tmp_path):
+        project_settings = tmp_path / "ProjectSettings"
+        project_settings.mkdir()
+        (project_settings / "ProjectVersion.txt").write_text(
+            "m_EditorVersion: 6000.0.99f1\n"
+            "m_EditorVersionWithRevision: 6000.0.99f1 (abcdef123456)\n"
+        )
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_UNITY_PROJECT_PATH": str(tmp_path),
+        }).stdout)
+        assert out["unity-version"] == "6000.0.99f1"
+        assert out["project-path"] == str(tmp_path)
+
+    def test_repo_var_wins_over_project_version_file(self, tmp_path):
+        project_settings = tmp_path / "ProjectSettings"
+        project_settings.mkdir()
+        (project_settings / "ProjectVersion.txt").write_text(
+            "m_EditorVersion: 6000.0.99f1\n"
+        )
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_UNITY_PROJECT_PATH": str(tmp_path),
+            "NEW_UNITY_VERSION": "9.9.9f1",
+        }).stdout)
+        assert out["unity-version"] == "9.9.9f1"
+
+    def test_neither_falls_back_to_toolkit_default(self, tmp_path):
+        # Empty project dir -> no ProjectSettings/ProjectVersion.txt present.
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_UNITY_PROJECT_PATH": str(tmp_path),
+        }).stdout)
+        assert out["unity-version"] == "6000.0.26f1"
+
+
+class TestGroupedConfigCleanBuild:
+    """G9: BUILD_CLEAN / IN_CLEAN_BUILD priority (dispatch > variable > default)."""
+
+    def test_default_false(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert out["clean-build"] == "false"
+        assert out["clean-build-source"] == "default"
+
+    def test_variable_true(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_CLEAN": "true",
+        }).stdout)
+        assert out["clean-build"] == "true"
+        assert out["clean-build-source"] == "variable-new"
+
+    def test_dispatch_true_overrides_default(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "IN_CLEAN_BUILD": "true",
+        }).stdout)
+        assert out["clean-build"] == "true"
+        assert out["clean-build-source"] == "workflow_dispatch"
+
+    def test_dispatch_false_overrides_variable_true(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_CLEAN": "true",
+            "IN_CLEAN_BUILD": "false",
+        }).stdout)
+        assert out["clean-build"] == "false"
+        assert out["clean-build-source"] == "workflow_dispatch"
+
+    def test_dispatch_auto_falls_back_to_variable(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_CLEAN": "true",
+            "IN_CLEAN_BUILD": "auto",
+        }).stdout)
+        assert out["clean-build"] == "true"
+        assert out["clean-build-source"] == "variable-new"
+
+    def test_dispatch_auto_falls_back_to_default(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "IN_CLEAN_BUILD": "auto",
+        }).stdout)
+        assert out["clean-build"] == "false"
+        assert out["clean-build-source"] == "default"
+
+
+class TestGroupedConfigRunnerLabels:
+    """G11: Runner label overrides pass through."""
+
+    def test_linux_label_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_LINUX_LABEL": "my-linux",
+        }).stdout)
+        assert out["runner-linux-label"] == "my-linux"
+
+    def test_windows_label_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_WINDOWS_LABEL": "my-windows",
+        }).stdout)
+        assert out["runner-windows-label"] == "my-windows"
+
+    def test_macos_label_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_MACOS_LABEL": "my-macos",
+        }).stdout)
+        assert out["runner-macos-label"] == "my-macos"
+
+
+class TestGroupedConfigTestModeDerivation:
+    """G12: test-mode derives from editmode/playmode toggles; run-tests=false forces None."""
+
+    def test_editmode_only(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_EDITMODE_ENABLED": "true",
+            "NEW_TEST_PLAYMODE_ENABLED": "false",
+        }).stdout)
+        assert out["test-mode"] == "EditMode"
+
+    def test_playmode_only(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_EDITMODE_ENABLED": "false",
+            "NEW_TEST_PLAYMODE_ENABLED": "true",
+        }).stdout)
+        assert out["test-mode"] == "PlayMode"
+
+    def test_both_enabled(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_EDITMODE_ENABLED": "true",
+            "NEW_TEST_PLAYMODE_ENABLED": "true",
+        }).stdout)
+        assert out["test-mode"] == "All"
+
+    def test_neither_enabled(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_TEST_EDITMODE_ENABLED": "false",
+            "NEW_TEST_PLAYMODE_ENABLED": "false",
+        }).stdout)
+        assert out["test-mode"] == "None"
+
+    def test_run_tests_false_forces_none_even_with_toggles_true(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "workflow_dispatch",
+            "IN_PLATFORM": "Android",
+            "IN_RUN_TESTS": "false",
+            "NEW_TEST_EDITMODE_ENABLED": "true",
+            "NEW_TEST_PLAYMODE_ENABLED": "true",
+        }).stdout)
+        assert out["run-tests"] == "false"
+        assert out["test-mode"] == "None"
