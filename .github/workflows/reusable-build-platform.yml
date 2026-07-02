@@ -273,11 +273,15 @@ jobs:
           PROJECT_PATH:   ${{ inputs.project-path }}
         run: |
           set -euo pipefail
-          SYMS="$(printf '%s' "${DEFINE_SYMBOLS}" \
-            | tr ',' ';' | tr ';' '\n' \
-            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d' \
-            | paste -sd ';' - )"
-          [ -z "${SYMS}" ] && { echo "No define symbols; skipping."; exit 0; }
+          # Keep ONLY valid define identifiers — guards against malformed/corrupted
+          # variable values (spaces/tabs/newlines/punctuation) breaking compilation.
+          _raw="$(printf '%s' "${DEFINE_SYMBOLS}" \
+            | tr ',' '\n' | tr ';' '\n' \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d')"
+          _bad="$(printf '%s\n' "${_raw}" | grep -Ev '^[A-Za-z_][A-Za-z0-9_]*$' || true)"
+          [ -n "${_bad}" ] && echo "::warning:: Ignoring invalid define token(s): $(printf '%s' "${_bad}" | paste -sd '|' -)"
+          SYMS="$(printf '%s\n' "${_raw}" | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' | paste -sd ';' - || true)"
+          [ -z "${SYMS}" ] && { echo "No valid define symbols; skipping."; exit 0; }
           PS="${PROJECT_PATH%/}/ProjectSettings/ProjectSettings.asset"
           if [ ! -f "${PS}" ] || ! grep -q '^  scriptingDefineSymbols:' "${PS}"; then
             echo "::warning:: scriptingDefineSymbols block not found in ${PS}; skipping."

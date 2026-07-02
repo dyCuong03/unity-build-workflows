@@ -29,12 +29,19 @@ log() { echo "[apply_define_symbols] $*" >&2; }
 
 # Normalise separators (commas → semicolons), strip whitespace around each token,
 # drop empty tokens, and collapse to a clean ';'-joined string.
-SYMS="$(printf '%s' "${DEFINE_SYMBOLS}" \
-  | tr ',' ';' \
-  | tr ';' '\n' \
+# Normalise, then keep ONLY valid define identifiers ([A-Za-z_][A-Za-z0-9_]*).
+# This guards against malformed/corrupted variable values (spaces, tabs,
+# newlines, punctuation) that would otherwise reach Unity and break compilation.
+_raw="$(printf '%s' "${DEFINE_SYMBOLS}" \
+  | tr ',' '\n' | tr ';' '\n' \
   | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
-  | sed '/^$/d' \
-  | paste -sd ';' - )"
+  | sed '/^$/d')"
+_valid="$(printf '%s\n' "${_raw}" | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' || true)"
+_dropped="$(printf '%s\n' "${_raw}" | grep -Ev '^[A-Za-z_][A-Za-z0-9_]*$' || true)"
+if [ -n "${_dropped}" ]; then
+  log "::warning:: Ignoring invalid define symbol token(s) (not a valid identifier): $(printf '%s' "${_dropped}" | paste -sd '|' -)"
+fi
+SYMS="$(printf '%s\n' "${_valid}" | sed '/^$/d' | paste -sd ';' - )"
 
 if [ -z "${SYMS}" ]; then
   log "No define symbols to apply (DEFINE_SYMBOLS empty); skipping."
