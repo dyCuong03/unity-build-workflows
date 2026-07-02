@@ -39,11 +39,11 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 # name<TAB>default — grouped Repository Variables and their toolkit defaults.
+# Vars whose default is empty (e.g. *_DEFINE_SYMBOLS) are intentionally omitted:
+# GitHub rejects empty variable values (HTTP 422), and "unset" is semantically
+# identical to "empty" for the resolver. Set them by hand only when non-empty.
 DEFAULTS=$(cat <<'TSV'
 UNITY_PROJECT_PATH	.
-UNITY_DEVELOP_DEFINE_SYMBOLS
-UNITY_STAGING_DEFINE_SYMBOLS
-UNITY_RELEASE_DEFINE_SYMBOLS
 BUILD_DEVELOP_PLATFORMS	Android,WebGL
 BUILD_STAGING_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
 BUILD_RELEASE_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
@@ -80,16 +80,15 @@ printf '%-32s %-12s %s\n' "--------" "------" "-----"
 while IFS=$'\t' read -r name def; do
   [ -z "${name}" ] && continue
   if printf '%s\n' "${existing}" | grep -qx "${name}"; then
-    cur="$(gh variable get "${name}" "${REPO_FLAG[@]}" 2>/dev/null || echo '<set>')"
-    printf '%-32s %-12s %s\n' "${name}" "exists" "${cur}"
+    printf '%-32s %-12s %s\n' "${name}" "exists" "(unchanged)"
     continue
   fi
   if [ "${DRY_RUN}" -eq 1 ]; then
     printf '%-32s %-12s %s\n' "${name}" "would-create" "${def}"
+  elif gh variable set "${name}" --body "${def}" "${REPO_FLAG[@]}" >/dev/null 2>&1; then
+    printf '%-32s %-12s %s\n' "${name}" "created" "${def}"
   else
-    gh variable set "${name}" --body "${def}" "${REPO_FLAG[@]}" >/dev/null 2>&1 \
-      && printf '%-32s %-12s %s\n' "${name}" "created" "${def}" \
-      || printf '%-32s %-12s %s\n' "${name}" "FAILED" "${def} (need repo admin?)"
+    printf '%-32s %-12s %s\n' "${name}" "FAILED" "${def} (need repo admin?)"
   fi
 done <<< "${DEFAULTS}"
 
