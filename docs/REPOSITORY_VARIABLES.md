@@ -38,9 +38,9 @@ same layered priority, highest first:
    `DEVELOP_BUILD_PLATFORMS`), if set to a non-empty value. Used only when the
    new variable is unset, so existing repos keep working unchanged. The
    resolver logs a deprecation note naming the new variable to migrate to.
-4. **`ProjectVersion.txt`** — Unity-version only. If `UNITY_VERSION` isn't set
-   by any variable, the resolver reads the version from the project's
-   `ProjectVersion.txt`.
+4. **`ProjectVersion.txt`** — Unity-version only. The Unity editor version is
+   read directly from the project's `ProjectSettings/ProjectVersion.txt` (its
+   single source of truth); there is no Unity-version repository variable.
 5. **Toolkit default** — the hardcoded fallback baked into the resolver,
    documented in the "Default" column of each table below.
 
@@ -53,12 +53,14 @@ an unconfigured repo behaves exactly as it did before this refactor.
 
 | Variable | Default | Applies to | Notes |
 |---|---|---|---|
-| `UNITY_VERSION` | `ProjectVersion.txt` → toolkit default | all flows | Detected version is printed in the Resolve Config report. Never hard-fails when unset. |
-| `UNITY_PROJECT_PATH` | `.` | all flows | Path to the Unity project root, relative to repo root. |
-| `UNITY_BUILD_METHOD` | *(empty = game-ci default)* | all flows | Override the Unity build method invoked by game-ci. |
+| `UNITY_BUILD_METHOD` | *(empty = game-ci default)* | all flows | Override the Unity build method invoked by game-ci (docker lane, non-Addressables). |
 | `UNITY_DEVELOP_DEFINE_SYMBOLS` | *(empty)* | `push/PR → develop` | Legacy: `DEVELOP_DEFINE_SYMBOLS`. |
 | `UNITY_STAGING_DEFINE_SYMBOLS` | *(empty)* | `push/PR → staging` | Legacy: `STAGING_DEFINE_SYMBOLS`. |
 | `UNITY_RELEASE_DEFINE_SYMBOLS` | *(empty)* | `push/PR → release-*` | Legacy: `RELEASE_DEFINE_SYMBOLS`. |
+
+> **Not repository variables (redundant — do not set):**
+> - **Unity version** — the single source of truth is `ProjectSettings/ProjectVersion.txt`. The pipeline reads it directly and errors on any mismatching override, so a `UNITY_VERSION` variable would be redundant/risky. The detected version is printed in the Resolve Config report.
+> - **Project path** — set once by the calling workflow (`unity-build.yml`, `project-path: '.'`), not per-run configuration. There is no `UNITY_PROJECT_PATH` variable.
 
 Define-symbols variables are **additive** — the listed symbols are merged
 into every platform group at build time; existing project symbols (e.g.
@@ -69,8 +71,6 @@ variables (they are branch-scoped) — pass the `define-symbols` dispatch input
 instead.
 
 ```
-UNITY_VERSION=2022.3.45f1
-UNITY_PROJECT_PATH=.
 UNITY_DEVELOP_DEFINE_SYMBOLS=DEVELOPMENT_BUILD;VERBOSE_LOGGING
 UNITY_STAGING_DEFINE_SYMBOLS=STAGING;PROFILER_ENABLED
 UNITY_RELEASE_DEFINE_SYMBOLS=PRODUCTION;LIVE_BACKEND
@@ -259,8 +259,6 @@ them.
 
 ```
 # UNITY
-UNITY_VERSION=2022.3.45f1
-UNITY_PROJECT_PATH=.
 
 # BUILD
 BUILD_DEVELOP_PLATFORMS=Android,WebGL

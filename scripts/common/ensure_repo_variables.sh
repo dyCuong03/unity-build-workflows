@@ -43,7 +43,6 @@ fi
 # GitHub rejects empty variable values (HTTP 422), and "unset" is semantically
 # identical to "empty" for the resolver. Set them by hand only when non-empty.
 DEFAULTS=$(cat <<'TSV'
-UNITY_PROJECT_PATH	.
 BUILD_DEVELOP_PLATFORMS	Android,WebGL
 BUILD_STAGING_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
 BUILD_RELEASE_PLATFORMS	Android,WebGL,Linux64,LinuxServer,Windows64
