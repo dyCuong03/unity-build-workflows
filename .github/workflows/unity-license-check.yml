@@ -29,9 +29,13 @@ on:
   workflow_call:
     inputs:
       unity-version:
-        description: Unity editor version (e.g., 6000.0.26f1)
+        description: >
+          Unity editor version (informational only — the license check resolves
+          the activation strategy from secrets and does not launch Unity).
+          Optional; pass the UNITY_VERSION repository variable to avoid hardcoding.
         type: string
-        required: true
+        required: false
+        default: ''
       unity-activation-strategy:
         description: >
           Force activation strategy: auto (default), manual-ulf, serial,
