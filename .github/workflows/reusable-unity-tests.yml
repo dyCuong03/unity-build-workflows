@@ -126,9 +126,9 @@ on:
 jobs:
   test:
     name: Unity Tests (${{ inputs.test-mode }})
-    # docker → ubuntu-latest ; self-hosted-* → labelled runner arrays.
-    # (timeout applied at step level — job-level expression timeout-minutes broke instantiation.)
-    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON('["self-hosted","Windows","unity"]')) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON('["self-hosted","macOS","unity"]')) || 'ubuntu-latest' }}
+    timeout-minutes: ${{ inputs.build-timeout-minutes }}
+    # docker → inputs.runner-linux-label ; self-hosted-* → labelled runner arrays.
+    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON(format('["{0}","unity"]', inputs.runner-windows-label))) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON(format('["{0}","unity"]', inputs.runner-macos-label))) || inputs.runner-linux-label }}
 
     outputs:
       result:        ${{ steps.set-result.outputs.result }}

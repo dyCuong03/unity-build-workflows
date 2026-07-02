@@ -204,12 +204,12 @@ on:
 jobs:
   build:
     name: Build ${{ inputs.platform }}
+    timeout-minutes: ${{ inputs.build-timeout-minutes }}
     # ── Runner selection by lane ─────────────────────────────────────────────
-    # docker / auto → ubuntu-latest ; self-hosted-* → labelled runner arrays.
-    # (BUILD_TIMEOUT_MINUTES / RUNNER_*_LABEL are resolved+reported by the config
-    #  resolver; job-level timeout-minutes/runs-on expressions referencing them
-    #  broke reusable-workflow instantiation, so timeout is applied at step level.)
-    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON('["self-hosted","Windows","unity"]')) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON('["self-hosted","macOS","unity"]')) || 'ubuntu-latest' }}
+    # docker / auto → inputs.runner-linux-label (default ubuntu-latest)
+    # self-hosted-windows → [inputs.runner-windows-label, unity]
+    # self-hosted-macos   → [inputs.runner-macos-label, unity]
+    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON(format('["{0}","unity"]', inputs.runner-windows-label))) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON(format('["{0}","unity"]', inputs.runner-macos-label))) || inputs.runner-linux-label }}
 
     outputs:
       result:                 ${{ steps.set-outputs.outputs.result }}
