@@ -551,6 +551,7 @@ jobs:
           if "${{ inputs.platform }}"=="Android"     set "BUILD_TARGET=Android"
           if "${{ inputs.platform }}"=="WebGL"       set "BUILD_TARGET=WebGL"
           if "${{ inputs.platform }}"=="Linux64"     set "BUILD_TARGET=StandaloneLinux64"
+          if "${{ inputs.platform }}"=="Windows64"   set "BUILD_TARGET=StandaloneWindows64"
           if "${{ inputs.platform }}"=="LinuxServer" (
             set "BUILD_TARGET=StandaloneLinux64"
             set "EXTRA_PARAMS=-standaloneBuildSubtarget Server"

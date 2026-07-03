@@ -16,7 +16,7 @@
 | LinuxServer | `linux` | `ubuntu-latest` | **Yes** | ✅ Supported |
 | iOS (build) | — native — | `macos-unity-xcode` ¹ | No — native macOS | ✅ Supported (self-hosted) |
 | iOS (release) | — native — | `macos-unity-xcode` ¹ | No — native macOS | ✅ Supported (self-hosted) |
-| Windows64 | — | — | — | ❌ Unsupported ² |
+| Windows64 | `windows-mono` | `ubuntu-latest` (docker) or self-hosted-windows | Docker (Mono) or native | ✅ Supported ² |
 
 ### Footnotes
 
@@ -30,10 +30,13 @@ supported** unless the consumer independently validates the full build + sign +
 export pipeline.  This toolkit does not pre-install Unity or Xcode on
 GitHub-hosted runners.
 
-**² Windows64** — Windows builds require either Windows Docker containers on a
-Windows Docker host or a Windows-native runner with Unity Windows Build Support.
-Neither path has been validated in this toolkit.  Invocations with
-`--target-platform Windows64` are rejected at runtime with a clear error message.
+**² Windows64** — two lanes:
+- **docker (`ubuntu-latest`)** — cross-compiled to `StandaloneWindows64` via the
+  `windows-mono` editor image. **Mono** scripting backend only (Linux Docker
+  cannot produce IL2CPP Windows binaries). This is the default automatic lane.
+- **self-hosted-windows** — a Windows-native runner with Unity Windows Build
+  Support, invoked with `runner-mode=self-hosted-windows`. Required for **IL2CPP**
+  Windows builds. Untested in hosted CI (needs a provisioned Windows runner).
 
 ---
 
@@ -45,7 +48,7 @@ Neither path has been validated in this toolkit.  Invocations with
 | iOS MUST use native macOS — never Linux Docker | Xcode/Apple-signing toolchain; ADR-002 |
 | iOS MUST NOT run on Linux runners | `docker/unity/run_unity_container.py` explicitly rejects `iOS` |
 | Release builds MUST use digest-pinned image references | Immutability guarantee; ADR-003 Decision 3 |
-| Windows64 MUST NOT be advertised as supported | Not validated; would produce silent failures |
+| Windows64 IL2CPP MUST use self-hosted-windows — docker is Mono-only | Linux Docker cannot cross-compile IL2CPP for Windows |
 
 ---
 
