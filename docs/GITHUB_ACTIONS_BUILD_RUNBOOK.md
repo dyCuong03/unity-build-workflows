@@ -252,9 +252,10 @@ Each job can be **re-run individually** from the UI.
 
 ## 3. Platform Build Order
 
-The multi-platform workflow (`unity-build-multi.yml`) runs a single Detect &
-Validate step, then fans out to a matrix build job. Docker platforms run in
-parallel with `fail-fast: false`.
+The pipeline workflow (`unity-pipeline.yml`) runs a single Resolve Config →
+Validate step, then fans out to explicit per-platform build jobs. Docker
+platforms run in parallel. (The legacy `unity-build-multi.yml` matrix workflow
+has been removed — use `unity-pipeline.yml`.)
 
 **Supported Docker platforms** (all run on `ubuntu-latest` + Docker):
 

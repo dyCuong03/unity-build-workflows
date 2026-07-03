@@ -355,13 +355,14 @@ toolkit via reusable workflows:
 
 ```yaml
 jobs:
-  build:
-    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-build-multi.yml@main
+  pipeline:
+    uses: dyCuong03/unity-build-workflows/.github/workflows/unity-pipeline.yml@main
     with:
       platform: Android
-      unity-version: '6000.0.26f1'
       project-path: '.'
-      build-config-path: BuildConfig
+      # Unity version is read from ProjectSettings/ProjectVersion.txt (SSOT);
+      # platforms/tests/etc. are configured via Repository Variables — see
+      # docs/REPOSITORY_VARIABLES.md.
     secrets:
       UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
