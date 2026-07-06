@@ -238,7 +238,9 @@ jobs:
             param([string]$Mode)
             $outDir = Join-Path $resultsDir $Mode
             New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-            $args = @(
+            # NOTE: do NOT name this $args — that is a reserved automatic variable;
+            # reassigning it breaks @-splatting so Unity would receive no arguments.
+            $unityArgs = @(
               "-batchmode", "-nographics",
               "-projectPath", $env:PROJECT_PATH,
               "-runTests",
@@ -246,8 +248,8 @@ jobs:
               "-testResults", (Join-Path $outDir "results.xml"),
               "-logFile",     (Join-Path $outDir "Editor.log")
             )
-            Write-Host "Running Unity $Mode tests..."
-            & $unityExe @args
+            Write-Host "Running Unity $Mode tests ($unityExe)..."
+            & $unityExe @unityArgs
             return $LASTEXITCODE
           }
 
