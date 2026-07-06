@@ -249,8 +249,11 @@ jobs:
               "-logFile",     (Join-Path $outDir "Editor.log")
             )
             Write-Host "Running Unity $Mode tests ($unityExe)..."
-            & $unityExe @unityArgs
-            return $LASTEXITCODE
+            # Unity.exe is a GUI-subsystem app — `& $exe` does NOT wait for it,
+            # so the step would return before results.xml is written. Start-Process
+            # -Wait blocks until Unity exits; -PassThru gives the real exit code.
+            $proc = Start-Process -FilePath $unityExe -ArgumentList $unityArgs -Wait -PassThru -NoNewWindow
+            return $proc.ExitCode
           }
 
           if ($env:TEST_MODE -eq "EditMode" -or $env:TEST_MODE -eq "All") {
