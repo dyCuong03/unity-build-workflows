@@ -167,6 +167,23 @@ on:
         default: 'ubuntu-latest'
         type: string
 
+      # ── Runner / Build-Engine separation (V2) ─────────────────────────────────
+      runner-labels:
+        description: |
+          JSON array string of runs-on labels (e.g. ["ubuntu-latest"] or
+          ["self-hosted","windows"]). Resolver-provided; drives runs-on directly.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
+
+      build-engine:
+        description: |
+          HOW Unity builds: docker (game-ci) | local (Unity Hub install on the
+          runner). Independent of runner-labels (WHERE the job runs).
+        required: false
+        default: 'docker'
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: |
@@ -205,11 +222,12 @@ jobs:
   build:
     name: Build ${{ inputs.platform }}
     timeout-minutes: ${{ inputs.build-timeout-minutes }}
-    # ── Runner selection by lane ─────────────────────────────────────────────
-    # docker / auto → inputs.runner-linux-label (default ubuntu-latest)
-    # self-hosted-windows → [inputs.runner-windows-label, unity]
-    # self-hosted-macos   → [inputs.runner-macos-label, unity]
-    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON(format('["{0}","unity"]', inputs.runner-windows-label))) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON(format('["{0}","unity"]', inputs.runner-macos-label))) || inputs.runner-linux-label }}
+    # ── Runner selection (V2) ────────────────────────────────────────────────
+    # runs-on is driven directly by the resolver-provided runner-labels JSON
+    # array (WHERE the job runs). build-engine (HOW Unity builds) is
+    # independent — see the build-lane gating below. runner-mode/runner-*-label
+    # inputs are kept for backward compat but no longer choose the lane.
+    runs-on: ${{ fromJSON(inputs.runner-labels != '' && inputs.runner-labels || '["ubuntu-latest"]') }}
 
     outputs:
       result:                 ${{ steps.set-outputs.outputs.result }}
@@ -224,16 +242,16 @@ jobs:
       # exit 0 so final-report can collect the status without a workflow failure.
       - name: Guard — iOS requires macOS runner
         id: ios-guard
-        if: ${{ inputs.platform == 'iOS' && runner.os != 'macOS' }}
+        if: ${{ inputs.platform == 'iOS' && !(inputs.build-engine == 'local' && runner.os == 'macOS') }}
         shell: bash
         run: |
-          echo "::error title=iOS Runner Mismatch::Platform iOS requires runner-mode=self-hosted-macos (runner.os must be macOS). Current runner.os=${{ runner.os }}. This build is marked 'blocked'."
-          echo "::warning::iOS build is BLOCKED (not a failure). Provision a self-hosted macOS runner and retry with runner-mode=self-hosted-macos."
+          echo "::error title=iOS Runner Mismatch::Platform iOS requires build-engine=local on a macOS runner (runner.os=macOS). Current build-engine=${{ inputs.build-engine }}, runner.os=${{ runner.os }}. This build is marked 'blocked'."
+          echo "::warning::iOS build is BLOCKED (not a failure). Provision a self-hosted macOS runner and retry with build-engine=local + runner-labels=[\"self-hosted\",\"macOS\"]."
           echo "blocked=true" >> "$GITHUB_OUTPUT"
 
       # ── Step 2: Free disk space (docker / ubuntu-latest only) ─────────────
       - name: Free disk space
-        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
         run: |
           # The Unity editor image (e.g. unityci/editor:ubuntu-<ver>-android-*) is
@@ -345,7 +363,7 @@ jobs:
       # Self-hosted lanes are pre-activated via Unity Hub — no secrets needed.
       - name: Resolve activation strategy
         id: activation
-        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
         env:
           ACTIVATION_STRATEGY: ${{ inputs.activation-strategy }}
@@ -375,7 +393,7 @@ jobs:
       # ── Step 6b: Cache Gradle (docker lane, Android only) ──────────────────
       # Best-effort — cache misses/failures never fail the build.
       - name: Cache Gradle
-        if: ${{ inputs.cache-gradle == true && inputs.platform == 'Android' && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.cache-gradle == true && inputs.platform == 'Android' && inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         continue-on-error: true
         uses: actions/cache@v4
         with:
@@ -388,7 +406,7 @@ jobs:
       # ── Step 6c: Cache NuGet (docker lane) ──────────────────────────────────
       # Best-effort — cache misses/failures never fail the build.
       - name: Cache NuGet
-        if: ${{ inputs.cache-nuget == true && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.cache-nuget == true && inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         continue-on-error: true
         uses: actions/cache@v4
         with:
@@ -399,7 +417,7 @@ jobs:
       # ── Step 6d: Cache Addressables (docker lane) ───────────────────────────
       # Best-effort — cache misses/failures never fail the build.
       - name: Cache Addressables
-        if: ${{ inputs.cache-addressables == true && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.cache-addressables == true && inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         continue-on-error: true
         uses: actions/cache@v4
         with:
@@ -414,7 +432,7 @@ jobs:
       # Uses game-ci/unity-builder to spin up the Unity container and call the build method.
       - name: Build Addressables pre-step (docker)
         id: addressables-pre-docker
-        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -431,7 +449,7 @@ jobs:
       # Best-effort; uses bash (Git Bash on Windows, native on macOS).
       - name: Build Addressables pre-step (self-hosted)
         id: addressables-pre-selfhosted
-        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && (inputs.runner-mode == 'self-hosted-windows' || inputs.runner-mode == 'self-hosted-macos') && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-addressables == true && inputs.platform != 'Addressables' && inputs.build-engine == 'local' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -471,7 +489,7 @@ jobs:
       # ── Step 9a: Build with GameCI (docker lane, non-Addressables) ─────────
       - name: Build with GameCI (docker)
         id: build-docker
-        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -491,7 +509,7 @@ jobs:
       # ── Step 9b: Build Addressables only (docker lane, platform=Addressables)
       - name: Build Addressables only (docker)
         id: build-addressables-docker
-        if: ${{ (inputs.runner-mode == 'docker' || inputs.runner-mode == 'auto') && inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -509,7 +527,7 @@ jobs:
       # No Docker, no UNITY_LICENSE/SERIAL — Unity Hub handles activation.
       - name: Build with local Unity (Windows)
         id: build-windows
-        if: ${{ inputs.runner-mode == 'self-hosted-windows' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'local' && runner.os == 'Windows' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: cmd
         run: |
           @echo off
@@ -541,7 +559,7 @@ jobs:
 
           :: iOS cannot be built on Windows
           if "${{ inputs.platform }}"=="iOS" (
-            echo ::error::iOS builds require a macOS runner. Use runner-mode=self-hosted-macos.
+            echo ::error::iOS builds require build-engine=local on a macOS runner.
             exit /b 1
           )
 
@@ -575,7 +593,7 @@ jobs:
       # No Docker, no UNITY_LICENSE — Unity Hub handles activation.
       - name: Build with local Unity (macOS)
         id: build-macos
-        if: ${{ inputs.runner-mode == 'self-hosted-macos' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'local' && runner.os == 'macOS' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
         run: |
           set -euo pipefail

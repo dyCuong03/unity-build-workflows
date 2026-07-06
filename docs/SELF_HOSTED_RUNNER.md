@@ -1,22 +1,41 @@
 # Self-Hosted Runners
 
-This document covers setting up self-hosted GitHub Actions runners for the Docker-mandatory `unity-build-workflows` platform.
+> **Start here:** self-hosted runners support **two** build engines —
+> `local` (Unity Hub, no Docker) and `docker` (GameCI image via Docker
+> Desktop). See [RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) for
+> the full Runner-vs-Build-Engine model and which one to pick. This document
+> covers the **`self-hosted` + `docker`** (`selfhosted-docker`) setup
+> specifically. For `self-hosted` + `local` (recommended for Unity
+> Personal/Free), see
+> [SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md) instead.
 
-Self-hosted runners are recommended when:
+Self-hosted runners (either build engine) are recommended when:
+
 - Build times on GitHub-hosted runners are too slow
 - Unity license costs require minimizing concurrent activations
 - Network access to private registries is required
 - Specific hardware (large memory, fast storage) is needed
 
+Set the repo variables for this lane:
+
+```
+RUNNER_TYPE=self-hosted
+BUILD_ENGINE=docker
+RUNNER_LABELS=self-hosted,windows   # match your registered runner's labels
+```
+
 ---
 
-## Requirements
+## Requirements (docker build engine)
 
-All self-hosted runners must have **Docker Engine** installed. Unity is never installed directly on the runner.
+The self-hosted host must have **Docker Engine** installed and running. This
+section covers the `docker` build engine only — the `local` build engine
+(Unity Hub) has no Docker requirement; see
+[SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md).
 
 | Component | Requirement |
 |---|---|
-| OS | Ubuntu 22.04+ (recommended) |
+| OS | Ubuntu 22.04+ (recommended), or Windows/macOS with Docker Desktop |
 | Docker Engine | 20.10+ with BuildKit support |
 | RAM | 16 GB minimum (32 GB recommended for IL2CPP) |
 | Storage | 100 GB SSD (Docker images + cache volumes) |
@@ -43,15 +62,20 @@ docker run --rm hello-world
 ### Organization-Level (recommended)
 
 1. **Organization Settings → Actions → Runners → New self-hosted runner**
-2. Select Linux
+2. Select your OS
 3. Follow the setup script
-4. Add labels: `self-hosted`, `unity-docker`
+4. Add labels matching your intended `RUNNER_LABELS` value, e.g.
+   `self-hosted`, `docker`
 
 ### Repository-Level
 
 1. **Repository Settings → Actions → Runners → New self-hosted runner**
 2. Follow the setup script
-3. Add labels: `self-hosted`, `unity-docker`
+3. Add labels matching your intended `RUNNER_LABELS` value
+
+> **Labels must match exactly** (after comma-split/trim/dedup) between the
+> runner's registration and the `RUNNER_LABELS` repo variable, or the job
+> queues indefinitely with "no runner matching labels found."
 
 ---
 
@@ -133,10 +157,25 @@ Set up a weekly cleanup job:
 
 ## Troubleshooting
 
-**"No runner matching labels found"** — Check runner labels match workflow requirements.
+**"No runner matching labels found"** — Check the runner's registered labels
+match `RUNNER_LABELS` exactly (after normalization).
 
-**"Cannot connect to Docker daemon"** — Ensure Docker is running and the runner user is in the `docker` group.
+**"Cannot connect to Docker daemon"** — Ensure Docker is running and the
+runner user is in the `docker` group.
 
 **"Permission denied"** — Verify Docker group membership: `groups $USER | grep docker`
 
 **"Disk full"** — Run `docker system prune -f` and check volume usage.
+
+---
+
+## See also
+
+- [RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) — Runner vs Build
+  Engine architecture, all three execution strategies, licensing per mode.
+- [REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md#runner) — `RUNNER_TYPE` /
+  `BUILD_ENGINE` / `RUNNER_LABELS` variable reference and migration table.
+- [BRANCH_FLOW_CONTRACT.md](BRANCH_FLOW_CONTRACT.md) — resolver contract.
+- [SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md) — the
+  `self-hosted` + `local` (no Docker) setup, recommended for Unity
+  Personal/Free.

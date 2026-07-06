@@ -183,19 +183,95 @@ ADDRESSABLES_RELEASE_ENABLED=true
 
 ## RUNNER
 
-| Variable | Default | Applies to | Notes |
-|---|---|---|---|
-| `RUNNER_DEFAULT_MODE` | `docker` | all flows | Legacy: `DEFAULT_RUNNER_MODE`. Allowed: `docker`, `self-hosted-windows`, `self-hosted-macos`, `auto`. |
-| `RUNNER_WINDOWS_LABEL` | `self-hosted-windows` | self-hosted Windows builds | GitHub Actions runner label to target. |
-| `RUNNER_MACOS_LABEL` | `self-hosted-macos` | self-hosted macOS builds | GitHub Actions runner label to target. |
-| `RUNNER_LINUX_LABEL` | `ubuntu-latest` | docker/Linux builds | GitHub Actions runner label to target. |
+The toolkit separates **where** a job runs (`RUNNER_TYPE` + `RUNNER_LABELS`)
+from **how** Unity builds (`BUILD_ENGINE`). The two are independent settings —
+pick a runner type and a build engine separately, and the resolver combines
+them into an *execution strategy*. See
+[RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) for the full
+architecture, diagrams, and licensing guidance per mode.
+
+| Variable | Allowed values | Default | Applies to | Notes |
+|---|---|---|---|---|
+| `RUNNER_TYPE` | `github-hosted`, `self-hosted` | `github-hosted` | all flows | WHERE the job runs. |
+| `BUILD_ENGINE` | `docker`, `local` | `docker` | all flows | HOW Unity builds. |
+| `RUNNER_LABELS` | comma-separated labels | *(derived, see below)* | all flows | `runs-on` labels for the job. |
+
+`RUNNER_LABELS` default when unset is derived from `RUNNER_TYPE`:
+
+- `RUNNER_TYPE=github-hosted` → `ubuntu-latest`
+- `RUNNER_TYPE=self-hosted` → `self-hosted,windows`
 
 ```
-RUNNER_DEFAULT_MODE=docker
-RUNNER_WINDOWS_LABEL=self-hosted-windows
-RUNNER_MACOS_LABEL=self-hosted-macos
-RUNNER_LINUX_LABEL=ubuntu-latest
+RUNNER_TYPE=github-hosted
+BUILD_ENGINE=docker
+RUNNER_LABELS=ubuntu-latest
 ```
+
+### Resolution priority
+
+Each of the three settings above is resolved independently, in this order:
+
+1. `workflow_dispatch` input (`runner-type` / `build-engine` / `runner-labels`)
+2. Repository variable (`RUNNER_TYPE` / `BUILD_ENGINE` / `RUNNER_LABELS`)
+3. Legacy `RUNNER_DEFAULT_MODE` mapping (see migration table below) — only
+   consulted when neither of the above is set
+4. Toolkit default (`github-hosted` / `docker` / derived labels)
+
+### Supported combinations
+
+| RUNNER_TYPE | BUILD_ENGINE | Execution strategy | Build step |
+|---|---|---|---|
+| `github-hosted` | `docker` | `github-docker` | GameCI Docker image |
+| `self-hosted` | `local` | `selfhosted-local` | Local `Unity.exe` / `.app` |
+| `self-hosted` | `docker` | `selfhosted-docker` | GameCI Docker image via Docker Desktop |
+
+**Invalid:** `RUNNER_TYPE=github-hosted` + `BUILD_ENGINE=local` fails fast in
+Resolve Config — GitHub-hosted runners have no local Unity install. Use
+`BUILD_ENGINE=docker` or switch to `RUNNER_TYPE=self-hosted`.
+
+### RUNNER_LABELS normalization
+
+`RUNNER_LABELS` is comma-split, each entry trimmed, empty entries dropped, and
+duplicates removed (order preserved). The workflow fails if zero labels remain
+after normalization. Examples:
+
+```
+RUNNER_LABELS=self-hosted,windows
+RUNNER_LABELS=self-hosted,windows,unity
+RUNNER_LABELS=self-hosted,windows,gpu
+RUNNER_LABELS=self-hosted,macOS
+RUNNER_LABELS=ubuntu-latest
+```
+
+### Legacy: `RUNNER_DEFAULT_MODE`
+
+`RUNNER_DEFAULT_MODE` (legacy: `DEFAULT_RUNNER_MODE`) still works when
+`RUNNER_TYPE`/`BUILD_ENGINE` are unset. It is mapped as follows, with a
+deprecation warning logged pointing at the new variables:
+
+| Legacy `RUNNER_DEFAULT_MODE` | Maps to |
+|---|---|
+| `docker` | `RUNNER_TYPE=github-hosted`, `BUILD_ENGINE=docker` |
+| `auto` | `RUNNER_TYPE=github-hosted`, `BUILD_ENGINE=docker` |
+| `self-hosted-windows` | `RUNNER_TYPE=self-hosted`, `BUILD_ENGINE=local` (labels default `self-hosted,windows`) |
+| `self-hosted-macos` | `RUNNER_TYPE=self-hosted`, `BUILD_ENGINE=local` (labels default `self-hosted,macOS`) |
+
+Explicit `RUNNER_TYPE`/`BUILD_ENGINE`/`RUNNER_LABELS` (repo variable or
+`workflow_dispatch`) always win over the legacy mapping. A repo that sets
+nothing behaves exactly as before: `github-hosted` + `docker` +
+`ubuntu-latest`.
+
+### Superseded label variables
+
+`RUNNER_WINDOWS_LABEL`, `RUNNER_MACOS_LABEL`, and `RUNNER_LINUX_LABEL` are
+kept as fallback outputs for anything not yet migrated to `RUNNER_LABELS`, but
+new setups should configure `RUNNER_LABELS` directly.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RUNNER_WINDOWS_LABEL` | `self-hosted-windows` | Fallback label; prefer `RUNNER_LABELS`. |
+| `RUNNER_MACOS_LABEL` | `self-hosted-macos` | Fallback label; prefer `RUNNER_LABELS`. |
+| `RUNNER_LINUX_LABEL` | `ubuntu-latest` | Fallback label; prefer `RUNNER_LABELS`. |
 
 ## CACHE
 
@@ -252,9 +328,22 @@ it falls back to a legacy variable.
 | `STAGING_DEFINE_SYMBOLS` | `UNITY_STAGING_DEFINE_SYMBOLS` |
 | `RELEASE_DEFINE_SYMBOLS` | `UNITY_RELEASE_DEFINE_SYMBOLS` |
 
-Everything in the BUILD_CLEAN, RUNNER label, CACHE, and ARTIFACT groups is
-new — there is no legacy equivalent, so those simply default until you set
-them.
+Everything in the BUILD_CLEAN and ARTIFACT groups is new — there is no legacy
+equivalent, so those simply default until you set them.
+
+### Legacy → new: runner / build engine
+
+| Legacy `RUNNER_DEFAULT_MODE` | New `RUNNER_TYPE` | New `BUILD_ENGINE` | Default `RUNNER_LABELS` |
+|---|---|---|---|
+| `docker` | `github-hosted` | `docker` | `ubuntu-latest` |
+| `auto` | `github-hosted` | `docker` | `ubuntu-latest` |
+| `self-hosted-windows` | `self-hosted` | `local` | `self-hosted,windows` |
+| `self-hosted-macos` | `self-hosted` | `local` | `self-hosted,macOS` |
+
+`RUNNER_DEFAULT_MODE` still works (deprecation-logged); it is only consulted
+when `RUNNER_TYPE`/`BUILD_ENGINE` are unset. See
+[RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) for the full
+runner/build-engine model.
 
 ## GitHub configuration examples
 
@@ -284,10 +373,9 @@ ADDRESSABLES_STAGING_ENABLED=false
 ADDRESSABLES_RELEASE_ENABLED=true
 
 # RUNNER
-RUNNER_DEFAULT_MODE=docker
-RUNNER_WINDOWS_LABEL=self-hosted-windows
-RUNNER_MACOS_LABEL=self-hosted-macos
-RUNNER_LINUX_LABEL=ubuntu-latest
+RUNNER_TYPE=github-hosted
+BUILD_ENGINE=docker
+RUNNER_LABELS=ubuntu-latest
 
 # CACHE
 CACHE_LIBRARY_ENABLED=true
@@ -316,54 +404,68 @@ ARTIFACT_COMPRESSION=zip
 
 - `UNITY_SERIAL` is not required and should not be used.
 - `UNITY_LICENSE` is optional — the activation strategy system handles this.
-- If Docker activation is blocked for a Personal/Free license, fall back to a
-  self-hosted Windows runner: set `RUNNER_DEFAULT_MODE=self-hosted-windows`,
-  or select `self-hosted-windows` in the `workflow_dispatch` `runner-mode`
-  input. See
+- **Recommended for Personal/Free:** `RUNNER_TYPE=self-hosted` +
+  `BUILD_ENGINE=local`. It reuses your existing Unity Hub activation, needs no
+  license secrets, and sidesteps Docker activation issues entirely. Docker
+  remains a fully-supported advanced option. See
+  [RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) and
   [UNITY_PERSONAL_DOCKER_LICENSE.md](UNITY_PERSONAL_DOCKER_LICENSE.md).
 
-### Docker lane
+### Docker build engine
 
-- Keep `RUNNER_DEFAULT_MODE=docker` for the default CI path — it's the only
-  runner mode CI itself verifies end-to-end.
+- Keep `RUNNER_TYPE=github-hosted` + `BUILD_ENGINE=docker` for the default CI
+  path — it's the only combination CI itself verifies end-to-end.
 - `CACHE_LIBRARY_ENABLED` / `CACHE_GRADLE_ENABLED` matter most here since
   Docker jobs run on ephemeral GitHub-hosted runners with no persistent disk
   between separate machines.
 - Leave `BUILD_CLEAN=false` in Docker unless you're troubleshooting — clean
   builds are considerably more expensive on shared runners.
 
-### Self-hosted Windows runner
+### Self-hosted runner + local build engine
 
-- Set `RUNNER_DEFAULT_MODE=self-hosted-windows` and confirm
-  `RUNNER_WINDOWS_LABEL` matches the label of your provisioned runner(s).
+- Set `RUNNER_TYPE=self-hosted`, `BUILD_ENGINE=local`, and confirm
+  `RUNNER_LABELS` matches the label(s) of your provisioned runner(s) (default
+  `self-hosted,windows`).
 - Required for IL2CPP Windows64 builds (the Docker lane only supports Mono
   scripting backend for Windows64).
-- See
-  [SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md) for
-  provisioning steps.
+- See [RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) for the
+  architecture and [SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md)
+  for provisioning steps.
 
 ## Known limitations
 
 - **`ARTIFACT_COMPRESSION`** only supports `zip` today (maps directly to
   `actions/upload-artifact`'s zip packaging). Other formats are not
   implemented; setting anything else fails validation.
-- **Self-hosted runner modes** (`self-hosted-windows`, `self-hosted-macos`)
-  require you to provision and register the runner(s) yourself. CI for this
-  toolkit only verifies the `docker` / `ubuntu-latest` lane end-to-end.
+- **`RUNNER_TYPE=self-hosted`** requires you to provision and register the
+  runner(s) yourself. CI for this toolkit only verifies `github-hosted` +
+  `docker` end-to-end at runtime; `self-hosted` + `docker` is verified at the
+  Resolve Config level only (needs Docker Desktop on the host). See
+  [RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md#known-limitations).
+- **`RUNNER_TYPE=github-hosted` + `BUILD_ENGINE=local` is invalid** — fails
+  fast at Resolve Config since GitHub-hosted runners have no local Unity
+  install.
 - **iOS is manual-dispatch only** — iOS in any `BUILD_*_PLATFORMS` variable
   is silently ignored for automatic branch flows; there is no automatic path
-  to a macOS runner. Trigger iOS via `workflow_dispatch` with `platform=iOS`.
-- **`RUNNER_*_LABEL` customization** for self-hosted runners is best-effort:
-  the toolkit passes the label through to the job's `runs-on`, but it cannot
-  validate that a runner with that label is actually online or configured
+  to a macOS runner. Trigger iOS via `workflow_dispatch` with `platform=iOS`
+  (self-hosted macOS runner, `BUILD_ENGINE=local`, forced regardless of the
+  resolved runner/engine settings).
+- **`RUNNER_LABELS` / `RUNNER_*_LABEL` customization** is best-effort: the
+  toolkit passes the labels through to the job's `runs-on`, but it cannot
+  validate that a runner with those labels is actually online or configured
   correctly.
 
 ## Validation summary
 
 - Platform names: case-sensitive, one of `Android`, `WebGL`, `Linux64`,
   `LinuxServer`, `Windows64`, `iOS`.
-- Runner mode: one of `docker`, `self-hosted-windows`, `self-hosted-macos`,
-  `auto`.
+- `RUNNER_TYPE`: one of `github-hosted`, `self-hosted`.
+- `BUILD_ENGINE`: one of `docker`, `local`.
+- `RUNNER_LABELS`: comma-separated, trimmed, deduplicated; fails if empty
+  after normalization.
+- Legacy `RUNNER_DEFAULT_MODE`: one of `docker`, `self-hosted-windows`,
+  `self-hosted-macos`, `auto` (only consulted when the new variables are
+  unset).
 - Booleans (`*_ENABLED`, `TEST_FAIL_FAST`, `BUILD_CLEAN` when not `auto`):
   exactly `true` or `false`.
 - `BUILD_TIMEOUT_MINUTES` / `ARTIFACT_RETENTION_DAYS`: positive integers.

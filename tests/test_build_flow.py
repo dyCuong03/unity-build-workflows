@@ -1516,19 +1516,38 @@ class TestGroupedConfigPriorityResolution:
         assert out["define-symbols"] == "NEWSYM"
 
     def test_runner_mode_new_beats_legacy(self):
+        """RUNNER_DEFAULT_MODE is legacy-only now (no NEW_RUNNER_DEFAULT_MODE "new"
+        semantics); it maps to runner-type/build-engine. The NEW_/bare tier of
+        RUNNER_DEFAULT_MODE still beats the VAR_/bare-legacy tier *within* the
+        legacy-mapping resolution itself (see resolve_setting call for
+        _legacy_mode_raw), so NEW_RUNNER_DEFAULT_MODE=auto wins over
+        VAR_DEFAULT_RUNNER_MODE=self-hosted-macos and maps to
+        github-hosted+docker."""
         out = parse_outputs(run_flow({
             "EVENT_NAME": "push", "REF_NAME": "develop",
             "NEW_RUNNER_DEFAULT_MODE": "auto",
             "VAR_DEFAULT_RUNNER_MODE": "self-hosted-macos",
         }).stdout)
-        assert out["runner-mode"] == "auto"
+        assert out["runner-type"] == "github-hosted"
+        assert out["build-engine"] == "docker"
+        assert out["runner-mode"] == "docker"
+        assert out["runner-type-source"] == "variable-legacy"
+        assert out["build-engine-source"] == "variable-legacy"
 
     def test_runner_mode_legacy_beats_default(self):
+        """VAR_DEFAULT_RUNNER_MODE=self-hosted-macos (legacy-only, no new axis
+        vars set) maps to runner-type=self-hosted, build-engine=local, with
+        macOS default labels."""
         out = parse_outputs(run_flow({
             "EVENT_NAME": "push", "REF_NAME": "develop",
             "VAR_DEFAULT_RUNNER_MODE": "self-hosted-macos",
         }).stdout)
-        assert out["runner-mode"] == "self-hosted-macos"
+        assert out["runner-type"] == "self-hosted"
+        assert out["build-engine"] == "local"
+        assert out["runner-mode"] == "self-hosted-windows"
+        assert out["runner-labels"] == '["self-hosted","macOS"]'
+        assert out["runner-type-source"] == "variable-legacy"
+        assert out["build-engine-source"] == "variable-legacy"
 
 
 class TestGroupedConfigValidation:
@@ -1805,3 +1824,195 @@ class TestGroupedConfigTestModeDerivation:
         }).stdout)
         assert out["run-tests"] == "false"
         assert out["test-mode"] == "None"
+
+
+# ===========================================================================
+# Runner / Build-Engine separation (RUNNER_ENGINE_CONTRACT.md V2)
+# ===========================================================================
+#
+# Runner  = WHERE the job runs   -> runner-type (github-hosted|self-hosted) + runner-labels
+# Engine  = HOW Unity builds     -> build-engine (docker|local)
+# Priority: workflow_dispatch (IN_*) > new repo variable (NEW_*/bare) >
+# legacy repo variable (RUNNER_DEFAULT_MODE mapping) > toolkit default.
+
+class TestRunnerEngine:
+    """Runner-type / build-engine / execution-strategy / runner-labels /
+    activation-strategy resolution, per RUNNER_ENGINE_CONTRACT.md."""
+
+    # -- default: no vars set --------------------------------------------
+
+    def test_default_no_vars(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert out["runner-type"] == "github-hosted"
+        assert out["build-engine"] == "docker"
+        assert out["execution-strategy"] == "github-docker"
+        assert out["runner-labels"] == '["ubuntu-latest"]'
+        assert out["activation-strategy"] == "auto"
+        assert out["runner-type-source"] == "default"
+        assert out["build-engine-source"] == "default"
+
+    # -- self-hosted + local -----------------------------------------------
+
+    def test_self_hosted_local(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["runner-type"] == "self-hosted"
+        assert out["build-engine"] == "local"
+        assert out["execution-strategy"] == "selfhosted-local"
+        assert out["runner-labels"] == '["self-hosted","windows"]'
+        assert out["activation-strategy"] == "none"
+
+    # -- self-hosted + docker -----------------------------------------------
+
+    def test_self_hosted_docker(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "docker",
+        })
+        assert r.returncode == 0
+        out = parse_outputs(r.stdout)
+        assert out["execution-strategy"] == "selfhosted-docker"
+        assert out["activation-strategy"] == "auto"
+
+    # -- github-hosted + local: INVALID --------------------------------------
+
+    def test_github_hosted_local_invalid(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "github-hosted",
+            "NEW_BUILD_ENGINE": "local",
+        })
+        assert r.returncode != 0
+        assert "GitHub-hosted" in r.stderr
+
+    # -- legacy RUNNER_DEFAULT_MODE mapping -----------------------------------
+
+    def test_legacy_self_hosted_windows(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "RUNNER_DEFAULT_MODE": "self-hosted-windows",
+        }).stdout)
+        assert out["runner-type"] == "self-hosted"
+        assert out["build-engine"] == "local"
+        assert out["runner-type-source"] == "variable-legacy"
+        assert out["runner-labels"] == '["self-hosted","windows"]'
+
+    def test_legacy_docker(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "RUNNER_DEFAULT_MODE": "docker",
+        }).stdout)
+        assert out["runner-type"] == "github-hosted"
+        assert out["build-engine"] == "docker"
+
+    def test_legacy_self_hosted_macos(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "RUNNER_DEFAULT_MODE": "self-hosted-macos",
+        }).stdout)
+        assert out["runner-type"] == "self-hosted"
+        assert out["build-engine"] == "local"
+        assert out["runner-labels"] == '["self-hosted","macOS"]'
+
+    # -- dispatch overrides repo var -------------------------------------------
+
+    def test_dispatch_runner_type_overrides_repo_var(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "IN_RUNNER_TYPE": "self-hosted",
+            "NEW_RUNNER_TYPE": "github-hosted",
+            "NEW_BUILD_ENGINE": "local",
+        }).stdout)
+        assert out["runner-type"] == "self-hosted"
+        assert out["runner-type-source"] == "dispatch"
+
+    def test_dispatch_build_engine_overrides_repo_var(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "IN_BUILD_ENGINE": "local",
+            "NEW_BUILD_ENGINE": "docker",
+            "NEW_RUNNER_TYPE": "self-hosted",
+        }).stdout)
+        assert out["build-engine"] == "local"
+        assert out["build-engine-source"] == "dispatch"
+
+    # -- runner-labels normalization --------------------------------------------
+
+    def test_labels_default_github_hosted(self):
+        out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "develop"}).stdout)
+        assert out["runner-labels"] == '["ubuntu-latest"]'
+
+    def test_labels_default_self_hosted(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+        }).stdout)
+        assert out["runner-labels"] == '["self-hosted","windows"]'
+
+    def test_labels_custom(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+            "NEW_RUNNER_LABELS": "self-hosted,windows,gpu",
+        }).stdout)
+        assert out["runner-labels"] == '["self-hosted","windows","gpu"]'
+
+    def test_labels_deduplicated(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+            "NEW_RUNNER_LABELS": "self-hosted,windows,windows",
+        }).stdout)
+        assert out["runner-labels"] == '["self-hosted","windows"]'
+
+    def test_labels_whitespace_trimmed(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+            "NEW_RUNNER_LABELS": " self-hosted , windows ",
+        }).stdout)
+        assert out["runner-labels"] == '["self-hosted","windows"]'
+
+    def test_labels_empty_fails(self):
+        r = run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+            "NEW_RUNNER_LABELS": " , ",
+        })
+        assert r.returncode != 0
+
+    # -- activation-strategy ------------------------------------------------
+
+    def test_activation_local_is_none(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_RUNNER_TYPE": "self-hosted",
+            "NEW_BUILD_ENGINE": "local",
+        }).stdout)
+        assert out["activation-strategy"] == "none"
+
+    def test_activation_docker_defaults_auto(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_ENGINE": "docker",
+        }).stdout)
+        assert out["activation-strategy"] == "auto"
+
+    def test_activation_docker_dispatch_override(self):
+        out = parse_outputs(run_flow({
+            "EVENT_NAME": "push", "REF_NAME": "develop",
+            "NEW_BUILD_ENGINE": "docker",
+            "IN_ACTIVATION_STRATEGY": "manual-license",
+        }).stdout)
+        assert out["activation-strategy"] == "manual-license"

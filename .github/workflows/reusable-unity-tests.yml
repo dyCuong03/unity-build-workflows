@@ -95,6 +95,23 @@ on:
         default: 'ubuntu-latest'
         type: string
 
+      # ── Runner / Build-Engine separation (V2) ─────────────────────────────────
+      runner-labels:
+        description: |
+          JSON array string of runs-on labels (e.g. ["ubuntu-latest"] or
+          ["self-hosted","windows"]). Resolver-provided; drives runs-on directly.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
+
+      build-engine:
+        description: |
+          HOW Unity runs tests: docker (game-ci) | local (Unity Hub install on
+          the runner). Independent of runner-labels (WHERE the job runs).
+        required: false
+        default: 'docker'
+        type: string
+
     secrets:
       UNITY_LICENSE:
         description: Raw .ulf file contents (personal-combined strategy). Optional.
@@ -127,8 +144,11 @@ jobs:
   test:
     name: Unity Tests (${{ inputs.test-mode }})
     timeout-minutes: ${{ inputs.build-timeout-minutes }}
-    # docker → inputs.runner-linux-label ; self-hosted-* → labelled runner arrays.
-    runs-on: ${{ (inputs.runner-mode == 'self-hosted-windows' && fromJSON(format('["{0}","unity"]', inputs.runner-windows-label))) || (inputs.runner-mode == 'self-hosted-macos' && fromJSON(format('["{0}","unity"]', inputs.runner-macos-label))) || inputs.runner-linux-label }}
+    # ── Runner selection (V2) ────────────────────────────────────────────────
+    # runs-on is driven directly by the resolver-provided runner-labels JSON
+    # array (WHERE the job runs). build-engine (HOW tests run) is independent.
+    # runner-mode/runner-*-label inputs are kept for backward compat only.
+    runs-on: ${{ fromJSON(inputs.runner-labels != '' && inputs.runner-labels || '["ubuntu-latest"]') }}
 
     outputs:
       result:        ${{ steps.set-result.outputs.result }}
@@ -139,7 +159,7 @@ jobs:
     steps:
       # ── 1. Free disk space (docker / ubuntu-latest only) ─────────────────────
       - name: Free disk space
-        if: ${{ inputs.runner-mode == 'docker' }}
+        if: ${{ inputs.build-engine == 'docker' }}
         shell: bash
         run: |
           # Unity editor image is ~15GB; reclaim host space before pulling it.
@@ -176,7 +196,7 @@ jobs:
       # game-ci/unity-test-runner handles activation via UNITY_LICENSE+EMAIL+PASSWORD.
       # Run EditMode first; PlayMode step uses if:always() so it still runs if EditMode fails.
       - name: Run EditMode tests (Docker)
-        if: ${{ inputs.runner-mode == 'docker' && (inputs.test-mode == 'EditMode' || inputs.test-mode == 'All') }}
+        if: ${{ inputs.build-engine == 'docker' && (inputs.test-mode == 'EditMode' || inputs.test-mode == 'All') }}
         continue-on-error: true   # job result is decided by parsed tests-failed, not the runner's exit code
         uses: game-ci/unity-test-runner@v4
         env:
@@ -196,7 +216,7 @@ jobs:
         if: >-
           ${{
             always() &&
-            inputs.runner-mode == 'docker' &&
+            inputs.build-engine == 'docker' &&
             (inputs.test-mode == 'PlayMode' || inputs.test-mode == 'All')
           }}
         continue-on-error: true   # no PlayMode tests => non-zero exit; not a real failure
@@ -216,7 +236,7 @@ jobs:
       # Local Unity installation (no Docker, no license secrets).
       # Runs EditMode and/or PlayMode sequentially; continues past EditMode failure for All.
       - name: Run tests (Windows)
-        if: ${{ inputs.runner-mode == 'self-hosted-windows' }}
+        if: ${{ inputs.build-engine == 'local' && runner.os == 'Windows' }}
         # Windows PowerShell (always present on Windows); do NOT require pwsh
         # (PowerShell 7), which self-hosted Windows runners may not have.
         shell: powershell
@@ -279,7 +299,7 @@ jobs:
       # ── 4d. Run tests — self-hosted-macOS lane ────────────────────────────────
       # Local Unity installation on macOS (no Docker, no license secrets).
       - name: Run tests (macOS)
-        if: ${{ inputs.runner-mode == 'self-hosted-macos' }}
+        if: ${{ inputs.build-engine == 'local' && runner.os == 'macOS' }}
         shell: bash
         env:
           TEST_MODE:     ${{ inputs.test-mode }}

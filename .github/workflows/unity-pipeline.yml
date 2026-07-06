@@ -75,6 +75,24 @@ on:
         default: 'docker'
         type: string
 
+      runner-type:
+        description: "WHERE the job runs: github-hosted | self-hosted (blank = resolver default/legacy mapping)."
+        required: false
+        default: ''
+        type: string
+
+      build-engine:
+        description: "HOW Unity builds: docker | local (blank = resolver default/legacy mapping)."
+        required: false
+        default: ''
+        type: string
+
+      runner-labels:
+        description: "Comma-separated runs-on labels (blank = resolver-derived from runner-type)."
+        required: false
+        default: ''
+        type: string
+
       unity-version:
         description: "Override Unity version (blank = use ProjectSettings/ProjectVersion.txt)."
         required: false
@@ -159,6 +177,13 @@ jobs:
       runner-windows-label:    ${{ steps.flow.outputs.runner-windows-label }}
       runner-macos-label:      ${{ steps.flow.outputs.runner-macos-label }}
       runner-linux-label:      ${{ steps.flow.outputs.runner-linux-label }}
+      # ── Runner / Build-Engine separation (V2) ───────────────────────────────
+      runner-type:             ${{ steps.flow.outputs.runner-type }}
+      build-engine:            ${{ steps.flow.outputs.build-engine }}
+      execution-strategy:      ${{ steps.flow.outputs.execution-strategy }}
+      runner-labels:           ${{ steps.flow.outputs.runner-labels }}
+      runner-labels-csv:       ${{ steps.flow.outputs.runner-labels-csv }}
+      activation-strategy:     ${{ steps.flow.outputs.activation-strategy }}
       cache-library:           ${{ steps.flow.outputs.cache-library }}
       cache-gradle:            ${{ steps.flow.outputs.cache-gradle }}
       cache-addressables:      ${{ steps.flow.outputs.cache-addressables }}
@@ -286,6 +311,14 @@ jobs:
           NEW_RUNNER_WINDOWS_LABEL:     ${{ vars.RUNNER_WINDOWS_LABEL }}
           NEW_RUNNER_MACOS_LABEL:       ${{ vars.RUNNER_MACOS_LABEL }}
           NEW_RUNNER_LINUX_LABEL:       ${{ vars.RUNNER_LINUX_LABEL }}
+          # ── Runner / Build-Engine separation (V2) ───────────────────────────
+          NEW_RUNNER_TYPE:              ${{ vars.RUNNER_TYPE }}
+          NEW_BUILD_ENGINE:             ${{ vars.BUILD_ENGINE }}
+          NEW_RUNNER_LABELS:            ${{ vars.RUNNER_LABELS }}
+          IN_RUNNER_TYPE:               ${{ inputs.runner-type }}
+          IN_BUILD_ENGINE:              ${{ inputs.build-engine }}
+          IN_RUNNER_LABELS:             ${{ inputs.runner-labels }}
+          IN_ACTIVATION_STRATEGY:       ${{ inputs.activation-strategy }}
           NEW_CACHE_LIBRARY_ENABLED:    ${{ vars.CACHE_LIBRARY_ENABLED }}
           NEW_CACHE_GRADLE_ENABLED:     ${{ vars.CACHE_GRADLE_ENABLED }}
           NEW_CACHE_ADDRESSABLES_ENABLED: ${{ vars.CACHE_ADDRESSABLES_ENABLED }}
@@ -307,6 +340,11 @@ jobs:
           ENVIRONMENT:    ${{ steps.flow.outputs.environment }}
           UNITY_VERSION:  ${{ steps.version.outputs.version }}
           RUNNER_MODE:    ${{ steps.flow.outputs.runner-mode }}
+          RUNNER_TYPE:        ${{ steps.flow.outputs.runner-type }}
+          RUNNER_LABELS_CSV:  ${{ steps.flow.outputs.runner-labels-csv }}
+          BUILD_ENGINE:       ${{ steps.flow.outputs.build-engine }}
+          EXECUTION_STRATEGY: ${{ steps.flow.outputs.execution-strategy }}
+          ACTIVATION_STRATEGY: ${{ steps.flow.outputs.activation-strategy }}
           SEL_ANDROID:     ${{ steps.flow.outputs.build-android }}
           SEL_WEBGL:       ${{ steps.flow.outputs.build-webgl }}
           SEL_LINUX64:     ${{ steps.flow.outputs.build-linux64 }}
@@ -352,6 +390,11 @@ jobs:
             echo "| Environment | \`${ENVIRONMENT:-unknown}\` |"
             echo "| Unity Version | \`${UNITY_VERSION:-unknown}\` |"
             echo "| Runner | \`${RUNNER_MODE:-unknown}\` |"
+            echo "| Runner Type | \`${RUNNER_TYPE:-unknown}\` |"
+            echo "| Runner Labels | \`${RUNNER_LABELS_CSV:-unknown}\` |"
+            echo "| Build Engine | \`${BUILD_ENGINE:-unknown}\` |"
+            echo "| Execution Strategy | \`${EXECUTION_STRATEGY:-unknown}\` |"
+            echo "| Activation Strategy | \`${ACTIVATION_STRATEGY:-unknown}\` |"
             echo "| Platforms | ${PLATFORMS} |"
             echo "| Tests | \`${TESTS}\` |"
             echo "| Addressables | \`${BUILD_ADDR:-false}\` |"
@@ -420,7 +463,9 @@ jobs:
       test-mode:           ${{ needs.resolve-config.outputs.test-mode }}
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
       build-timeout-minutes:   ${{ fromJSON(needs.resolve-config.outputs.build-timeout-minutes) }}
       cache-library:           ${{ fromJSON(needs.resolve-config.outputs.cache-library) }}
@@ -451,7 +496,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
@@ -490,7 +537,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       android-export-type: ${{ needs.resolve-config.outputs.android-export-type }}
@@ -530,7 +579,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
@@ -569,7 +620,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
@@ -608,7 +661,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
@@ -651,7 +706,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         ${{ inputs.runner-mode || needs.resolve-config.outputs.runner-mode }}
-      activation-strategy: ${{ inputs.activation-strategy || 'auto' }}
+      runner-labels:       ${{ needs.resolve-config.outputs.runner-labels }}
+      build-engine:        ${{ needs.resolve-config.outputs.build-engine }}
+      activation-strategy: ${{ needs.resolve-config.outputs.activation-strategy }}
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false
       toolkit-ref:         ${{ needs.resolve-config.outputs.toolkit-ref }}
@@ -693,6 +750,9 @@ jobs:
       project-path:        ${{ needs.resolve-config.outputs.project-path }}
       environment:         ${{ needs.resolve-config.outputs.environment }}
       runner-mode:         self-hosted-macos
+      # iOS is always local macOS — literal labels (iOS never uses github-hosted/docker).
+      runner-labels:       '["self-hosted","macOS"]'
+      build-engine:        local
       activation-strategy: preactivated
       clean-build:         ${{ fromJSON(needs.resolve-config.outputs.clean-build) }}
       build-addressables:  false

@@ -449,17 +449,193 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Group: RUNNER
+# Group: RUNNER / BUILD ENGINE
+#
+# Runner  = WHERE the job runs   → RUNNER_TYPE (github-hosted|self-hosted) + RUNNER_LABELS
+# Engine  = HOW Unity builds     → BUILD_ENGINE (docker|local)
+# These are independent axes. Priority: workflow_dispatch (IN_*) > new repo
+# variable (NEW_*/bare) > legacy repo variable (RUNNER_DEFAULT_MODE mapping)
+# > toolkit default. Explicit new/dispatch settings always beat the legacy
+# mapping, even if only one of the two axes is explicit.
 # ---------------------------------------------------------------------------
-resolve_setting "docker" "RUNNER_DEFAULT_MODE" \
+IN_RUNNER_TYPE="${IN_RUNNER_TYPE:-}"
+IN_BUILD_ENGINE="${IN_BUILD_ENGINE:-}"
+IN_RUNNER_LABELS="${IN_RUNNER_LABELS:-}"
+IN_ACTIVATION_STRATEGY="${IN_ACTIVATION_STRATEGY:-}"
+
+VALID_RUNNER_TYPES="github-hosted self-hosted"
+VALID_BUILD_ENGINES="docker local"
+
+validate_runner_type() {
+    local val="$1"
+    local v
+    for v in ${VALID_RUNNER_TYPES}; do [[ "${val}" == "${v}" ]] && return 0; done
+    log_error "Invalid runner-type='${val}'. Allowed: ${VALID_RUNNER_TYPES}"
+    exit 1
+}
+
+validate_build_engine() {
+    local val="$1"
+    local v
+    for v in ${VALID_BUILD_ENGINES}; do [[ "${val}" == "${v}" ]] && return 0; done
+    log_error "Invalid build-engine='${val}'. Allowed: ${VALID_BUILD_ENGINES}"
+    exit 1
+}
+
+# normalize_runner_labels CSV — trim/split/dedupe, print one label per line
+normalize_runner_labels() {
+    local csv="$1" normalized label seen existing
+    normalized="${csv//,/ }"
+    local -a result=()
+    for label in ${normalized}; do
+        label="$(echo "${label}" | tr -d '[:space:]')"
+        [[ -z "${label}" ]] && continue
+        seen="false"
+        if [[ "${#result[@]}" -gt 0 ]]; then
+            for existing in "${result[@]}"; do
+                [[ "${existing}" == "${label}" ]] && seen="true" && break
+            done
+        fi
+        [[ "${seen}" == "true" ]] && continue
+        result+=("${label}")
+    done
+    if [[ "${#result[@]}" -gt 0 ]]; then
+        printf '%s\n' "${result[@]}"
+    fi
+}
+
+# --- explicit (dispatch / new-variable) tiers, no default applied yet -------
+resolve_setting "" "" \
+    dispatch "${IN_RUNNER_TYPE}" \
+    variable-new "${NEW_RUNNER_TYPE:-}" \
+    variable-new "${RUNNER_TYPE:-}"
+_rt_explicit="${_resolved_value}"
+_rt_explicit_source="${_resolved_source}"
+
+resolve_setting "" "" \
+    dispatch "${IN_BUILD_ENGINE}" \
+    variable-new "${NEW_BUILD_ENGINE:-}" \
+    variable-new "${BUILD_ENGINE:-}"
+_be_explicit="${_resolved_value}"
+_be_explicit_source="${_resolved_source}"
+
+# --- legacy RUNNER_DEFAULT_MODE raw value (no mapping/default applied yet) --
+resolve_setting "" "" \
     variable-new "${NEW_RUNNER_DEFAULT_MODE:-}" \
     variable-new "${RUNNER_DEFAULT_MODE:-}" \
     variable-legacy "${LEG_DEFAULT_RUNNER_MODE:-}" \
     variable-legacy "${DEFAULT_RUNNER_MODE:-}" \
     variable-legacy "${VAR_DEFAULT_RUNNER_MODE:-}"
-runner_mode="${_resolved_value}"
-runner_mode_source="${_resolved_source}"
-validate_runner_mode "${runner_mode}" "runner-mode"
+_legacy_mode_raw="${_resolved_value}"
+
+_legacy_default_labels=""
+if [[ -z "${_rt_explicit}" && -z "${_be_explicit}" && -n "${_legacy_mode_raw}" ]]; then
+    # Legacy-only config: map RUNNER_DEFAULT_MODE to runner-type + build-engine.
+    case "${_legacy_mode_raw}" in
+        docker|auto)
+            runner_type="github-hosted"; build_engine="docker"
+            ;;
+        self-hosted-windows)
+            runner_type="self-hosted"; build_engine="local"
+            _legacy_default_labels="self-hosted,windows"
+            ;;
+        self-hosted-macos)
+            runner_type="self-hosted"; build_engine="local"
+            _legacy_default_labels="self-hosted,macOS"
+            ;;
+        *)
+            log_error "Invalid RUNNER_DEFAULT_MODE='${_legacy_mode_raw}'. Allowed: docker auto self-hosted-windows self-hosted-macos"
+            exit 1
+            ;;
+    esac
+    runner_type_source="variable-legacy"
+    build_engine_source="variable-legacy"
+    log_warn "Legacy variable RUNNER_DEFAULT_MODE='${_legacy_mode_raw}' in use; please migrate to repository variables RUNNER_TYPE/BUILD_ENGINE."
+else
+    if [[ -n "${_rt_explicit}" ]]; then
+        runner_type="${_rt_explicit}"; runner_type_source="${_rt_explicit_source}"
+    else
+        runner_type="github-hosted"; runner_type_source="default"
+    fi
+    if [[ -n "${_be_explicit}" ]]; then
+        build_engine="${_be_explicit}"; build_engine_source="${_be_explicit_source}"
+    else
+        build_engine="docker"; build_engine_source="default"
+    fi
+fi
+
+validate_runner_type "${runner_type}"
+validate_build_engine "${build_engine}"
+
+if [[ "${runner_type}" == "github-hosted" && "${build_engine}" == "local" ]]; then
+    log_error "GitHub-hosted runners have no local Unity install; use BUILD_ENGINE=docker or RUNNER_TYPE=self-hosted."
+    exit 1
+fi
+
+# --- runner labels -----------------------------------------------------------
+resolve_setting "" "" \
+    dispatch "${IN_RUNNER_LABELS}" \
+    variable-new "${NEW_RUNNER_LABELS:-}" \
+    variable-new "${RUNNER_LABELS:-}"
+_labels_explicit="${_resolved_value}"
+_labels_explicit_source="${_resolved_source}"
+
+if [[ -n "${_labels_explicit}" ]]; then
+    runner_labels_raw="${_labels_explicit}"
+    runner_labels_source="${_labels_explicit_source}"
+elif [[ -n "${_legacy_default_labels}" ]]; then
+    runner_labels_raw="${_legacy_default_labels}"
+    runner_labels_source="variable-legacy"
+elif [[ "${runner_type}" == "self-hosted" ]]; then
+    runner_labels_raw="self-hosted,windows"
+    runner_labels_source="default"
+else
+    runner_labels_raw="ubuntu-latest"
+    runner_labels_source="default"
+fi
+
+mapfile -t runner_labels_arr < <(normalize_runner_labels "${runner_labels_raw}")
+if [[ "${#runner_labels_arr[@]}" -eq 0 ]]; then
+    log_error "RUNNER_LABELS resolved to no usable labels (raw='${runner_labels_raw}')."
+    exit 1
+fi
+
+runner_labels_json="["
+_first_label="true"
+for _label in "${runner_labels_arr[@]}"; do
+    if [[ "${_first_label}" == "true" ]]; then
+        _first_label="false"
+    else
+        runner_labels_json+=","
+    fi
+    runner_labels_json+="\"${_label}\""
+done
+runner_labels_json+="]"
+runner_labels_csv="$(IFS=,; echo "${runner_labels_arr[*]}")"
+
+# --- execution-strategy -------------------------------------------------------
+case "${runner_type}:${build_engine}" in
+    github-hosted:docker) execution_strategy="github-docker" ;;
+    self-hosted:local)    execution_strategy="selfhosted-local" ;;
+    self-hosted:docker)   execution_strategy="selfhosted-docker" ;;
+esac
+
+# --- activation-strategy -------------------------------------------------------
+if [[ "${build_engine}" == "local" ]]; then
+    activation_strategy="none"
+elif [[ -n "${IN_ACTIVATION_STRATEGY}" ]]; then
+    activation_strategy="${IN_ACTIVATION_STRATEGY}"
+else
+    activation_strategy="auto"
+fi
+
+# --- backward bridge: derive legacy runner-mode for unmigrated consumers ------
+case "${runner_type}:${build_engine}" in
+    github-hosted:docker) runner_mode="docker" ;;
+    self-hosted:local)    runner_mode="self-hosted-windows" ;;
+    self-hosted:docker)   runner_mode="docker" ;;
+esac
+runner_mode_source="${runner_type_source}"
 
 resolve_setting "self-hosted-windows" "" \
     variable-new "${NEW_RUNNER_WINDOWS_LABEL:-}" \
@@ -687,6 +863,11 @@ _source_label() {
     echo "Unity Project Path:   ${unity_project_path} (source: $(_source_label "${unity_project_path_source}"))"
     echo "Unity Build Method:   ${unity_build_method:-<game-ci default>} (source: $(_source_label "${unity_build_method_source}"))"
     echo "Runner:               mode=${runner_mode} (source: $(_source_label "${runner_mode_source}")) windows='${runner_windows_label}' macos='${runner_macos_label}' linux='${runner_linux_label}'"
+    echo "Runner Type:          ${runner_type} (source: $(_source_label "${runner_type_source}"))"
+    echo "Runner Labels:        ${runner_labels_csv} (source: $(_source_label "${runner_labels_source}"))"
+    echo "Build Engine:         ${build_engine} (source: $(_source_label "${build_engine_source}"))"
+    echo "Execution Strategy:   ${execution_strategy}"
+    echo "Activation Strategy:  ${activation_strategy}"
     echo "Platforms:            android=${build_android} webgl=${build_webgl} linux64=${build_linux64} linuxserver=${build_linuxserver} windows64=${build_windows64} ios=${build_ios} (source: $(_source_label "${platform_source}"))"
     echo "Tests:                run-tests=${run_tests} (source: $(_source_label "${run_tests_source}")) test-mode=${test_mode} editmode=${test_editmode} playmode=${test_playmode} fail-fast=${test_fail_fast}"
     echo "Addressables:         build-addressables=${build_addressables} (source: $(_source_label "${addressables_source}"))"
@@ -743,6 +924,15 @@ emit "runner-mode"             "${runner_mode}"
 emit "runner-windows-label"    "${runner_windows_label}"
 emit "runner-macos-label"      "${runner_macos_label}"
 emit "runner-linux-label"      "${runner_linux_label}"
+emit "runner-type"             "${runner_type}"
+emit "build-engine"            "${build_engine}"
+emit "execution-strategy"      "${execution_strategy}"
+emit "runner-labels"           "${runner_labels_json}"
+emit "runner-labels-csv"       "${runner_labels_csv}"
+emit "activation-strategy"     "${activation_strategy}"
+emit "runner-type-source"      "${runner_type_source}"
+emit "build-engine-source"     "${build_engine_source}"
+emit "runner-labels-source"    "${runner_labels_source}"
 emit "cache-library"           "${cache_library}"
 emit "cache-gradle"            "${cache_gradle}"
 emit "cache-addressables"      "${cache_addressables}"

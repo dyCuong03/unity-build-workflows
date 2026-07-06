@@ -4,7 +4,17 @@ This document covers setting up a self-hosted Windows GitHub Actions runner for
 Unity builds when the Docker lane is unavailable or impractical for Unity
 Personal / free licenses.
 
+This lane corresponds to `RUNNER_TYPE=self-hosted` + `BUILD_ENGINE=local`
+(execution strategy `selfhosted-local`) — see
+[RUNNER_AND_BUILD_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) for how this fits
+into the toolkit's Runner/Build-Engine model, and
+[REPOSITORY_VARIABLES.md](REPOSITORY_VARIABLES.md#runner) for the variable
+reference (including the legacy `RUNNER_DEFAULT_MODE=self-hosted-windows`
+mapping).
+
 Related docs:
+- [RUNNER\_AND\_BUILD\_ENGINE.md](RUNNER_AND_BUILD_ENGINE.md) — Runner vs Build
+  Engine architecture, all execution strategies, licensing per mode
 - [EXPLICIT\_PLATFORM\_FLOW\_SPEC.md](EXPLICIT_PLATFORM_FLOW_SPEC.md) — reusable
   workflow interface, runner-mode semantics, lane selection
 - [UNITY\_PERSONAL\_DOCKER\_LICENSE.md](UNITY_PERSONAL_DOCKER_LICENSE.md) — the
