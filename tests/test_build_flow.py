@@ -1278,10 +1278,13 @@ class TestGitHubEnvironment:
         out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "release-1.2"}).stdout)
         assert out["gh-environment"] == "production"
 
-    def test_manual_uses_input_environment(self):
+    def test_manual_dispatch_has_no_gh_environment(self):
+        # workflow_dispatch is an ad-hoc build (often from main); it must NOT target
+        # a protected GitHub Environment, or env protection rules block it.
         out = parse_outputs(run_flow(
             {"EVENT_NAME": "workflow_dispatch", "IN_PLATFORM": "All", "IN_ENVIRONMENT": "staging"}).stdout)
-        assert out["gh-environment"] == "staging"
+        assert out["gh-environment"] == ""
+        assert out["environment"] == "staging"
 
     def test_no_match_branch_no_environment(self):
         out = parse_outputs(run_flow({"EVENT_NAME": "push", "REF_NAME": "main"}).stdout)

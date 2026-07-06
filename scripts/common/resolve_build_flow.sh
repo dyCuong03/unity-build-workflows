@@ -644,13 +644,14 @@ fi
 
 # ---------------------------------------------------------------------------
 # GitHub deployment environment (distinct from the Unity build `environment`).
-# Only push and manual flows map to a real GitHub Environment / deployment.
-# Pull-request flows are validation-only and MUST NOT target a GitHub
-# environment (keeps production-scoped secrets/approvals away from PRs).
+# Only push flows (develop/staging/release) map to a real GitHub Environment /
+# deployment. Pull-request flows are validation-only, and workflow_dispatch is an
+# ad-hoc manual build — often from `main`, which branch-scoped environment
+# protection rules block — so neither targets a protected GitHub Environment.
 # ---------------------------------------------------------------------------
 case "${flow_type}" in
-    pr-develop|pr-staging|pr-release|none) gh_environment="" ;;
-    *)                                     gh_environment="${environment}" ;;
+    pr-develop|pr-staging|pr-release|manual|none) gh_environment="" ;;
+    *)                                            gh_environment="${environment}" ;;
 esac
 
 log_info "gh-environment=${gh_environment} (deployment target; empty = none)"
