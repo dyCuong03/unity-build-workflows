@@ -217,7 +217,9 @@ jobs:
       # Runs EditMode and/or PlayMode sequentially; continues past EditMode failure for All.
       - name: Run tests (Windows)
         if: ${{ inputs.runner-mode == 'self-hosted-windows' }}
-        shell: pwsh
+        # Windows PowerShell (always present on Windows); do NOT require pwsh
+        # (PowerShell 7), which self-hosted Windows runners may not have.
+        shell: powershell
         env:
           TEST_MODE:     ${{ inputs.test-mode }}
           PROJECT_PATH:  ${{ inputs.project-path }}
@@ -320,46 +322,39 @@ jobs:
 
       # ── 5. Parse NUnit XML results ────────────────────────────────────────────
       # Sums passed/failed counts across all result XML files produced above.
+      # Parse the NUnit3 <test-run> root attributes (passed/failed) from each XML.
+      # Uses bash so it runs on every lane WITHOUT python3 — docker/macOS have
+      # bash natively, self-hosted Windows uses Git Bash (no python3 required).
       - name: Parse test results
         id: parse-results
         if: always()
-        shell: python3 {0}
+        shell: bash
         run: |
-          import os, glob, xml.etree.ElementTree as ET
-
-          passed = 0
-          failed = 0
-
-          xml_files = glob.glob("test-results/**/*.xml", recursive=True)
-          if not xml_files:
-              print("::warning::No NUnit XML result files found in test-results/")
-          else:
-              for xml_file in xml_files:
-                  try:
-                      tree = ET.parse(xml_file)
-                      root = tree.getroot()
-                      # NUnit 3: root is <test-run>; NUnit 2: root may be <test-results>
-                      node = root if root.tag in ("test-run", "test-results") else None
-                      if node is None:
-                          node = root.find("test-run") or root.find("test-results")
-                      if node is not None:
-                          p = node.get("passed", node.get("total", "0"))
-                          f = node.get("failed", "0")
-                          passed += int(p) if str(p).isdigit() else 0
-                          failed += int(f) if str(f).isdigit() else 0
-                          print(f"{xml_file}: passed={p} failed={f}")
-                      else:
-                          print(f"::warning::Unrecognised NUnit root element in {xml_file}")
-                  except Exception as exc:
-                      print(f"::warning::Failed to parse {xml_file}: {exc}")
-
-          out_file = os.environ.get("GITHUB_OUTPUT", "/dev/null")
-          with open(out_file, "a") as fh:
-              fh.write(f"tests-passed={passed}\n")
-              fh.write(f"tests-failed={failed}\n")
-              fh.write(f"results-found={'true' if xml_files else 'false'}\n")
-
-          print(f"\nTotal — passed: {passed}, failed: {failed}")
+          set -uo pipefail
+          passed=0; failed=0; found=false
+          files=$(find test-results -type f -name '*.xml' 2>/dev/null || true)
+          if [ -z "${files}" ]; then
+            echo "::warning::No NUnit XML result files found in test-results/"
+          else
+            found=true
+            while IFS= read -r f; do
+              [ -z "${f}" ] && continue
+              # NUnit3 root <test-run ... passed="P" failed="F" total="T" ...> is the
+              # first element carrying these attributes.
+              p=$(grep -oE 'passed="[0-9]+"' "${f}" | head -1 | grep -oE '[0-9]+' || echo 0)
+              fl=$(grep -oE 'failed="[0-9]+"' "${f}" | head -1 | grep -oE '[0-9]+' || echo 0)
+              p=${p:-0}; fl=${fl:-0}
+              passed=$((passed + p))
+              failed=$((failed + fl))
+              echo "${f}: passed=${p} failed=${fl}"
+            done <<< "${files}"
+          fi
+          {
+            echo "tests-passed=${passed}"
+            echo "tests-failed=${failed}"
+            echo "results-found=${found}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "Total — passed: ${passed}, failed: ${failed}"
 
       # ── 6. Upload test results artifact ───────────────────────────────────────
       # Artifact name matches the convention in EXPLICIT_PLATFORM_FLOW_SPEC.md §4.
