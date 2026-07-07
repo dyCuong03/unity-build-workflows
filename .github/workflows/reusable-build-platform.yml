@@ -486,6 +486,32 @@ jobs:
         shell: bash
         run: echo "BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
 
+      # ── Step 8b: Docker engine preflight (build-engine=docker) ─────────────
+      # Turn game-ci's cryptic "500 Internal Server Error ... docker_engine/_ping"
+      # into a clear, actionable message. On a self-hosted Windows runner, game-ci
+      # pulls a Windows-container image, which needs Docker Desktop on the Hyper-V
+      # backend + Windows containers — a WSL2/Linux-only engine cannot run it.
+      - name: Verify Docker engine
+        if: ${{ inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: bash
+        run: |
+          set +e
+          echo "build-engine=docker → checking the Docker daemon is reachable…"
+          SRV_OS="$(docker version --format '{{.Server.Os}}' 2>docker_err.txt)"
+          RC=$?
+          ERR="$(cat docker_err.txt 2>/dev/null)"; rm -f docker_err.txt
+          if [ "${RC}" -ne 0 ] || [ -z "${SRV_OS}" ] || printf '%s' "${SRV_OS}${ERR}" | grep -qiE '500|error|cannot connect|refused'; then
+            echo "::error title=Docker engine unavailable::build-engine=docker needs a running Docker daemon, but 'docker version' failed: ${SRV_OS:-} ${ERR}"
+            echo "::error::On a self-hosted Windows runner this usually means Docker Desktop is on the WSL2/Linux backend: game-ci needs a WINDOWS-container engine (Docker Desktop → uncheck 'Use the WSL 2 based engine' → switch to Windows containers), OR use BUILD_ENGINE=local (local Unity, no Docker), OR run on a self-hosted Linux host."
+            exit 1
+          fi
+          echo "Docker daemon OK — Server.Os=${SRV_OS}"
+          # game-ci selects the image variant by runner OS; a Windows runner needs a windows-container engine.
+          if [ "${RUNNER_OS:-}" = "Windows" ] && [ "${SRV_OS}" != "windows" ]; then
+            echo "::error title=Wrong Docker container mode::A self-hosted WINDOWS runner + BUILD_ENGINE=docker requires a Windows-container engine (Server.Os=windows), but the engine is '${SRV_OS}'. Switch Docker Desktop to the Hyper-V backend + Windows containers, or use BUILD_ENGINE=local."
+            exit 1
+          fi
+
       # ── Step 9a: Build with GameCI (docker lane, non-Addressables) ─────────
       - name: Build with GameCI (docker)
         id: build-docker
