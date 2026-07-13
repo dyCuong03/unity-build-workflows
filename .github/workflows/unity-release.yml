@@ -63,11 +63,21 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "platform=${{ inputs.target-platform }}" >> "$GITHUB_OUTPUT"
           else
+            # Tag pushes carry no platform. resolve_project_version.py is a
+            # version resolver — with a git tag present it returns the tag
+            # version regardless of --output-field, so its result is NOT a
+            # platform. Validate against the supported set and default to
+            # Android when it isn't one (e.g. a bare semver tag).
             PLATFORM=$(python3 scripts/common/resolve_project_version.py \
               --config-path "BuildConfig" \
               --ref "${{ github.ref }}" \
-              --output-field platform 2>/dev/null || echo "Android")
+              --output-field platform 2>/dev/null || echo "")
+            case "$PLATFORM" in
+              Android|WebGL|Linux64) ;;
+              *) PLATFORM=Android ;;
+            esac
             echo "platform=${PLATFORM}" >> "$GITHUB_OUTPUT"
+            echo "Resolved target platform: ${PLATFORM}"
           fi
 
       - name: Resolve deploy target
