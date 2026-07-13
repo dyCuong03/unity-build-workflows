@@ -606,10 +606,21 @@ jobs:
             exit /b 1
           )
 
+          :: Player build method. -buildTarget only SWITCHES the active target;
+          :: an -executeMethod that calls BuildPipeline.BuildPlayer is required to
+          :: actually produce a build. Default to the project's PlayerBuilder.Build;
+          :: allow override via the build-method input.
+          set "BUILD_METHOD=${{ inputs.build-method }}"
+          if "!BUILD_METHOD!"=="" set "BUILD_METHOD=PlayerBuilder.Build"
+
+          :: Output dir consumed by PlayerBuilder; matches the upload path (build/).
+          set "BUILD_OUTPUT_DIR=build"
+
           "!UNITY_EXE!" ^
             -batchmode -nographics -quit ^
             -projectPath "!PROJECT!" ^
             -buildTarget "!BUILD_TARGET!" ^
+            -executeMethod !BUILD_METHOD! ^
             -logFile "Editor.log" ^
             !EXTRA_PARAMS!
           exit /b !ERRORLEVEL!
@@ -655,10 +666,21 @@ jobs:
             *)       echo "::error::Unsupported platform for macOS lane: ${{ inputs.platform }}"; exit 1 ;;
           esac
 
+          # -buildTarget only SWITCHES the active target; an -executeMethod that
+          # calls BuildPipeline.BuildPlayer is required to actually produce a
+          # build. Default to the project's PlayerBuilder.Build; allow override
+          # via the build-method input.
+          BUILD_METHOD="${{ inputs.build-method }}"
+          [ -z "$BUILD_METHOD" ] && BUILD_METHOD="PlayerBuilder.Build"
+
+          # Output dir consumed by PlayerBuilder; matches the upload path (build/).
+          export BUILD_OUTPUT_DIR="build"
+
           "$UNITY_BIN" \
             -batchmode -nographics -quit \
             -projectPath "${PROJECT}" \
             -buildTarget "${BUILD_TARGET}" \
+            -executeMethod "${BUILD_METHOD}" \
             -logFile "Editor.log" \
             ${EXTRA_PARAMS:+${EXTRA_PARAMS}}
 
