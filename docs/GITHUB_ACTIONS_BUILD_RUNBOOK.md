@@ -178,7 +178,7 @@ gh workflow run unity-build.yml \
   --ref main \
   -f platform=Windows64
 
-# iOS (requires a registered [self-hosted, macOS, unity] runner — see Section 10)
+# iOS (requires a registered macos-unity-xcode runner — see Section 10)
 gh workflow run unity-build.yml \
   --repo dyCuong03/NDC-Unity-Template \
   --ref main \

@@ -176,5 +176,7 @@ option** for Personal licenses too — it's just more setup.
   `execution-strategy`, `runner-labels`, and `activation-strategy` outputs.
 - [SELF_HOSTED_WINDOWS_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md) — detailed
   Windows runner provisioning and Unity Hub activation steps.
+- [SELF_HOSTED_MACOS_RUNNER.md](SELF_HOSTED_MACOS_RUNNER.md) — macOS (iOS) runner
+  provisioning: Xcode, Unity iOS module, `macos-unity-xcode` label, activation.
 - [UNITY_PERSONAL_DOCKER_LICENSE.md](UNITY_PERSONAL_DOCKER_LICENSE.md) —
   Docker-engine activation strategies for Unity Personal/Free.

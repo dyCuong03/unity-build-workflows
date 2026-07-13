@@ -52,7 +52,7 @@ unity-tests               build-addressables
 | `build-linux64` | Build Linux Standalone | `ubuntu-latest` (docker lane) |
 | `build-linuxserver` | Build Linux Dedicated Server | `ubuntu-latest` (docker lane) |
 | `build-windows64` | Build Windows Standalone (Mono scripting backend) | Selected by `runner-mode` |
-| `build-ios` | Build iOS Xcode project | **`[self-hosted, macOS, unity]` only** |
+| `build-ios` | Build iOS Xcode project | **`macos-unity-xcode` runner only** (`ios-runner-label` input) |
 | `final-report` | Collect all job results, emit summary annotation | `ubuntu-latest` |
 
 ---
@@ -124,11 +124,14 @@ The `runner-mode` input selects the execution lane for every job in the workflow
 | `self-hosted-windows` | `[self-hosted, Windows, unity]` | No — local Unity installation | Not required (Unity pre-activated on runner) |
 | `auto` | *(not yet implemented — use explicit values)* | — | — |
 
-> **iOS exception:** `build-ios` ignores `runner-mode` entirely. It always uses
-> `runner-mode: self-hosted-macos` (`[self-hosted, macOS, unity]`). The `runner-mode`
-> dispatch input controls all other platform jobs.
+> **iOS exception:** `build-ios` ignores `runner-mode` entirely. It routes to the
+> runner named by the `ios-runner-label` input (default `macos-unity-xcode`) via
+> `runs-on: ${{ inputs.ios-runner-label }}`. The `runner-mode` dispatch input
+> controls all other platform jobs.
 
-For self-hosted runner setup, see [SELF\_HOSTED\_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md).
+For self-hosted Windows runner setup, see
+[SELF\_HOSTED\_WINDOWS\_RUNNER.md](SELF_HOSTED_WINDOWS_RUNNER.md); for the macOS
+(iOS) runner, see [SELF\_HOSTED\_MACOS\_RUNNER.md](SELF_HOSTED_MACOS_RUNNER.md).
 
 ---
 
@@ -215,9 +218,9 @@ condition checks both the `platform` value and the upstream gate jobs.
 
 > **iOS builds are BLOCKED without a registered macOS runner.**
 
-`build-ios` always uses `runner-mode: self-hosted-macos` (`[self-hosted, macOS, unity]`)
-regardless of the `runner-mode` dispatch input. `activation-strategy` is hardcoded to
-`preactivated` for the macOS lane.
+`build-ios` always runs on the `ios-runner-label` runner (default `macos-unity-xcode`)
+via `runs-on: ${{ inputs.ios-runner-label }}`, regardless of the `runner-mode` dispatch
+input. `activation-strategy` is hardcoded to `preactivated` for the macOS lane.
 
 ### What happens when no macOS runner is available
 
@@ -238,11 +241,13 @@ To enable iOS builds:
 1. Provision a macOS machine (physical or cloud-hosted).
 2. Install Unity **6000.0.26f1** with **iOS Build Support** module.
 3. Install Xcode and select the correct version with `xcode-select`.
-4. Register the machine as a GitHub Actions self-hosted runner with labels:
-   `self-hosted`, `macOS`, `unity`.
+4. Register the machine as a GitHub Actions self-hosted runner with the
+   `macos-unity-xcode` label (`./config.sh --labels macos-unity-xcode`).
 5. Activate Unity on the runner via Unity Hub (the macOS lane uses `preactivated`).
 6. Set iOS signing secrets (`IOS_DISTRIBUTION_CERTIFICATE_BASE64`, etc.) — see
    [Section 1 of GITHUB\_ACTIONS\_BUILD\_RUNBOOK.md](GITHUB_ACTIONS_BUILD_RUNBOOK.md#1-required-secrets).
+
+Full step-by-step provisioning: [SELF\_HOSTED\_MACOS\_RUNNER.md](SELF_HOSTED_MACOS_RUNNER.md).
 
 ---
 
@@ -320,7 +325,7 @@ the whole workflow.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `build-ios` queues indefinitely | No `[self-hosted, macOS, unity]` runner registered | See [Section 6](#6-ios-build--special-requirements) |
+| `build-ios` queues indefinitely | No `macos-unity-xcode` runner registered (label mismatch) | See [Section 6](#6-ios-build--special-requirements) |
 | `build-ios` shows `blocked` | Runner is not macOS (guard step caught it) | Register a macOS runner |
 | All `build-*` jobs skipped after `build-addressables` | `build-addressables` failed | Check `unity-build-Addressables-logs` artifact; fix the Addressables configuration |
 | All downstream jobs skipped after `validate-project` | Project structure validation failed | Check `Assets/`, `Packages/manifest.json`, `ProjectSettings/ProjectVersion.txt` |
