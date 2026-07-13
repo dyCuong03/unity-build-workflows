@@ -488,9 +488,17 @@ jobs:
 
       # ── Step 8b: Docker engine preflight (build-engine=docker) ─────────────
       # Turn game-ci's cryptic "500 Internal Server Error ... docker_engine/_ping"
-      # into a clear, actionable message. On a self-hosted Windows runner, game-ci
-      # pulls a Windows-container image, which needs Docker Desktop on the Hyper-V
-      # backend + Windows containers — a WSL2/Linux-only engine cannot run it.
+      # into a clear, actionable message.
+      #
+      # IMPORTANT: GitHub Actions container actions (e.g. game-ci/unity-builder@v4,
+      # `uses: docker://...`) can ONLY execute on Linux runners — this is a GitHub
+      # Actions platform restriction, not a Docker configuration issue. On a
+      # self-hosted Windows runner, `Build with GameCI (docker)` is therefore
+      # skipped entirely (see its `if:` guard) and replaced by
+      # `Build with Docker (Windows, native docker run)`, which drives the
+      # unityci/editor Linux images directly via `docker run` instead of a
+      # container action. That path needs Docker Desktop on the Linux-container
+      # engine (Server.Os=linux) — verified below for BOTH lanes.
       - name: Verify Docker engine
         if: ${{ inputs.build-engine == 'docker' && steps.ios-guard.outputs.blocked != 'true' }}
         shell: bash
@@ -502,20 +510,25 @@ jobs:
           ERR="$(cat docker_err.txt 2>/dev/null)"; rm -f docker_err.txt
           if [ "${RC}" -ne 0 ] || [ -z "${SRV_OS}" ] || printf '%s' "${SRV_OS}${ERR}" | grep -qiE '500|error|cannot connect|refused'; then
             echo "::error title=Docker engine unavailable::build-engine=docker needs a running Docker daemon, but 'docker version' failed: ${SRV_OS:-} ${ERR}"
-            echo "::error::On a self-hosted Windows runner this usually means Docker Desktop is on the WSL2/Linux backend: game-ci needs a WINDOWS-container engine (Docker Desktop → uncheck 'Use the WSL 2 based engine' → switch to Windows containers), OR use BUILD_ENGINE=local (local Unity, no Docker), OR run on a self-hosted Linux host."
+            echo "::error::On a self-hosted Windows runner this usually means Docker Desktop isn't running, or (WSL2 users) the daemon isn't reachable from the runner process. Start Docker Desktop, or use BUILD_ENGINE=local (local Unity, no Docker)."
             exit 1
           fi
           echo "Docker daemon OK — Server.Os=${SRV_OS}"
-          # game-ci selects the image variant by runner OS; a Windows runner needs a windows-container engine.
-          if [ "${RUNNER_OS:-}" = "Windows" ] && [ "${SRV_OS}" != "windows" ]; then
-            echo "::error title=Wrong Docker container mode::A self-hosted WINDOWS runner + BUILD_ENGINE=docker requires a Windows-container engine (Server.Os=windows), but the engine is '${SRV_OS}'. Switch Docker Desktop to the Hyper-V backend + Windows containers, or use BUILD_ENGINE=local."
+          # unityci/editor images are Linux images. Both the ubuntu-latest/game-ci
+          # lane and the Windows-native `docker run` lane need a LINUX-container
+          # engine — never a Windows-container engine.
+          if [ "${SRV_OS}" != "linux" ]; then
+            echo "::error title=Wrong Docker container mode::build-engine=docker needs a LINUX-container Docker engine (Server.Os=linux) to run unityci/editor images, but the engine reports Server.Os=${SRV_OS}. On Windows: Docker Desktop → switch out of Windows containers (right-click the tray icon → 'Switch to Linux containers', or run 'DockerCli.exe -SwitchLinuxEngine')."
             exit 1
           fi
 
       # ── Step 9a: Build with GameCI (docker lane, non-Addressables) ─────────
+      # game-ci/unity-builder is a Docker CONTAINER ACTION — GitHub Actions only
+      # runs container actions on Linux runners. Excluded on Windows; see
+      # "Build with Docker (Windows, native docker run)" below for that lane.
       - name: Build with GameCI (docker)
         id: build-docker
-        if: ${{ inputs.build-engine == 'docker' && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && inputs.platform != 'Addressables' && runner.os != 'Windows' && steps.ios-guard.outputs.blocked != 'true' }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -533,9 +546,10 @@ jobs:
           androidExportType: ${{ inputs.android-export-type == 'aab' && 'androidAppBundle' || 'androidPackage' }}
 
       # ── Step 9b: Build Addressables only (docker lane, platform=Addressables)
+      # Also a container action — excluded on Windows for the same reason as 9a.
       - name: Build Addressables only (docker)
         id: build-addressables-docker
-        if: ${{ inputs.build-engine == 'docker' && inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        if: ${{ inputs.build-engine == 'docker' && inputs.platform == 'Addressables' && runner.os != 'Windows' && steps.ios-guard.outputs.blocked != 'true' }}
         uses: game-ci/unity-builder@v4
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
@@ -547,6 +561,132 @@ jobs:
           targetPlatform: StandaloneLinux64
           buildMethod: AddressableBuilder.Build
           allowDirtyBuild: true
+
+      # ── Step 9b2: Build with Docker (Windows, native docker run) ───────────
+      # game-ci/unity-builder cannot run on a Windows runner (container actions
+      # are Linux-only at the GitHub Actions platform level — see "Verify Docker
+      # engine" above). This step reproduces the docker lane for
+      # build-engine=docker + a self-hosted WINDOWS runner by driving the same
+      # unityci/editor Linux image family directly with `docker run` (Docker
+      # Desktop on the Linux-container engine, invoked from the Windows runner).
+      #
+      # Currently supports Android/WebGL/Linux64/LinuxServer (the platforms with
+      # a unityci/editor image variant). Addressables/iOS/Windows64 are not
+      # handled here — Addressables has no Windows-docker step (falls through to
+      # "skipped" cleanly since build-addressables-docker/build-docker/
+      # build-windows/build-macos are all gated off); iOS/Windows64 are not
+      # Docker-buildable platforms at all (see resolve_image_reference.py).
+      #
+      # License activation mirrors docker/unity/activate-license.sh's
+      # "personal-combined" strategy (the only reliable Unity Personal path in
+      # ephemeral Docker): UNITY_LICENSE (.ulf) is written into the container's
+      # Unity license directory, then Unity is run once with -username/-password
+      # to complete online activation before the real build invocation.
+      - name: Build with Docker (Windows, native docker run)
+        id: build-docker-windows
+        if: ${{ inputs.build-engine == 'docker' && runner.os == 'Windows' && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        shell: pwsh
+        env:
+          UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $unityVersion = "${{ inputs.unity-version }}"
+          $platform     = "${{ inputs.platform }}"
+
+          $variant = switch ($platform) {
+            "Android"     { "android" }
+            "WebGL"       { "webgl" }
+            "Linux64"     { "linux-il2cpp" }
+            "LinuxServer" { "linux-il2cpp" }
+            default       { $null }
+          }
+          if (-not $variant) {
+            Write-Host "::error::Platform '$platform' has no unityci/editor Docker image variant for the Windows-runner docker lane. Supported: Android, WebGL, Linux64, LinuxServer. Use build-engine=local for other platforms."
+            exit 1
+          }
+
+          $image = "unityci/editor:ubuntu-$unityVersion-$variant-3"
+          Write-Host "Docker image: $image"
+
+          # Resolve host project dir (Windows path — Docker Desktop translates it).
+          $workspace   = "${{ github.workspace }}"
+          $projectPath = "${{ inputs.project-path }}"
+          $hostProject = if ([string]::IsNullOrEmpty($projectPath) -or $projectPath -eq ".") { $workspace } else { Join-Path $workspace $projectPath }
+          $hostProject = (Resolve-Path $hostProject).Path
+          Write-Host "Host project dir: $hostProject"
+
+          $buildTarget = switch ($platform) {
+            "Android"     { "Android" }
+            "WebGL"       { "WebGL" }
+            "Linux64"     { "StandaloneLinux64" }
+            "LinuxServer" { "StandaloneLinux64" }
+          }
+          $extraParams = if ($platform -eq "LinuxServer") { "-standaloneBuildSubtarget Server" } else { "" }
+
+          $buildMethod = "${{ inputs.build-method }}"
+          if ([string]::IsNullOrEmpty($buildMethod)) { $buildMethod = "PlayerBuilder.Build" }
+
+          $androidAppBundle = if ("${{ inputs.android-export-type }}" -eq "aab") { "1" } else { "0" }
+
+          $haveLicense  = -not [string]::IsNullOrEmpty($env:UNITY_LICENSE)
+          $haveEmail    = -not [string]::IsNullOrEmpty($env:UNITY_EMAIL)
+          $havePassword = -not [string]::IsNullOrEmpty($env:UNITY_PASSWORD)
+
+          if (-not ($haveLicense -and $haveEmail -and $havePassword)) {
+            Write-Host "::error title=Unity activation blocked::build-engine=docker on the Windows runner requires UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD (the 'personal-combined' strategy — see docs/UNITY_PERSONAL_DOCKER_LICENSE.md). Missing: $(if(-not $haveLicense){'UNITY_LICENSE '})$(if(-not $haveEmail){'UNITY_EMAIL '})$(if(-not $havePassword){'UNITY_PASSWORD'})"
+            exit 1
+          }
+
+          # In-container script: activate (personal-combined), then build via
+          # PlayerBuilder.Build. Runs as a single `bash -c` invocation so the
+          # activation license file persists in the same container filesystem
+          # for the build step. Never echoes secret values.
+          # Built from an array (not a here-string) so every line stays indented
+          # inside this YAML block scalar; joined with LF for the Linux container.
+          $containerScriptLines = @(
+            'set -eo pipefail',
+            'echo "[docker-windows] Activating Unity (personal-combined)..."',
+            'mkdir -p "$HOME/.local/share/unity3d/Unity"',
+            'printf %s "$UNITY_LICENSE" > "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"',
+            'chmod 600 "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"',
+            'ACTIVATE_LOG=/project/Editor-activate.log',
+            'if ! unity-editor -batchmode -nographics -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -logFile "$ACTIVATE_LOG" -quit; then',
+            '  echo "::error::Unity license activation failed. See uploaded logs artifact (Editor-activate.log) for details."',
+            '  tail -c 4000 "$ACTIVATE_LOG" 2>/dev/null || true',
+            '  exit 1',
+            'fi',
+            'echo "[docker-windows] Activation OK. Building..."',
+            'export BUILD_OUTPUT_DIR=build',
+            'BUILD_ARGS=(-batchmode -nographics -quit -projectPath /project -buildTarget "$BUILD_TARGET" -executeMethod "$BUILD_METHOD" -logFile /project/Editor.log)',
+            'if [ -n "$EXTRA_PARAMS" ]; then',
+            '  BUILD_ARGS+=($EXTRA_PARAMS)',
+            'fi',
+            'unity-editor "${BUILD_ARGS[@]}"',
+            'BUILD_RC=$?',
+            'tail -c 4000 /project/Editor.log 2>/dev/null || true',
+            'exit $BUILD_RC'
+          )
+          $scriptPath = Join-Path $env:RUNNER_TEMP "docker-windows-build.sh"
+          # LF line endings only — this runs inside a Linux container via bash.
+          [System.IO.File]::WriteAllText($scriptPath, ($containerScriptLines -join "`n"))
+
+          docker run --rm `
+            -v "${hostProject}:/project" `
+            -v "${scriptPath}:/tmp/build.sh" `
+            -e UNITY_LICENSE -e UNITY_EMAIL -e UNITY_PASSWORD `
+            -e "BUILD_TARGET=$buildTarget" -e "BUILD_METHOD=$buildMethod" -e "EXTRA_PARAMS=$extraParams" `
+            -e "ANDROID_APP_BUNDLE=$androidAppBundle" `
+            -w /project `
+            $image `
+            bash /tmp/build.sh
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Docker build failed (exit $LASTEXITCODE). Platform=$platform Image=$image"
+            exit $LASTEXITCODE
+          }
+          Write-Host "[docker-windows] Build succeeded."
 
       # ── Step 9c: Build with local Unity (self-hosted-windows lane) ─────────
       # Uses cmd shell per spec. Locates Unity.exe from Unity Hub default paths.
@@ -749,6 +889,7 @@ jobs:
           BLOCKED="${{ steps.ios-guard.outputs.blocked }}"
           DOCKER_OUT="${{ steps.build-docker.outcome }}"
           ADDR_DOCKER_OUT="${{ steps.build-addressables-docker.outcome }}"
+          DOCKER_WIN_OUT="${{ steps.build-docker-windows.outcome }}"
           WINDOWS_OUT="${{ steps.build-windows.outcome }}"
           MACOS_OUT="${{ steps.build-macos.outcome }}"
 
@@ -758,7 +899,7 @@ jobs:
           else
             # Find the outcome of whichever build step actually ran (non-skipped).
             BUILD_OUTCOME=""
-            for OUT in "$DOCKER_OUT" "$ADDR_DOCKER_OUT" "$WINDOWS_OUT" "$MACOS_OUT"; do
+            for OUT in "$DOCKER_OUT" "$ADDR_DOCKER_OUT" "$DOCKER_WIN_OUT" "$WINDOWS_OUT" "$MACOS_OUT"; do
               if [ -n "$OUT" ] && [ "$OUT" != "skipped" ]; then
                 BUILD_OUTCOME="$OUT"
                 break
