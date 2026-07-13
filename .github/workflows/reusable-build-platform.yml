@@ -681,11 +681,17 @@ jobs:
             '  mkdir -p /var/lib/dbus',
             '  ln -sf /etc/machine-id /var/lib/dbus/machine-id',
             'fi',
-            'mkdir -p /tmp/blank-project',
             'echo "[docker-windows] Activating Unity (serial license mode, game-ci-equivalent)..."',
             'ATTEMPT=1',
             'MAX_ATTEMPTS=5',
-            'until unity-editor -logFile "$ACTIVATE_LOG" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /tmp/blank-project; do',
+            # Use the real mounted project (not a separate scratch project):
+            # a live dispatch showed activation itself succeeds
+            # ("Successfully activated the entitlement license") but Unity then
+            # fails with "Couldn't set project path to: /project/tmp/blank-project"
+            # against a bare mkdir -p scratch dir with no project scaffold -
+            # /project already opens fine (it's the real checked-out Unity
+            # project) and the following build step uses it anyway.
+            'until unity-editor -logFile "$ACTIVATE_LOG" -quit -serial "$SERIAL" -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -projectPath /project; do',
             '  RC=$?',
             '  if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then',
             '    echo "::error::Unity license activation failed after $MAX_ATTEMPTS attempts. See uploaded logs artifact (Editor-activate.log) for details."',
