@@ -640,22 +640,28 @@ jobs:
             exit 1
           }
 
-          # In-container script: activate (personal-combined), then build via
-          # PlayerBuilder.Build. Runs as a single `bash -c` invocation so the
-          # activation license file persists in the same container filesystem
-          # for the build step. Never echoes secret values.
+          # In-container script: activate via the toolkit's OWN validated
+          # docker/unity/activate-license.sh (already present in the checkout
+          # at /project/unity-build-workflows — it's a submodule of this repo),
+          # then build via PlayerBuilder.Build. Reusing that script (instead of
+          # a hand-rolled duplicate) picks up its fallback chain
+          # (personal-combined -> serial -> manual-ulf) and its exact,
+          # already-documented license-directory conventions
+          # (docs/UNITY_PERSONAL_DOCKER_LICENSE.md). Runs as a single `bash -c`
+          # invocation so the activated license persists in the same container
+          # filesystem for the build step. Never echoes secret values.
           # Built from an array (not a here-string) so every line stays indented
           # inside this YAML block scalar; joined with LF for the Linux container.
           $containerScriptLines = @(
             'set -eo pipefail',
-            'echo "[docker-windows] Activating Unity (personal-combined)..."',
-            'mkdir -p "$HOME/.local/share/unity3d/Unity"',
-            'printf %s "$UNITY_LICENSE" > "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"',
-            'chmod 600 "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf"',
-            'ACTIVATE_LOG=/project/Editor-activate.log',
-            'if ! unity-editor -batchmode -nographics -username "$UNITY_EMAIL" -password "$UNITY_PASSWORD" -logFile "$ACTIVATE_LOG" -quit; then',
+            'export HOME=/tmp/unity-home',
+            'mkdir -p "$HOME"',
+            'export UNITY_EDITOR=/usr/bin/unity-editor',
+            'export UNITY_LOG_FILE=/project/Editor-activate.log',
+            'echo "[docker-windows] Activating Unity via activate-license.sh (personal-combined, with serial/manual-ulf fallback)..."',
+            'if ! bash /project/unity-build-workflows/docker/unity/activate-license.sh; then',
             '  echo "::error::Unity license activation failed. See uploaded logs artifact (Editor-activate.log) for details."',
-            '  tail -c 4000 "$ACTIVATE_LOG" 2>/dev/null || true',
+            '  tail -c 4000 "$UNITY_LOG_FILE" 2>/dev/null || true',
             '  exit 1',
             'fi',
             'echo "[docker-windows] Activation OK. Building..."',
@@ -875,6 +881,7 @@ jobs:
             ${{ inputs.project-path }}/Library/Editor.log
             Editor.log
             Editor-addressables-pre.log
+            Editor-activate.log
           if-no-files-found: ignore
           retention-days: ${{ inputs.artifact-retention-days }}
 
