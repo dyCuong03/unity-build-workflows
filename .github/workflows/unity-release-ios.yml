@@ -56,6 +56,11 @@ jobs:
   # ─── PRE-RELEASE GATES ─────────────────────────────────────────────────────────
   pre-release-checks:
     name: Pre-release Gates
+    # Consumer-facing iOS release workflow — must run inside a Unity project.
+    # The upstream toolkit repo is not one, and its `v*` tags are toolkit
+    # releases, not game releases. Skip the whole chain there (downstream jobs
+    # `need` this one).
+    if: ${{ github.repository != 'dyCuong03/unity-build-workflows' }}
     runs-on: ubuntu-latest
     outputs:
       build-version: ${{ steps.version.outputs.version }}

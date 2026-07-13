@@ -38,6 +38,12 @@ jobs:
   # ─── PRE-RELEASE GATES ─────────────────────────────────────────────────────────
   pre-release-checks:
     name: Pre-release Gates
+    # This is a consumer-facing release workflow — it must run inside a Unity
+    # project (needs ProjectSettings/ProjectVersion.txt, BuildConfig, and a
+    # published unity-editor image). The upstream toolkit repo is NOT a Unity
+    # project, and its own `v*` tags are toolkit releases, not game releases —
+    # so skip the entire chain there (all downstream jobs `need` this one).
+    if: ${{ github.repository != 'dyCuong03/unity-build-workflows' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
