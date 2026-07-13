@@ -611,7 +611,7 @@ jobs:
           $image = "unityci/editor:ubuntu-$unityVersion-$variant-3"
           Write-Host "Docker image: $image"
 
-          # Resolve host project dir (Windows path — Docker Desktop translates it).
+          # Resolve host project dir (Windows path - Docker Desktop translates it).
           $workspace   = "${{ github.workspace }}"
           $projectPath = "${{ inputs.project-path }}"
           $hostProject = if ([string]::IsNullOrEmpty($projectPath) -or $projectPath -eq ".") { $workspace } else { Join-Path $workspace $projectPath }
@@ -636,7 +636,7 @@ jobs:
           $havePassword = -not [string]::IsNullOrEmpty($env:UNITY_PASSWORD)
 
           if (-not ($haveLicense -and $haveEmail -and $havePassword)) {
-            Write-Host "::error title=Unity activation blocked::build-engine=docker on the Windows runner requires UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD (the 'personal-combined' strategy — see docs/UNITY_PERSONAL_DOCKER_LICENSE.md). Missing: $(if(-not $haveLicense){'UNITY_LICENSE '})$(if(-not $haveEmail){'UNITY_EMAIL '})$(if(-not $havePassword){'UNITY_PASSWORD'})"
+            Write-Host "::error title=Unity activation blocked::build-engine=docker on the Windows runner requires UNITY_LICENSE + UNITY_EMAIL + UNITY_PASSWORD (the 'personal-combined' strategy - see docs/UNITY_PERSONAL_DOCKER_LICENSE.md). Missing: $(if(-not $haveLicense){'UNITY_LICENSE '})$(if(-not $haveEmail){'UNITY_EMAIL '})$(if(-not $havePassword){'UNITY_PASSWORD'})"
             exit 1
           }
 
@@ -670,7 +670,7 @@ jobs:
             'exit $BUILD_RC'
           )
           $scriptPath = Join-Path $env:RUNNER_TEMP "docker-windows-build.sh"
-          # LF line endings only — this runs inside a Linux container via bash.
+          # LF line endings only - this runs inside a Linux container via bash.
           [System.IO.File]::WriteAllText($scriptPath, ($containerScriptLines -join "`n"))
 
           docker run --rm `
