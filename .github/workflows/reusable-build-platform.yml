@@ -710,7 +710,21 @@ jobs:
             'fi',
             'unity-editor "${BUILD_ARGS[@]}"',
             'BUILD_RC=$?',
-            'tail -c 4000 /project/Editor.log 2>/dev/null || true',
+            # GH Actions artifact storage is currently exhausted (a separate,
+            # pre-existing repo issue - "Failed to CreateArtifact: Artifact
+            # storage quota has been hit"), so the logs-artifact upload step
+            # cannot be relied on to surface failures right now. Print every
+            # plausible Editor.log location + size directly to the job console
+            # so a build failure is diagnosable from the step log alone.
+            'echo "[docker-windows] Build exited $BUILD_RC. Log file candidates:"',
+            'for f in /project/Editor.log /project/Library/Editor.log "$HOME/.config/unity3d/Editor.log" "$HOME/.local/share/unity3d/Editor.log"; do',
+            '  if [ -f "$f" ]; then',
+            '    echo "--- $f ($(wc -c < "$f") bytes) ---"',
+            '    tail -c 6000 "$f"',
+            '  else',
+            '    echo "--- $f: not found ---"',
+            '  fi',
+            'done',
             'exit $BUILD_RC'
           )
           $scriptPath = Join-Path $env:RUNNER_TEMP "docker-windows-build.sh"
