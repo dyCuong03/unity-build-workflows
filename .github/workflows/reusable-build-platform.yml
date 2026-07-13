@@ -585,7 +585,7 @@ jobs:
       - name: Build with Docker (Windows, native docker run)
         id: build-docker-windows
         if: ${{ inputs.build-engine == 'docker' && runner.os == 'Windows' && inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
-        shell: pwsh
+        shell: powershell
         env:
           UNITY_LICENSE:  ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL:    ${{ secrets.UNITY_EMAIL }}
