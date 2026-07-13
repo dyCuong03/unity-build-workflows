@@ -19,7 +19,10 @@ on:
         default: none
         options: [none, google-play, cloudflare]
       image-digest:
-        description: Digest-pinned image reference (sha256:...). Required for production release.
+        description: >
+          Digest-pinned image reference (sha256:...) for the production release.
+          Required for workflow_dispatch. On tag-push it is resolved automatically
+          from the registry, so it is only needed to override that.
         required: true
         type: string
       dry-run:
@@ -37,6 +40,9 @@ jobs:
     name: Pre-release Gates
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read   # inspect ghcr to auto-resolve the image digest on tag-push
     outputs:
       build-version: ${{ steps.version.outputs.version }}
       target-platform: ${{ steps.resolve-platform.outputs.platform }}
@@ -109,15 +115,52 @@ jobs:
           fi
           echo "Version matches tag: ${VERSION}"
 
+      # On tag-push there is no image-digest input, so resolve it from the
+      # registry: the pinned digest of the canonical Unity image published by
+      # build-unity-image.yml (ghcr.io/<owner>/unity-editor:<version>-<variant>).
+      # workflow_dispatch callers pass image-digest explicitly and skip this.
+      - name: Resolve image digest from registry
+        id: resolve-digest
+        if: inputs.image-digest == ''
+        shell: bash
+        env:
+          REGISTRY: ghcr.io
+          OWNER: ${{ github.repository_owner }}
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN_PKG: ${{ secrets.GITHUB_TOKEN }}
+          UNITY_VERSION: ${{ steps.resolve-unity.outputs.unity-version }}
+          PLATFORM: ${{ steps.resolve-platform.outputs.platform }}
+        run: |
+          case "$PLATFORM" in
+            Android)             VARIANT=android ;;
+            WebGL)               VARIANT=webgl ;;
+            Linux64|LinuxServer) VARIANT=linux ;;
+            *) echo "::error::Cannot resolve image digest — unsupported platform '${PLATFORM}'."; exit 1 ;;
+          esac
+          # Registry references must be lowercase — matches build-unity-image.yml naming.
+          REPO=$(echo "${REGISTRY}/${OWNER}/unity-editor" | tr '[:upper:]' '[:lower:]')
+          REF="${REPO}:${UNITY_VERSION}-${VARIANT}"
+          echo "Resolving digest for mutable reference: ${REF}"
+          echo "$GH_TOKEN_PKG" | docker login "$REGISTRY" -u "$ACTOR" --password-stdin
+          DIGEST=$(docker buildx imagetools inspect "$REF" --format '{{.Manifest.Digest}}' 2>/dev/null || true)
+          if [ -z "$DIGEST" ]; then
+            echo "::error::Could not resolve a digest for '${REF}'."
+            echo "::error::Ensure the image was built and pushed by the build-unity-image workflow before releasing."
+            exit 1
+          fi
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Resolved image digest: ${DIGEST}"
+
       - name: Validate image digest is pinned
         id: validate-digest
         shell: bash
         env:
-          IMAGE_DIGEST: ${{ inputs.image-digest || '' }}
+          IMAGE_DIGEST: ${{ inputs.image-digest || steps.resolve-digest.outputs.digest }}
         run: |
           if [ -z "$IMAGE_DIGEST" ]; then
             echo "::error::image-digest is required for production releases."
-            echo "::error::Run resolve-unity-image or check the image manifest artifact."
+            echo "::error::For workflow_dispatch, pass the image-digest input. For tag-push,"
+            echo "::error::ensure the image was built and pushed (build-unity-image workflow)."
             exit 1
           fi
           if [[ "$IMAGE_DIGEST" != sha256:* ]]; then
