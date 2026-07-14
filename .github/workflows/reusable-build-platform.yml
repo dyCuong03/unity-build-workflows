@@ -899,6 +899,11 @@ jobs:
       # if-no-files-found: warn — missing binary is a build failure already caught by exit code.
       - name: Upload build artifact
         if: ${{ inputs.platform != 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        # On self-hosted runners the build output already persists on the
+        # operator's own machine (build/), so a failed upload (e.g. GitHub
+        # Actions artifact storage quota) must not fail an otherwise-green build.
+        # github-hosted runners are ephemeral — keep upload strict there.
+        continue-on-error: ${{ contains(inputs.runner-labels, 'self-hosted') }}
         uses: actions/upload-artifact@v4
         with:
           name: unity-build-${{ inputs.platform }}
@@ -911,6 +916,8 @@ jobs:
       # Artifacts: Addressable catalog + bundles (ServerData, StreamingAssets).
       - name: Upload Addressables artifact
         if: ${{ inputs.platform == 'Addressables' && steps.ios-guard.outputs.blocked != 'true' }}
+        # Self-hosted output persists locally — don't fail on upload quota.
+        continue-on-error: ${{ contains(inputs.runner-labels, 'self-hosted') }}
         uses: actions/upload-artifact@v4
         with:
           name: unity-build-Addressables
@@ -925,6 +932,9 @@ jobs:
       # Collects Editor.log and any BuildReport files from common locations.
       - name: Upload logs artifact
         if: ${{ always() }}
+        # Diagnostics only — never fail the job on a logs-upload failure
+        # (storage quota, etc.). Editor.log is also echoed to the console.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: unity-build-${{ inputs.platform }}-logs
